@@ -1016,6 +1016,12 @@ function renderFolderNormalSlot(child) {
   if (child.icon) {
     return `<div class="folder-slot-normal"${previewAttr}>${buildManagedImageTag({ src: child.icon, errorMode: 'show-sibling' })}<span class="folder-slot-letter" style="display:none">${ch}</span></div>`;
   }
+  const cached = (window.iconCache && typeof window.iconCache.getCachedIcon === 'function')
+    ? window.iconCache.getCachedIcon(child.url)
+    : '';
+  if (cached) {
+    return `<div class="folder-slot-normal"${previewAttr}>${buildManagedImageTag({ src: cached, errorMode: 'show-sibling' })}<span class="folder-slot-letter" style="display:none">${ch}</span></div>`;
+  }
   const fav = getFavicon(child.url);
   if (fav) {
     return `<div class="folder-slot-normal"${previewAttr}>${buildManagedImageTag({ src: fav, fallbackSrc: getFaviconFallback(child.url), errorMode: 'show-sibling' })}<span class="folder-slot-letter" style="display:none">${ch}</span></div>`;
@@ -1035,15 +1041,23 @@ function renderFolderMiniSlot(miniChildren) {
       iconsHtml += `<div class="folder-mini-icon folder-mini-folder-slot">${FOLDER_PREVIEW_ICON_MINI}</div>`;
       continue;
     }
+    const ch = escapeHtml(child.name.charAt(0));
     if (child.icon) {
-      iconsHtml += `<div class="folder-mini-icon">${buildManagedImageTag({ src: child.icon, errorMode: 'remove' })}</div>`;
+      iconsHtml += `<div class="folder-mini-icon">${buildManagedImageTag({ src: child.icon, errorMode: 'show-sibling' })}<span class="folder-mini-letter" style="display:none">${ch}</span></div>`;
+      continue;
+    }
+    const cached = (window.iconCache && typeof window.iconCache.getCachedIcon === 'function')
+      ? window.iconCache.getCachedIcon(child.url)
+      : '';
+    if (cached) {
+      iconsHtml += `<div class="folder-mini-icon">${buildManagedImageTag({ src: cached, errorMode: 'show-sibling' })}<span class="folder-mini-letter" style="display:none">${ch}</span></div>`;
+      continue;
+    }
+    const fav = getFavicon(child.url);
+    if (fav) {
+      iconsHtml += `<div class="folder-mini-icon">${buildManagedImageTag({ src: fav, fallbackSrc: getFaviconFallback(child.url), errorMode: 'show-sibling' })}<span class="folder-mini-letter" style="display:none">${ch}</span></div>`;
     } else {
-      const fav = getFavicon(child.url);
-      if (fav) {
-        iconsHtml += `<div class="folder-mini-icon">${buildManagedImageTag({ src: fav, fallbackSrc: getFaviconFallback(child.url), errorMode: 'remove' })}</div>`;
-      } else {
-        iconsHtml += `<div class="folder-mini-icon folder-mini-icon-blank"></div>`;
-      }
+      iconsHtml += `<div class="folder-mini-icon"><span class="folder-mini-letter">${ch}</span></div>`;
     }
   }
   return `<div class="folder-slot-mini-group">${iconsHtml}</div>`;
@@ -1092,6 +1106,12 @@ function renderIcon(item) {
       const cch = escapeHtml(c.name.charAt(0));
       if (c.icon) {
         return `<div class="folder-preview-cell">${buildManagedImageTag({ src: c.icon, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
+      }
+      const cached = (window.iconCache && typeof window.iconCache.getCachedIcon === 'function')
+        ? window.iconCache.getCachedIcon(c.url)
+        : '';
+      if (cached) {
+        return `<div class="folder-preview-cell">${buildManagedImageTag({ src: cached, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
       }
       const fav = getFavicon(c.url);
       if (fav) return `<div class="folder-preview-cell">${buildManagedImageTag({ src: fav, fallbackSrc: getFaviconFallback(c.url), errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
