@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Misc
+*.log
+
+
+# Pack
+*.zip
+*.xpi
+
+# Node
+node_modules/
+
+# Dev notes (private)
+ProjectNotes/
+
+# Auxiliary class-name extracts (IDE / tooling output, not source)
+css_classes.txt
+html_classes.txt

@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Lithium",
+    "description": "Extension name shown in the browser extensions list and store."
+  },
+  "extDesc": {
+    "message": "Custom new tab page with clock, search, shortcuts, and multi-timezone support.",
+    "description": "Short summary shown in the browser extensions list and store."
+  }
+}

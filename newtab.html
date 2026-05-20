@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="title.newTab">新标签页</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="i18n.js"></script>
+  <script src="i18n.zh.js"></script>
+  <script src="i18n.en.js"></script>
+</head>
+<body>
+  <div id="wallpaper-bg" aria-hidden="true"></div>
+  <div id="wallpaper-dim" aria-hidden="true"></div>
+  <div class="blob blob-blue" aria-hidden="true"></div>
+  <div class="blob blob-purple" aria-hidden="true"></div>
+  <aside id="left-sidebar" class="left-sidebar" data-i18n-aria-label="sidebar.ariaLabel" aria-label="布局侧栏">
+    <button type="button" id="left-sidebar-handle" class="left-sidebar-handle" data-i18n-aria-label="sidebar.toggleAria" aria-label="切换左侧侧栏" aria-expanded="false"></button>
+    <div class="left-sidebar-content">
+      <div class="sidebar-stack">
+        <section class="sidebar-section sidebar-panel" aria-labelledby="grid-columns-title">
+          <div class="sidebar-head">
+            <h2 id="grid-columns-title" class="sidebar-title" data-i18n="sidebar.title.gridColumns">主页列数</h2>
+            <span id="grid-columns-value" class="sidebar-value">8</span>
+          </div>
+          <input
+            id="grid-columns-range"
+            class="sidebar-range"
+            type="range"
+            min="6"
+            max="12"
+            step="1"
+            value="8"
+            data-i18n-aria-label="sidebar.gridColumns.rangeAria"
+            aria-label="调整主页快捷方式列数"
+          >
+          <div class="sidebar-range-labels" aria-hidden="true">
+            <span>6</span>
+            <span>12</span>
+          </div>
+        </section>
+
+        <section class="sidebar-section sidebar-panel" aria-labelledby="wallpaper-title">
+          <div class="sidebar-head">
+            <h2 id="wallpaper-title" class="sidebar-title" data-i18n="sidebar.title.wallpaper">壁纸设置</h2>
+          </div>
+          <div class="sidebar-wallpaper-layout">
+            <div
+              id="sidebar-wallpaper-preview"
+              class="sidebar-wallpaper-preview"
+              data-empty="true"
+              role="img"
+              data-i18n-aria-label="sidebar.wallpaper.previewAria"
+              aria-label="默认背景预览"
+            >
+              <span id="sidebar-wallpaper-preview-label" class="sidebar-wallpaper-preview-label" data-i18n="sidebar.wallpaper.previewLabel">默认背景</span>
+            </div>
+            <div class="sidebar-wallpaper-actions">
+              <button type="button" id="sidebar-wallpaper-upload-btn" class="sidebar-action-btn" data-i18n="sidebar.wallpaper.change">更换壁纸</button>
+              <button type="button" id="sidebar-wallpaper-clear-btn" class="sidebar-action-btn sidebar-action-btn-danger" data-i18n="sidebar.wallpaper.clear">清空壁纸</button>
+            </div>
+          </div>
+          <div class="sidebar-effects">
+            <div class="sidebar-effect-row">
+              <div class="sidebar-head">
+                <span class="sidebar-effect-label" data-i18n="sidebar.wallpaper.effects.blur">模糊</span>
+                <span id="wallpaper-blur-value" class="sidebar-value sidebar-value-sm">0</span>
+              </div>
+              <input
+                id="wallpaper-blur-range"
+                class="sidebar-range"
+                type="range"
+                min="0"
+                max="20"
+                step="1"
+                value="0"
+                data-i18n-aria-label="sidebar.wallpaper.effects.blurAria"
+                aria-label="壁纸模糊强度"
+              >
+            </div>
+            <div class="sidebar-effect-row">
+              <div class="sidebar-head">
+                <span class="sidebar-effect-label" data-i18n="sidebar.wallpaper.effects.dim">遮罩</span>
+                <span id="wallpaper-dim-value" class="sidebar-value sidebar-value-sm">0%</span>
+              </div>
+              <input
+                id="wallpaper-dim-range"
+                class="sidebar-range"
+                type="range"
+                min="0"
+                max="80"
+                step="5"
+                value="0"
+                data-i18n-aria-label="sidebar.wallpaper.effects.dimAria"
+                aria-label="壁纸遮罩不透明度"
+              >
+            </div>
+          </div>
+        </section>
+
+        <section class="sidebar-section sidebar-panel" aria-labelledby="icon-cache-title">
+          <div class="sidebar-head">
+            <h2 id="icon-cache-title" class="sidebar-title" data-i18n="sidebar.title.iconCache">图标缓存</h2>
+            <span id="icon-refresh-status" class="sidebar-value sidebar-value-sm"></span>
+          </div>
+          <div class="sidebar-wallpaper-actions">
+            <button type="button" id="refresh-icons-btn" class="sidebar-action-btn" data-i18n="sidebar.iconCache.refresh">刷新全部图标</button>
+          </div>
+        </section>
+
+        <section class="sidebar-section sidebar-panel" aria-labelledby="sync-section-title">
+          <div class="sidebar-head">
+            <h2 id="sync-section-title" class="sidebar-title" data-i18n="sidebar.title.sync">云同步</h2>
+            <span id="sync-status-text" class="sidebar-value sidebar-sync-status"></span>
+          </div>
+          <div id="sync-login-section" class="sidebar-wallpaper-actions">
+            <button type="button" id="sync-login-btn" class="sidebar-action-btn" data-i18n="sidebar.sync.login">登录</button>
+          </div>
+          <div id="sync-logged-section" class="hidden">
+            <div class="sync-btn-row">
+              <button type="button" id="sync-upload-btn" class="sidebar-action-btn" data-i18n="sidebar.sync.upload">上传</button>
+              <button type="button" id="sync-download-btn" class="sidebar-action-btn" data-i18n="sidebar.sync.download">拉取</button>
+              <button type="button" id="sync-logout-btn" class="sidebar-action-btn sidebar-action-btn-danger" data-i18n="sidebar.sync.logout">退出</button>
+            </div>
+            <button type="button" id="sync-delete-account-btn" class="sidebar-action-btn sidebar-action-btn-danger sync-delete-btn" data-i18n="sidebar.sync.deleteAccount" data-i18n-title="sidebar.sync.deleteAccountTitle" title="永久删除账户与全部云端数据">删除账户</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <div class="main-hero">
+      <section class="clock-section" aria-label="时钟">
+        <div id="clocks-wrap" class="clocks-wrap"></div>
+      </section>
+
+      <div class="search-container">
+        <form id="search-form" class="search-form" role="search">
+          <div class="search-bar">
+            <button type="button" id="engine-trigger" class="engine-trigger" aria-haspopup="true" aria-expanded="false">
+              <span id="engine-name">Google</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="search-input-wrap">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="search-icon-svg" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="search-input" name="q" type="search" data-i18n-placeholder="search.placeholder" placeholder="在网络上搜索..." class="search-input" data-i18n-aria-label="search.ariaLabel" aria-label="搜索查询" autocomplete="off" autofocus>
+            </div>
+          </div>
+        </form>
+        <div id="engine-dropdown" class="engine-dropdown hidden" role="menu">
+          <div id="engine-list" class="engine-list" role="group" data-i18n-aria-label="search.engine.listAria" aria-label="搜索引擎列表"></div>
+          <div class="engine-dropdown-footer">
+            <button type="button" id="add-engine-btn" class="add-engine-btn" data-i18n="search.engine.add">+ 添加搜索引擎</button>
+            <div id="add-engine-form" class="add-engine-form hidden" role="dialog" data-i18n-aria-label="search.engine.addFormAria" aria-label="添加搜索引擎表单">
+              <label for="new-engine-name" class="visually-hidden" style="display:none;" data-i18n="search.engine.form.nameLabel">名称</label>
+              <input id="new-engine-name" type="text" data-i18n-placeholder="search.engine.form.namePlaceholder" placeholder="名称（必填）" class="engine-form-input" data-i18n-aria-label="search.engine.form.nameAria" aria-label="搜索引擎名称">
+              <label for="new-engine-url" class="visually-hidden" style="display:none;" data-i18n="search.engine.form.urlLabel">搜索地址</label>
+              <input id="new-engine-url" type="url" data-i18n-placeholder="search.engine.form.urlPlaceholder" placeholder="搜索地址，需包含 %s（如 https://example.com/search?q=%s）" class="engine-form-input" data-i18n-aria-label="search.engine.form.urlAria" aria-label="搜索引擎地址">
+              <div class="engine-form-actions">
+                <button type="button" id="cancel-engine-btn" class="engine-form-cancel" data-i18n="search.engine.form.cancel">取消</button>
+                <button type="button" id="save-engine-btn" class="engine-form-save" data-i18n="search.engine.form.save">保存</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section class="grid-scroll-region" data-i18n-aria-label="grid.scrollAria" aria-label="快捷方式滚动区">
+      <section id="grid-container" class="grid-area" data-i18n-aria-label="grid.gridAria" aria-label="快捷方式网格"></section>
+    </section>
+  </main>
+
+  <div id="folder-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="folder-title">
+    <div id="folder-modal" class="folder-modal">
+      <header class="modal-header">
+        <h2 id="folder-title" class="modal-title"></h2>
+        <button id="folder-close" class="close-btn" data-i18n-aria-label="folder.closeAria" aria-label="关闭文件夹">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </header>
+      <div id="folder-grid" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="delete-overlay" class="overlay overlay-mid hidden" role="alertdialog" aria-modal="true" aria-labelledby="delete-title">
+    <div class="dialog-card">
+      <h2 id="delete-title" class="dialog-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-red" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        <span data-i18n="dialog.delete.title">确认删除</span>
+      </h2>
+      <p class="dialog-text" data-i18n-html="dialog.delete.text">
+        您确定要永久删除这个快捷方式吗？<br>如果这是一个文件夹，内部所有的内容也将被一并删除。
+      </p>
+      <div class="dialog-actions">
+        <button id="delete-cancel" class="btn-secondary" data-i18n="dialog.delete.cancel">取消</button>
+        <button id="delete-confirm" class="btn-danger" data-i18n="dialog.delete.confirm">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="delete-account-overlay" class="overlay overlay-mid hidden" role="alertdialog" aria-modal="true" aria-labelledby="delete-account-title">
+    <div class="dialog-card delete-account-card">
+      <h2 id="delete-account-title" class="dialog-title dialog-title-danger">
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        <span data-i18n="dialog.deleteAccount.title">永久删除账户</span>
+      </h2>
+      <div class="dialog-text dialog-text-danger">
+        <p data-i18n="dialog.deleteAccount.line1">此操作不可撤销。删除后所有云端备份数据将立即清除，且无法找回。</p>
+        <p data-i18n="dialog.deleteAccount.line2">确认前请仔细阅读上方提示。</p>
+      </div>
+      <div class="dialog-actions">
+        <button id="delete-account-cancel" class="btn-secondary" data-i18n="dialog.deleteAccount.cancel">取消</button>
+        <button id="delete-account-confirm" class="btn-danger" disabled>确认删除(5)</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="login-consent-overlay" class="overlay overlay-mid hidden" role="dialog" aria-modal="true" aria-labelledby="login-consent-title">
+    <div class="dialog-card login-consent-card">
+      <h2 id="login-consent-title" class="login-consent-title" data-i18n="dialog.loginConsent.title">账户与云端数据说明</h2>
+      <p class="login-consent-text" data-i18n="dialog.loginConsent.intro">
+        注册或登录后，邮箱与密码用于账户身份认证。开启同步后，下列扩展数据会上传，用于在你的设备间保持一致：
+      </p>
+      <ul class="login-consent-bullets">
+        <li data-i18n="dialog.loginConsent.bullet1">快捷方式与文件夹</li>
+        <li data-i18n="dialog.loginConsent.bullet2">自定义搜索引擎与当前选中项</li>
+        <li data-i18n="dialog.loginConsent.bullet3">时钟配置</li>
+        <li data-i18n="dialog.loginConsent.bullet4">主页列数</li>
+      </ul>
+      <p class="login-consent-footnote" data-i18n="dialog.loginConsent.footnote">
+        不会收集其他数据，也不会向第三方共享。
+      </p>
+      <div class="dialog-actions">
+        <button id="login-consent-cancel" class="btn-secondary" data-i18n="dialog.loginConsent.cancel">取消</button>
+        <button id="login-consent-agree" class="btn-primary" data-i18n="dialog.loginConsent.agree">同意并继续</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="edit-overlay" class="overlay overlay-edit hidden" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+    <div class="dialog-card dialog-card-wide">
+      <header class="modal-header">
+        <h2 id="edit-title" class="dialog-plain-title" data-i18n="dialog.edit.add">添加</h2>
+        <button id="edit-close" class="close-btn" data-i18n-aria-label="dialog.edit.closeAria" aria-label="关闭">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </header>
+      <form id="edit-form" class="edit-form">
+        <div id="type-toggle" class="type-toggle" role="group" data-i18n-aria-label="dialog.edit.typeAria" aria-label="快捷方式类型">
+          <button type="button" data-type="link" class="type-btn type-btn-active" aria-pressed="true" data-i18n="dialog.edit.typeLink">网页链接</button>
+          <button type="button" data-type="folder" class="type-btn" aria-pressed="false" data-i18n="dialog.edit.typeFolder">文件夹</button>
+        </div>
+        <fieldset class="form-fields" style="border:none; padding:0; margin:0;">
+          <legend class="visually-hidden" style="display:none;">快捷方式信息</legend>
+          <div>
+            <label for="edit-name" class="form-label" data-i18n="dialog.edit.nameLabel">名称</label>
+            <input id="edit-name" name="edit-name" type="text" required data-i18n-placeholder="dialog.edit.namePlaceholder" placeholder="例如: Google" class="form-input">
+          </div>
+          <div id="url-field-wrap">
+            <label for="edit-url" class="form-label" data-i18n="dialog.edit.urlLabel">目标网址</label>
+            <input id="edit-url" name="edit-url" type="url" data-i18n-placeholder="dialog.edit.urlPlaceholder" placeholder="https://..." class="form-input">
+          </div>
+          <div id="icon-field-wrap">
+            <label for="icon-upload-btn" class="form-label" data-i18n="dialog.edit.iconLabel">自定义图标</label>
+            <div class="icon-upload-row">
+              <div id="icon-preview" class="icon-preview-box" aria-hidden="true">
+                <span class="icon-preview-placeholder" data-i18n="dialog.edit.iconNone">无</span>
+              </div>
+              <button type="button" id="icon-upload-btn" class="icon-upload-btn" data-i18n="dialog.edit.iconUpload">点击选择图片...</button>
+              <button type="button" id="icon-clear-btn" class="icon-clear-btn hidden" data-i18n="dialog.edit.iconClear">清除</button>
+            </div>
+            <input type="file" id="edit-icon-file" accept="image/*" hidden aria-hidden="true">
+          </div>
+        </fieldset>
+        <footer class="form-footer">
+          <button type="submit" class="btn-primary" data-i18n="dialog.edit.save">保存</button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <div id="icon-crop-overlay" class="overlay overlay-mid hidden" role="dialog" aria-modal="true" aria-labelledby="icon-crop-title">
+    <div class="dialog-card icon-crop-card">
+      <header class="icon-crop-header">
+        <h2 id="icon-crop-title" class="icon-crop-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span data-i18n="dialog.iconCrop.title">裁剪图标</span>
+        </h2>
+      </header>
+      <div id="icon-crop-stage" class="icon-crop-stage">
+        <img id="icon-crop-image" class="icon-crop-image" alt="" draggable="false">
+        <div id="icon-crop-box" class="icon-crop-box" role="region" data-i18n-aria-label="dialog.iconCrop.boxAria" aria-label="裁剪选区">
+          <span class="icon-crop-grid icon-crop-grid-v"></span>
+          <span class="icon-crop-grid icon-crop-grid-h"></span>
+          <span class="icon-crop-handle" data-handle="nw"></span>
+          <span class="icon-crop-handle" data-handle="ne"></span>
+          <span class="icon-crop-handle" data-handle="sw"></span>
+          <span class="icon-crop-handle" data-handle="se"></span>
+        </div>
+      </div>
+      <footer class="icon-crop-footer">
+        <button type="button" id="icon-crop-reset" class="btn-secondary" data-i18n="dialog.iconCrop.reset">重置</button>
+        <div class="icon-crop-footer-right">
+          <button type="button" id="icon-crop-cancel" class="btn-secondary" data-i18n="dialog.iconCrop.cancel">取消</button>
+          <button type="button" id="icon-crop-confirm" class="btn-primary" data-i18n="dialog.iconCrop.confirm">确定裁剪</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <div id="clock-overlay" class="overlay overlay-edit hidden" role="dialog" aria-modal="true" aria-labelledby="clock-settings-title">
+    <div class="dialog-card dialog-card-wide">
+      <header class="modal-header">
+        <h2 id="clock-settings-title" class="dialog-plain-title" data-i18n="dialog.clockSettings.title">时钟设置</h2>
+        <button id="clock-settings-close" class="close-btn" data-i18n-aria-label="dialog.clockSettings.closeAria" aria-label="关闭时钟设置">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </header>
+      <!-- While it's called edit-form, it has no form tag in original, wrap it to form -->
+      <form id="clock-settings-form" class="edit-form">
+        <div id="clock-list" class="clock-list" role="list"></div>
+        <footer class="form-footer">
+          <button type="submit" id="clock-settings-save" class="btn-primary" data-i18n="dialog.clockSettings.save">保存</button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <div id="login-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="dialog-card login-card">
+      <h2 id="login-title" class="dialog-plain-title" data-i18n="dialog.login.title">云端同步</h2>
+      <p class="login-desc" data-i18n="dialog.login.desc">登录后可在 Chrome 与 Firefox 间同步数据。注册需邮箱验证。</p>
+
+      <div class="auth-tabs" role="tablist">
+        <button type="button" class="auth-tab active" data-mode="login" role="tab" data-i18n="dialog.login.tabLogin">登录</button>
+        <button type="button" class="auth-tab" data-mode="signup" role="tab" data-i18n="dialog.login.tabSignup">注册</button>
+      </div>
+
+      <div id="auth-pane-login" class="auth-pane login-form-fields">
+        <input id="login-email" type="email" data-i18n-placeholder="dialog.login.emailPlaceholder" placeholder="邮箱地址" class="form-input" autocomplete="email">
+        <input id="login-password" type="password" data-i18n-placeholder="dialog.login.passwordPlaceholder" placeholder="密码" class="form-input" autocomplete="current-password">
+        <button id="forgot-password-btn" type="button" class="forgot-password-btn" data-i18n="dialog.login.forgotPassword">忘记密码？</button>
+        <p id="login-error" class="login-error"></p>
+        <button id="login-submit-btn" class="btn-primary" type="button" data-i18n="dialog.login.submitLogin">登录</button>
+      </div>
+
+      <div id="auth-pane-signup" class="auth-pane login-form-fields hidden">
+        <input id="signup-email" type="email" data-i18n-placeholder="dialog.login.emailPlaceholder" placeholder="邮箱地址" class="form-input" autocomplete="email">
+        <input id="signup-password" type="password" data-i18n-placeholder="dialog.login.signupPasswordPlaceholder" placeholder="密码（8-128 位）" class="form-input" autocomplete="new-password" maxlength="128">
+        <input id="signup-password-confirm" type="password" data-i18n-placeholder="dialog.login.signupPasswordConfirmPlaceholder" placeholder="再次输入密码" class="form-input" autocomplete="new-password" maxlength="128">
+        <p id="signup-error" class="login-error"></p>
+        <button id="signup-submit-btn" class="btn-primary" type="button" data-i18n="dialog.login.submitSignup">注册</button>
+      </div>
+
+      <div id="auth-pane-verify" class="auth-pane login-form-fields hidden">
+        <p class="verify-desc" data-i18n-html="dialog.verify.desc">
+          验证邮件已发送到 <span id="verify-email-target" class="verify-email-target"></span>。
+          请到邮箱（含垃圾箱）点击邮件中的链接完成验证，然后点击下方「我已验证」。
+        </p>
+        <p id="verify-status" class="verify-status"></p>
+        <button id="verify-check-btn" class="btn-primary" type="button" data-i18n="dialog.verify.check">我已验证</button>
+        <button id="verify-resend-btn" class="btn-secondary" type="button" data-i18n="dialog.verify.resend">重新发送验证邮件</button>
+      </div>
+
+      <button id="login-skip-btn" class="btn-secondary login-skip-btn" type="button" data-i18n="dialog.login.skip">暂不登录</button>
+    </div>
+  </div>
+
+  <button type="button" id="lang-toggle" class="lang-toggle" data-i18n-aria-label="lang.switchTo" aria-label="切换到 English">
+    <svg class="lang-toggle-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="2" y1="12" x2="22" y2="12"/>
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+    </svg>
+    <span class="lang-toggle-label" data-i18n="lang.current">中文</span>
+  </button>
+
+  <div id="context-menu" class="context-menu hidden" role="menu"></div>
+  <input type="file" id="wallpaper-input" accept="image/*" hidden aria-hidden="true">
+  <div id="app-toast" class="app-toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <div id="signin-notice" class="signin-notice" role="status" aria-live="polite" aria-atomic="true">
+    <svg class="signin-notice-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"/>
+      <path d="M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07"/>
+      <path d="M2 2l20 20"/>
+    </svg>
+    <div class="signin-notice-text">
+      <p class="signin-notice-title" data-i18n="notice.signin.title">未登录</p>
+      <p class="signin-notice-sub" data-i18n="notice.signin.sub">数据仅保存在本地</p>
+    </div>
+  </div>
+
+  <script src="firebase.js"></script>
+  <script src="iconCache.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

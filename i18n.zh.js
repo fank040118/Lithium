@@ -1,0 +1,299 @@
+// Lithium 中文文案字典 (zh-CN)
+// Keep in sync with i18n.en.js — every key here must exist there too.
+(function () {
+  'use strict';
+  if (!window.I18N) return;
+  window.I18N.register('zh-CN', {
+    lang: {
+      switchTo: '切换到 English',
+      current: '中文',
+    },
+
+    title: {
+      newTab: '新标签页',
+    },
+
+    sidebar: {
+      ariaLabel: '布局侧栏',
+      toggleAria: '切换左侧侧栏',
+
+      title: {
+        gridColumns: '主页列数',
+        wallpaper: '壁纸设置',
+        iconCache: '图标缓存',
+        sync: '云同步',
+      },
+
+      gridColumns: {
+        rangeAria: '调整主页快捷方式列数',
+      },
+
+      wallpaper: {
+        previewAria: '默认背景预览',
+        previewLabel: '默认背景',
+        previewCurrentAria: '当前壁纸预览',
+        previewCurrentLabel: '当前壁纸',
+        change: '更换壁纸',
+        clear: '清空壁纸',
+        effects: {
+          blur: '模糊',
+          blurAria: '壁纸模糊强度',
+          dim: '遮罩',
+          dimAria: '壁纸遮罩不透明度',
+        },
+      },
+
+      iconCache: {
+        refresh: '刷新所有非自定义图标',
+      },
+
+      sync: {
+        login: '登录',
+        upload: '上传',
+        download: '拉取',
+        logout: '退出',
+        deleteAccount: '删除账户',
+        deleteAccountTitle: '永久删除账户与全部云端数据',
+        status: {
+          notSignedIn: '未登录',
+          signedIn: '已同步',
+          notVerified: '邮箱未验证',
+          syncing: '同步中...',
+          syncedAt: '{time} 已同步',
+        },
+      },
+    },
+
+    search: {
+      placeholder: '在网络上搜索...',
+      ariaLabel: '搜索查询',
+      engine: {
+        listAria: '搜索引擎列表',
+        add: '+ 添加搜索引擎',
+        addFormAria: '添加搜索引擎表单',
+        deleteTitle: '删除',
+        form: {
+          nameLabel: '名称',
+          namePlaceholder: '名称（必填）',
+          nameAria: '搜索引擎名称',
+          urlLabel: '搜索地址',
+          urlPlaceholder: '搜索地址，需包含 %s（如 https://example.com/search?q=%s）',
+          urlAria: '搜索引擎地址',
+          cancel: '取消',
+          save: '保存',
+        },
+      },
+    },
+
+    grid: {
+      scrollAria: '快捷方式滚动区',
+      gridAria: '快捷方式网格',
+    },
+
+    folder: {
+      closeAria: '关闭文件夹',
+      defaultName: '新建文件夹',
+      renameTitle: '重命名文件夹',
+    },
+
+    dialog: {
+      delete: {
+        title: '确认删除',
+        text: '您确定要永久删除这个快捷方式吗？<br>如果这是一个文件夹，内部所有的内容也将被一并删除。',
+        cancel: '取消',
+        confirm: '删除',
+      },
+      loginConsent: {
+        title: '账户与云端数据说明',
+        intro: '注册或登录后，邮箱与密码用于账户身份认证。开启同步后，下列扩展数据会上传，用于在你的设备间保持一致：',
+        bullet1: '快捷方式与文件夹',
+        bullet2: '自定义搜索引擎与当前选中项',
+        bullet3: '时钟配置',
+        bullet4: '主页列数',
+        footnote: '不会收集其他数据，也不会向第三方共享。',
+        cancel: '取消',
+        agree: '同意并继续',
+      },
+      deleteAccount: {
+        title: '永久删除账户',
+        line1: '此操作不可撤销。删除后所有云端备份数据将立即清除，且无法找回。',
+        line2: '确认前请仔细阅读上方提示。',
+        cancel: '取消',
+        confirm: '确认删除',
+        confirmCountdown: '确认删除({seconds})',
+      },
+      edit: {
+        add: '添加',
+        edit: '编辑',
+        closeAria: '关闭',
+        typeAria: '快捷方式类型',
+        typeLink: '网页链接',
+        typeFolder: '文件夹',
+        nameLabel: '名称',
+        namePlaceholder: '例如: Google',
+        urlLabel: '目标网址',
+        urlPlaceholder: 'https://...',
+        iconLabel: '自定义图标',
+        iconNone: '无',
+        iconUpload: '点击选择图片...',
+        iconUploadDone: '已设置图标',
+        iconClear: '清除',
+        save: '保存',
+      },
+      iconCrop: {
+        title: '裁剪图标',
+        boxAria: '裁剪选区',
+        reset: '重置',
+        cancel: '取消',
+        confirm: '确定裁剪',
+      },
+      clockSettings: {
+        title: '时钟设置',
+        closeAria: '关闭时钟设置',
+        save: '保存',
+        removeTitle: '移除',
+        add: '添加时钟',
+        atLimit: '已达上限（最多 {max} 个时钟）',
+      },
+      login: {
+        title: '云端同步',
+        desc: '登录后可在 Chrome 与 Firefox 间同步数据。注册需邮箱验证。',
+        tabLogin: '登录',
+        tabSignup: '注册',
+        emailPlaceholder: '邮箱地址',
+        passwordPlaceholder: '密码',
+        signupPasswordPlaceholder: '密码（8-128 位，含大小写字母与数字）',
+        signupPasswordConfirmPlaceholder: '再次输入密码',
+        submitLogin: '登录',
+        submitSignup: '注册',
+        forgotPassword: '忘记密码？',
+        skip: '暂不登录',
+      },
+      verify: {
+        desc: '验证邮件已发送到 <span id="verify-email-target" class="verify-email-target"></span>。请到邮箱（含垃圾箱）点击邮件中的链接完成验证，然后点击下方「我已验证」。',
+        check: '我已验证',
+        resend: '重新发送验证邮件',
+      },
+    },
+
+    contextMenu: {
+      clockSettings: '时钟设置',
+      openInNewTab: '在新标签页中打开',
+      edit: '编辑',
+      delete: '删除',
+      addShortcut: '添加快捷方式',
+      changeWallpaper: '更换壁纸',
+      removeWallpaper: '移除壁纸',
+    },
+
+    drag: {
+      moveToHomeHint: '松开鼠标将图标移至主页',
+    },
+
+    notice: {
+      signin: {
+        title: '未登录',
+        sub: '数据仅保存在本地',
+      },
+    },
+
+    toast: {
+      wallpaperSaveFailedQuota: '壁纸保存失败，存储空间可能不足，请换一张更小的图片。',
+      wallpaperSaveFailedGeneric: '壁纸保存失败，请换一张更小的图片后重试。',
+      syncMustVerifyEmail: '请先完成邮箱验证',
+      syncUploaded: '已上传到云端',
+      syncDownloaded: '已从云端拉取',
+      syncNoCloudData: '云端暂无可用数据',
+      syncFailed: '同步失败，请检查网络',
+      iconCacheUnavailable: '图标缓存不可用',
+      iconRefreshing: '刷新中…',
+      iconRefreshedCount: '已刷新 {count} 个图标',
+      iconAlreadyFresh: '图标已是最新',
+      iconRefreshFailed: '刷新失败',
+      accountDeleted: '账户已删除',
+    },
+
+    auth: {
+      loginPending: '登录中...',
+      signupPending: '注册中...',
+      signupPasswordMismatch: '两次密码不一致',
+      signupPasswordTooShort: '密码至少 8 位',
+      signupPasswordTooLong: '密码最多 128 位',
+      signupPasswordNeedsUpper: '密码需包含至少一个大写字母',
+      signupPasswordNeedsLower: '密码需包含至少一个小写字母',
+      signupPasswordNeedsDigit: '密码需包含至少一个数字',
+      signupPasswordInvalidChar: '密码只能使用字母、数字、空格和 !@#$%&*+-_=?',
+      verifyChecking: '检查中...',
+      verifyNotYet: '尚未验证，请先点击邮件中的链接',
+      verifyResendPending: '发送中...',
+      verifyResendSuccess: '验证邮件已重新发送，30 秒内可再次发送',
+      verifyResendError: '发送失败：{detail}',
+      verifyCheckError: '检查失败：{detail}',
+      deleteAccountPending: '删除中...',
+      deleteAccountError: '删除失败：{detail}',
+      passwordResetEmptyEmail: '请先输入邮箱地址',
+      passwordResetSent: '请检查邮箱',
+      passwordResetError: '发送重置邮件失败：{detail}',
+    },
+
+    error: {
+      unknown: '未知错误',
+      emailNotFound: '账号不存在，请先注册',
+      invalidLoginCredentials: '邮箱或密码错误',
+      emailExists: '该邮箱已注册，请直接登录',
+      weakPassword: '密码至少 6 位',
+      invalidEmail: '邮箱格式不正确',
+      missingPassword: '请输入密码',
+      missingEmail: '请输入邮箱',
+      tooManyAttempts: '尝试次数过多，请稍后再试',
+      userDisabled: '该账号已被禁用',
+      operationNotAllowed: '该登录方式未启用',
+      quotaExceeded: '今日额度已用尽，请明日再试',
+      notSignedIn: '请先登录',
+      generic: '错误：{detail}',
+    },
+
+    city: {
+      beijing: '北京',
+      tokyo: '东京',
+      seoul: '首尔',
+      singapore: '新加坡',
+      hongKong: '香港',
+      taipei: '台北',
+      mumbai: '孟买',
+      dubai: '迪拜',
+      bangkok: '曼谷',
+      london: '伦敦',
+      paris: '巴黎',
+      berlin: '柏林',
+      moscow: '莫斯科',
+      rome: '罗马',
+      madrid: '马德里',
+      newYork: '纽约',
+      chicago: '芝加哥',
+      denver: '丹佛',
+      losAngeles: '洛杉矶',
+      saoPaulo: '圣保罗',
+      vancouver: '温哥华',
+      mexicoCity: '墨西哥城',
+      auckland: '奥克兰',
+      sydney: '悉尼',
+      melbourne: '墨尔本',
+      honolulu: '檀香山',
+      cairo: '开罗',
+      johannesburg: '约翰内斯堡',
+    },
+
+    continent: {
+      asia: '亚洲',
+      europe: '欧洲',
+      americas: '美洲',
+      oceania: '大洋洲',
+      africa: '非洲',
+    },
+
+    defaults: {
+      folderName: '设计工具',
+    },
+  });
+})();

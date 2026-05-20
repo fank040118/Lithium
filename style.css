@@ -1,0 +1,2221 @@
+/* Wallpaper background and dim layers */
+#wallpaper-bg {
+  position: fixed;
+  inset: -40px; /* extend beyond viewport to hide blur edge artifacts */
+  z-index: -2;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+#wallpaper-dim {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* ============================================================
+     GLASS — black-tinted surface tiers
+     L0  most subtle, nested inside another panel
+     L1  ambient (clock pill, hover dim)
+     L2  form input / inset chip
+     L3  primary surface (cards, search, sidebar root, overlay)
+     L4  foreground (dialog, dropdown, ctx menu, login, emoji)
+     ============================================================ */
+  --glass-l0:        rgba(0, 0, 0, 0.20);
+  --glass-l1:        rgba(0, 0, 0, 0.30);
+  --glass-l2:        rgba(0, 0, 0, 0.50);
+  --glass-l3:        rgba(0, 0, 0, 0.60);
+  --glass-l3-hover:  rgba(0, 0, 0, 0.80);  /* generic hover (+0.20 from L3) */
+  --glass-l4:        rgba(0, 0, 0, 0.78);
+  --glass-l4-strong: rgba(0, 0, 0, 0.82);  /* toast max emphasis */
+
+  /* Backdrop blur tiers */
+  --blur-light: 4px;     /* drag dim, overlay subtle */
+  --blur-soft:  8px;     /* sidebar */
+  --blur-base:  12px;    /* L2/L3 main */
+  --blur-heavy: 16px;    /* L4 foreground + overlay backdrops */
+  --blur-xl:    24px;    /* folder overlay scrim (panel itself stays unblurred) */
+
+  /* White hairline borders / inset highlights */
+  --border-white-faint:    rgba(255, 255, 255, 0.06);
+  --border-white-hairline: rgba(255, 255, 255, 0.10);
+  --border-white-soft:     rgba(255, 255, 255, 0.20);
+
+  /* Black borders on glass edges */
+  --border-black-soft:   rgba(0, 0, 0, 0.40);
+  --border-black-medium: rgba(0, 0, 0, 0.50);
+  --border-black-strong: rgba(0, 0, 0, 0.70);
+
+  /* Semantic accent tints */
+  --accent-blue-bg-soft:    rgba(59, 130, 246, 0.10);
+  --accent-blue-bg-hover:   rgba(59, 130, 246, 0.15);
+  --accent-blue-bg-active:  rgba(59, 130, 246, 0.20);
+  --accent-blue-border:     rgba(59, 130, 246, 0.50);
+
+  --accent-red-bg-soft:     rgba(220, 38, 38, 0.10);
+  --accent-red-bg-hover:    rgba(239, 68, 68, 0.15);
+  --accent-red-border-soft: rgba(248, 113, 113, 0.34);
+  --accent-red-border:      rgba(248, 113, 113, 0.50);
+
+  /* Foreground text on dark surfaces */
+  --fg-muted:  rgba(255, 255, 255, 0.60);
+  --fg-soft:   rgba(255, 255, 255, 0.72);
+  --fg-strong: rgba(255, 255, 255, 0.85);
+
+  /* ============================================================
+     Legacy aliases — kept so Figma Variables bindings still resolve
+     ============================================================ */
+  --surface-bg:           var(--glass-l3);
+  --surface-bg-hover:     var(--glass-l3-hover);
+  --surface-blur:         var(--blur-base);
+  --surface-shadow:       0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  --surface-border-soft:  var(--border-white-hairline);
+
+  --sidebar-blur:            var(--blur-soft);
+  --sidebar-shadow:          0 12px 16px rgba(0, 0, 0, 0.35);
+  --sidebar-panel-bg:        var(--glass-l0);
+  --sidebar-panel-border:    var(--border-white-hairline);
+  --sidebar-panel-inset:     inset 0 1px 0 var(--border-white-faint);
+  --sidebar-chip-bg:         rgba(255, 255, 255, 0.15);
+  --sidebar-button-bg:       rgba(255, 255, 255, 0.15);
+  --sidebar-button-bg-hover: rgba(255, 255, 255, 0.22);
+  --sidebar-fg-muted:        var(--fg-muted);
+  --sidebar-danger-fg:       #f87171;                     /* color/red/400 */
+  --sidebar-danger-border:   #dc2626;                     /* color/red/600 / action/danger */
+
+  --clock-time-width: calc(8ch + 0.35em);
+  --grid-gap: 1rem;
+  --main-grid-columns: 8;
+  --folder-grid-columns: 8;
+  --main-grid-max-width: 752px;
+  --main-content-max-width: 800px;
+  --sidebar-width: 400px;
+  --sidebar-min-width: var(--sidebar-width);
+  --sidebar-preview-width: 11rem;
+  --sidebar-actions-min-width: 7rem;
+  --sidebar-peek: 18px;
+
+  /* ============================================================
+     DIALOG SYSTEM — Figma v1.1
+     ============================================================ */
+
+  /* Dialog text scale — slate ramp from #fff down */
+  --text-primary:    #ffffff;
+  --text-secondary:  #e2e8f0;  /* slate/200, ctx item text */
+  --text-tertiary:   #cbd5e1;  /* slate/300, verify desc / secondary btn text */
+  --text-quaternary: #94a3b8;  /* slate/400, label / 普通描述 */
+  --text-placeholder:#64748b;  /* slate/500, placeholder / 小序号 */
+  --text-accent:     #60a5fa;  /* blue/400, 强调链接、激活 chip 文字 */
+  --text-danger:     #f87171;  /* red/400, 危险文字、删除账户标题 */
+
+  /* Action button fills */
+  --action-primary:        #2563eb;  /* blue/600 */
+  --action-primary-hover:  #3b82f6;  /* blue/500 */
+  --action-danger:         #dc2626;  /* red/600 */
+  --action-danger-hover:   #ef4444;  /* red/500 */
+  --action-secondary:      var(--glass-l3);        /* rgba(0,0,0,0.6) */
+  --action-secondary-hover: var(--glass-l3-hover);
+
+  /* Input / dialog surface */
+  --bg-input:        #000000;
+  --bg-input-border: var(--glass-l3);   /* Figma rgba(0,0,0,0.6) — matches L3 */
+  --bg-input-faint:  rgba(0, 0, 0, 0.05); /* color/black-alpha/05 — icon preview tile */
+  --bg-input-soft:   rgba(0, 0, 0, 0.40); /* color/black-alpha/40 — recessed row inside a dialog */
+  --focus-ring-blue: rgba(37, 99, 235, 0.20);
+}
+
+body {
+  min-height: 100vh;
+  background: #0f172a;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+  position: relative;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Blobs */
+.blob {
+  position: absolute;
+  width: 40%;
+  height: 40%;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.blob-blue {
+  top: -10%; left: -10%;
+  background: rgba(37, 99, 235, 0.2);
+  filter: blur(120px);
+}
+.blob-purple {
+  bottom: -10%; right: -10%;
+  background: rgba(147, 51, 234, 0.2);
+  filter: blur(120px);
+}
+
+/* Main layout */
+.main-content {
+  max-width: max(56rem, var(--main-content-max-width));
+  margin: 0 auto;
+  padding-top: 5rem;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+  padding-bottom: 1.5rem;
+  position: relative;
+  z-index: 10;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.main-hero {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+}
+
+.left-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  max-width: calc(100vw - 0.75rem);
+  height: 100vh;
+  transform: translateX(calc(-100% + var(--sidebar-peek)));
+  border: none;
+  border-right: 1px solid var(--border-white-hairline);
+  border-radius: 0 1.5rem 1.5rem 0;
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-soft));
+  -webkit-backdrop-filter: blur(var(--blur-soft));
+  box-shadow: var(--sidebar-shadow);
+  z-index: 15;
+  transition: transform 0.24s ease;
+  overflow: hidden;
+}
+
+.left-sidebar-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--sidebar-peek);
+  height: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.left-sidebar-handle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 4px;
+  height: 44px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.32);
+  box-shadow:
+    -6px 0 0 rgba(255, 255, 255, 0.18),
+    -12px 0 0 rgba(255, 255, 255, 0.12);
+}
+
+.left-sidebar-content {
+  height: 100%;
+  /* Figma v1.1: 24px top/bottom · 20px left · 34px right (extra room for the
+     handle dragger on the right edge) */
+  padding: 24px 34px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-10px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.sidebar-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: 100%;
+  padding-right: 0.25rem;
+}
+
+.left-sidebar.is-open {
+  transform: translateX(0);
+}
+
+.left-sidebar.is-open .left-sidebar-content {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.left-sidebar-handle:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.42);
+  outline-offset: -2px;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.sidebar-panel {
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--glass-l0);
+  border: 1px solid var(--sidebar-panel-border);
+  box-shadow: var(--sidebar-panel-inset);
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sidebar-title {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+}
+
+.sidebar-value {
+  min-width: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--sidebar-chip-bg);
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hide chip wrapper while it has no content (e.g. #icon-refresh-status
+   when no refresh is in flight, #sync-status-text before sign-in is
+   resolved). Avoids rendering a stray empty pill in the section header. */
+.sidebar-value:empty {
+  display: none;
+}
+
+.sidebar-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 2.5rem;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.sidebar-range::-webkit-slider-runnable-track {
+  height: 0.25rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.sidebar-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: -0.5rem;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+}
+
+.sidebar-range::-moz-range-track {
+  height: 0.25rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.sidebar-range::-moz-range-thumb {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+}
+
+.sidebar-range-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--sidebar-fg-muted);
+  font-size: 14px;
+}
+
+.sidebar-note {
+  color: var(--fg-soft);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+/* Wallpaper effects sliders */
+.sidebar-effects {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.sidebar-effect-row {
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-effect-label {
+  font-size: 14px;
+  color: var(--sidebar-fg-muted);
+  font-weight: 500;
+}
+/* Figma v1.1: both the main chip and the effect chips are the same size.
+   .sidebar-value-sm is kept as an alias for HTML compatibility but inherits
+   the default values now. */
+.sidebar-value-sm {
+  /* same as .sidebar-value */
+}
+
+.sidebar-wallpaper-layout {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+}
+
+.sidebar-wallpaper-preview {
+  position: relative;
+  flex: 0 0 176px;
+  width: 176px;
+  height: 99px;
+  min-height: 99px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--sidebar-panel-border);
+  background-color: #0f172a;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  isolation: isolate;
+}
+
+.sidebar-wallpaper-preview::before,
+.sidebar-wallpaper-preview::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(28px);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  z-index: -1;
+}
+
+.sidebar-wallpaper-preview::before {
+  top: -22%;
+  left: -12%;
+  width: 72%;
+  height: 72%;
+  background: rgba(37, 99, 235, 0.36);
+}
+
+.sidebar-wallpaper-preview::after {
+  right: -14%;
+  bottom: -24%;
+  width: 76%;
+  height: 76%;
+  background: rgba(147, 51, 234, 0.34);
+}
+
+.sidebar-wallpaper-preview[data-empty="true"]::before,
+.sidebar-wallpaper-preview[data-empty="true"]::after {
+  opacity: 1;
+}
+
+/* Figma v1.1: label is plain text (no pill background) — readable on top of
+   the gradient blobs in the empty state. When a wallpaper is set we keep
+   the dim chip background for legibility. */
+.sidebar-wallpaper-preview-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.sidebar-wallpaper-preview[data-empty="false"] .sidebar-wallpaper-preview-label {
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  background: var(--glass-l2);
+}
+
+.sidebar-wallpaper-actions {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.sidebar-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--sidebar-button-bg);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.18s ease, color 0.18s ease;
+}
+
+.sidebar-action-btn:hover {
+  background: var(--sidebar-button-bg-hover);
+}
+
+.sidebar-action-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sidebar-action-btn-danger {
+  color: var(--sidebar-danger-fg);
+}
+
+/* Clock */
+.clock-section {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+.clocks-wrap {
+  display: inline-flex;
+  gap: 0;
+  align-items: flex-start;
+  padding: 12px 36px 8px;
+  border-radius: 16px;
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-base));
+  -webkit-backdrop-filter: blur(var(--blur-base));
+  user-select: none;
+  -webkit-user-select: none;
+}
+.clock-container {
+  display: grid;
+  justify-items: center;
+  min-width: var(--clock-time-width);
+}
+.clock-container + .clock-container {
+  margin-left: 48px;
+}
+.clock-text {
+  display: block;
+  min-width: var(--clock-time-width);
+  font-size: 3.75rem;
+  font-weight: 300;
+  letter-spacing: 0.05em;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  cursor: default;
+}
+.date-text {
+  color: #fff;
+  margin-top: 2px;
+  font-size: 0.875rem;
+  text-align: center;
+  white-space: nowrap;
+  cursor: default;
+}
+.tz-label {
+  color: #fff;
+  font-size: 0.7rem;
+  margin-top: 2px;
+  text-align: center;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* Clock settings */
+.clock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.clock-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-input-soft);  /* Figma color/black-alpha/40 */
+  border-radius: 8px;
+  border: 1px solid var(--border-black-soft);
+}
+.clock-entry-index {
+  font-size: 12px;
+  color: var(--text-placeholder);
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+.clock-entry select {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--bg-input-border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+}
+.clock-entry select:focus {
+  border-color: var(--action-primary-hover);
+}
+.clock-entry select option {
+  background: var(--bg-input);
+}
+.clock-entry select optgroup {
+  background: var(--bg-input);
+  color: var(--text-placeholder);
+  font-weight: 600;
+  font-style: normal;
+}
+.clock-remove-btn {
+  padding: 6px;
+  background: none;
+  border: none;
+  color: var(--text-placeholder);
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.clock-remove-btn:hover {
+  color: var(--action-danger-hover);
+  background: var(--accent-red-bg-hover);
+}
+.clock-add-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--glass-l2);
+  border-radius: 0.5rem;
+  border: 1px dashed var(--border-black-medium);
+  cursor: pointer;
+  color: var(--text-placeholder);
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+.clock-add-entry:hover {
+  border-color: var(--text-quaternary);
+  color: var(--text-secondary);
+  background: var(--glass-l3);
+}
+.clock-limit-msg {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-placeholder);
+  text-align: center;
+}
+
+/* Search */
+.search-container {
+  max-width: 42rem;
+  margin: 0 auto 4rem;
+  position: relative;
+  z-index: 20;
+}
+.search-form {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+.search-bar {
+  display: flex;
+  width: 100%;
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-base));
+  border-radius: 9999px;
+  border: 1px solid var(--border-black-medium);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.search-bar:focus-within {
+  border-color: var(--accent-blue-border);
+}
+.engine-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border-black-medium);
+  padding: 0 16px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  white-space: nowrap;
+}
+.engine-trigger:hover {
+  background: var(--glass-l1);
+}
+.chevron-icon {
+  opacity: 0.5;
+}
+.search-input-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  position: relative;
+}
+.search-icon-svg {
+  position: absolute;
+  left: 16px;
+  color: var(--text-quaternary);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  background: transparent;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+  padding: 1rem 1rem 1rem 2.5rem;
+  border: none;
+}
+.search-input::placeholder {
+  color: #fff;
+}
+
+/* Engine dropdown */
+.engine-dropdown {
+  position: absolute;
+  left: 0; right: 0;
+  top: 100%;
+  margin-top: 8px;
+  background: var(--glass-l4);
+  backdrop-filter: blur(var(--blur-heavy));
+  border-radius: 16px;
+  border: 1px solid var(--border-black-medium);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  z-index: 25;
+}
+.engine-list {
+  padding: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.engine-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+.engine-item:hover {
+  background: var(--accent-blue-bg-hover);
+}
+.engine-item.selected {
+  background: var(--accent-blue-bg-active);
+  color: var(--text-accent);
+}
+.engine-delete-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--text-quaternary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.engine-item:hover .engine-delete-btn {
+  opacity: 1;
+}
+.engine-delete-btn:hover {
+  color: var(--action-danger-hover);
+  background: var(--accent-red-bg-hover);
+}
+.engine-dropdown-footer {
+  border-top: 1px solid var(--border-black-medium);
+  padding: 8px;
+}
+.add-engine-btn {
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  color: var(--text-quaternary);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 10px;
+  text-align: left;
+  transition: all 0.15s;
+}
+.add-engine-btn:hover {
+  background: var(--glass-l2);
+  color: var(--text-primary);
+}
+.add-engine-form {
+  padding: 8px 4px 4px 4px;
+}
+.engine-form-input {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--bg-input-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 8px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-sizing: border-box;
+}
+.engine-form-input:focus {
+  border-color: var(--action-primary);
+  box-shadow: 0 0 0 3px var(--focus-ring-blue);
+}
+.engine-form-input::placeholder {
+  color: var(--text-placeholder);
+}
+.engine-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.engine-form-save {
+  padding: 6px 16px;
+  background: var(--action-primary-hover);
+  border: none;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.engine-form-save:hover { background: var(--action-primary); }
+.engine-form-cancel {
+  padding: 6px 16px;
+  background: var(--glass-l2);
+  border: none;
+  border-radius: 8px;
+  color: var(--text-quaternary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.engine-form-cancel:hover {
+  background: var(--glass-l3-hover);
+  color: var(--text-primary);
+}
+
+/* Grid area */
+.grid-scroll-region {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0.25rem 2rem;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  scrollbar-width: auto;
+  scrollbar-color: var(--glass-l3) transparent;
+}
+
+.grid-scroll-region::-webkit-scrollbar {
+  width: 14px;
+}
+
+.grid-scroll-region::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.grid-scroll-region::-webkit-scrollbar-thumb {
+  background: var(--glass-l3);
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+}
+
+.grid-scroll-region::-webkit-scrollbar-thumb:hover {
+  background: var(--glass-l3-hover);
+  background-clip: padding-box;
+}
+
+.grid-scroll-region::-webkit-scrollbar-thumb:active {
+  background: var(--glass-l3-hover);
+  background-clip: padding-box;
+}
+
+.grid-area {
+  position: relative;
+  z-index: 10;
+  max-width: var(--main-grid-max-width);
+  margin: 0 auto;
+  width: 100%;
+  padding-top: 0.5rem;
+}
+.grid-area > div {
+  display: grid;
+  grid-template-columns: repeat(var(--main-grid-columns), minmax(0, 1fr));
+  gap: var(--grid-gap);
+}
+
+.modal-body > div {
+  display: grid;
+  grid-template-columns: repeat(var(--folder-grid-columns), minmax(0, 1fr));
+  gap: var(--grid-gap);
+}
+
+.grid-item-wrap {
+  --base-card-size: min(100%, 64px);
+  --card-w: min(100%, 64px);
+  --card-h: min(100%, 64px);
+  --preview-icon-size: 40px;
+  --preview-letter-size: 30px;
+  --folder-mini-gap: 8px;
+  --folder-mini-radius: 2px;
+  --folder-mini-letter-size: 8px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  grid-column: span 1;
+  grid-row: span 1;
+}
+.grid-item-wrap::before {
+  content: "";
+  display: block;
+  width: 100%;
+  padding-bottom: 100%;
+}
+.grid-item-wrap[data-size="1x2"] { grid-column: span 2; }
+.grid-item-wrap[data-size="2x1"] { grid-row: span 2; }
+.grid-item-wrap[data-size="2x2"] { grid-column: span 2; grid-row: span 2; }
+.grid-item-wrap[data-size="2x4"] { grid-column: span 2; grid-row: span 4; }
+.grid-item-wrap[data-size="4x2"] { grid-column: span 4; grid-row: span 2; }
+/* Extended wraps: JS controls height via updateGridItemSizes(); disable ::before trick */
+.grid-item-wrap[data-size="1x2"]::before,
+.grid-item-wrap[data-size="2x1"]::before,
+.grid-item-wrap[data-size="2x2"]::before,
+.grid-item-wrap[data-size="2x4"]::before,
+.grid-item-wrap[data-size="4x2"]::before {
+  display: none;
+}
+.grid-item-wrap[data-size="1x2"],
+.grid-item-wrap[data-size="2x1"],
+.grid-item-wrap[data-size="2x2"],
+.grid-item-wrap[data-size="2x4"],
+.grid-item-wrap[data-size="4x2"] {
+  align-self: start;
+}
+
+.grid-item-action-area {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: var(--card-w);
+  height: var(--card-h);
+  margin: 0 auto;
+  display: flex;
+  transition: transform 0.2s, opacity 0.2s;
+  cursor: grab;
+}
+.grid-item-action-area:active {
+  cursor: grabbing;
+}
+.grid-item-card {
+  width: 100%;
+  height: 100%;
+  flex-shrink: 0;
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-base));
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  box-shadow: var(--surface-shadow);
+  transition: background-color 0.2s, transform 0.2s;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+}
+.grid-item-card:hover {
+  background: var(--glass-l3-hover);
+}
+
+#folder-grid .grid-item-card[data-item-type="link"] {
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+#folder-grid .grid-item-card[data-item-type="link"]:hover {
+  background: rgba(255, 255, 255, 0.08);   /* one-off white tint, not in glass scale */
+}
+
+.grid-folder-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+  padding: 14%;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.grid-item-link-preview {
+  width: var(--base-card-size);
+  height: var(--base-card-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 1rem;
+  flex-shrink: 0;
+}
+
+.grid-item-wrap[data-size="1x2"] .grid-item-name,
+.grid-item-wrap[data-size="2x1"] .grid-item-name,
+.grid-item-wrap[data-size="2x2"] .grid-item-name,
+.grid-item-wrap[data-size="2x4"] .grid-item-name,
+.grid-item-wrap[data-size="4x2"] .grid-item-name {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.7);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.grid-item-name {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--card-h) + 2px);
+  transform: translateX(-50%);
+  font-size: 0.75rem;
+  color: #fff;
+  width: 100%;
+  text-align: center;
+  padding: 0 0.25rem;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.add-card {
+  width: 100%;
+  aspect-ratio: 1;
+  max-width: 64px;
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-base));
+  -webkit-backdrop-filter: blur(var(--blur-base));
+  border: none;
+  border-radius: 1rem;
+  box-shadow: var(--surface-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  color: #fff;
+}
+.add-card:hover {
+  background: var(--glass-l3-hover);
+}
+
+.grid-item-wrap.add-wrap {
+  grid-column: span 1;
+  grid-row: span 1;
+}
+
+/* Drag indicators */
+.drag-indicator {
+  position: absolute;
+  width: 4px;
+  background: var(--action-primary-hover);
+  border-radius: 9999px;
+  box-shadow: 0 0 8px rgba(59,130,246,0.8);
+  z-index: 20;
+  pointer-events: none;
+}
+.drag-indicator.left {
+  left: -0.5rem; top: 0; bottom: 0;
+  transform: translateX(-50%);
+}
+.drag-indicator.right {
+  right: -0.5rem; top: 0; bottom: 0;
+  transform: translateX(50%);
+}
+
+.grid-item-dragging {
+  opacity: 0.4;
+  transform: scale(0.95);
+}
+.grid-item-combine {
+  outline: 2px solid var(--action-primary-hover);
+  background: var(--accent-blue-bg-soft);
+  transform: scale(1.05);
+  border-radius: 1rem;
+}
+
+/* Folder preview */
+.folder-preview-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  padding: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.folder-preview-cell {
+  background: transparent;
+  border-radius: var(--folder-mini-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+.folder-preview-cell.empty {
+  background: transparent;
+  border: none;
+}
+.folder-preview-cell img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.drag-over-folder-bg {
+  background: rgba(30, 58, 138, 0.4) !important;   /* specific blue-900 drop hint */
+  backdrop-filter: blur(var(--blur-light));
+}
+.move-to-main-hint {
+  position: absolute;
+  top: 25%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #fff;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Overlays */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 40;
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-light));
+}
+#folder-overlay {
+  background: transparent;
+  backdrop-filter: blur(var(--blur-xl));
+  -webkit-backdrop-filter: blur(var(--blur-xl));
+}
+.overlay-mid {
+  z-index: 60;
+}
+.overlay-edit {
+  z-index: 50;
+}
+
+/* Folder modal */
+.folder-modal {
+  background: var(--glass-l3);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 1.5rem;
+  width: 100%;
+  max-width: 50rem;  /* 800px — inner = 800 - 48 padding = 752, matches main grid (8×80 + 7×16) */
+  min-height: 400px;
+  border: 1px solid var(--border-white-soft);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Folder modal keeps its hairline + original 24px padding so the header
+   visually separates from the body grid. */
+#folder-modal .modal-header {
+  padding: 24px;
+  border-bottom: 1px solid var(--border-white-hairline);
+  background: transparent;
+}
+
+/* Generic dialog header — no border, no extra tint; relies on dialog-card bg.
+   padding 24/24/0/24: bottom is 0 because the following form supplies its own
+   24px top padding. */
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 24px 0 24px;
+  background: transparent;
+}
+.modal-title {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Reserve horizontal space so the close button stays put even when
+     the folder name is long. Anything past max-width is ellipsised. */
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.folder-title-icon {
+  padding: 8px;
+  background: var(--glass-l0);
+  border-radius: 12px;
+  display: flex;
+  flex-shrink: 0;
+}
+.folder-name-display {
+  display: inline-block;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.folder-rename-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  opacity: 0.55;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.15s, background-color 0.15s;
+}
+.folder-rename-btn:hover {
+  opacity: 1;
+  background: var(--glass-l3-hover);
+}
+.folder-name-input {
+  font: inherit;            /* match modal-title font sizing/weight */
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--bg-input-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  max-width: 360px;
+  width: 240px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.folder-name-input:focus {
+  border-color: var(--action-primary);
+  box-shadow: 0 0 0 3px var(--focus-ring-blue);
+}
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.close-btn {
+  padding: 8px;
+  color: var(--text-quaternary);
+  background: none;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.close-btn:hover {
+  color: var(--text-primary);
+  background: var(--glass-l3-hover);
+}
+
+/* Dialog card (delete/edit/login/clock) — Figma v1.1 */
+.dialog-card {
+  background: var(--glass-l4);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 384px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  border: 1px solid var(--glass-l3);   /* Figma rgba(0,0,0,0.6) */
+  padding: 24px;
+}
+.dialog-card-wide {
+  max-width: 448px;
+  padding: 0;   /* inner modal-header + form provide their own padding */
+}
+/* Delete dialog title — icon + text inline. icon-red provides the danger
+   signal; everything else inherits the primary text color. */
+.dialog-title {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Title inside a modal-header (edit / clock-settings / login). */
+.dialog-plain-title {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-primary);
+}
+.dialog-text {
+  color: var(--text-quaternary);
+  margin-bottom: 24px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* Delete-account dialog — Figma node 160:392.
+   Title is danger-red, body uses text-secondary at 22px line-height with
+   stacked lines, and the buttons row gets an extra 12px spacer before it. */
+.dialog-title-danger { color: var(--text-danger); }
+.dialog-text-danger {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 36px; /* body 24px gap + 12px spacer per Figma */
+}
+.dialog-text-danger p {
+  margin: 0;
+  line-height: 22px;
+}
+.dialog-text-danger p + p { margin-top: 0; }
+.delete-account-card .dialog-actions { gap: 8px; }
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-danger:disabled:hover { background: var(--action-danger); }
+
+/* Login-consent dialog — Figma node 191:447.
+   400px wide, vertical flex with 14px gap, body 13/20, footnote 12/18.
+   The card itself supplies the gap so individual elements don't need margins. */
+.dialog-card.login-consent-card {
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-consent-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.login-consent-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 20px;
+}
+.login-consent-bullets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.login-consent-bullets li::before {
+  content: "· ";
+  margin-right: 2px;
+}
+.login-consent-footnote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 18px;
+}
+.login-consent-card .dialog-actions { gap: 8px; }
+/* Semantic danger signal — kept red even inside .dialog-title where text
+   otherwise inherits --text-primary. */
+.icon-red { color: var(--action-danger-hover); }
+
+/* Buttons — Figma v1.1: 37px h, 10/16 padding, 8 radius, 14 Medium */
+.btn-secondary,
+.btn-danger,
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 37px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-secondary {
+  color: var(--text-tertiary);
+  background: var(--action-secondary);
+}
+.btn-secondary:hover { background: var(--action-secondary-hover); }
+
+.btn-danger {
+  background: var(--action-danger);
+  color: var(--text-primary);
+}
+.btn-danger:hover { background: var(--action-danger-hover); }
+
+.btn-primary {
+  background: var(--action-primary);
+  color: var(--text-primary);
+}
+.btn-primary:hover { background: var(--action-primary-hover); }
+
+/* Edit form */
+.edit-form {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.type-toggle {
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+  background: var(--bg-input);
+  border-radius: 8px;
+}
+.type-btn {
+  flex: 1;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: transparent;
+  color: var(--text-quaternary);
+}
+.type-btn:hover { color: var(--text-primary); }
+.type-btn-active {
+  background: var(--action-primary);
+  color: var(--text-primary);
+}
+.type-btn-active:hover { color: var(--text-primary); }
+
+.form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.form-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-quaternary);
+  margin-bottom: 8px;
+}
+.form-input {
+  width: 100%;
+  height: 37px;
+  background: var(--bg-input);
+  border: 1px solid var(--bg-input-border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.form-input:focus {
+  border-color: var(--action-primary);
+  box-shadow: 0 0 0 3px var(--focus-ring-blue);
+}
+.form-input::placeholder { color: var(--text-placeholder); }
+.form-field-spacing { margin-bottom: 16px; }
+
+.icon-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.icon-preview-box {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--bg-input-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.icon-preview-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.icon-preview-placeholder {
+  font-size: 12px;
+  color: var(--text-placeholder);
+}
+.icon-upload-btn {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-placeholder);
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.2s, background 0.2s;
+}
+.icon-upload-btn:hover {
+  color: var(--text-primary);
+}
+.icon-clear-btn {
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-quaternary);
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+.icon-clear-btn:hover {
+  color: var(--text-danger);
+}
+
+.form-footer {
+  padding-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Icon crop modal */
+.icon-crop-card {
+  max-width: 520px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.icon-crop-header {
+  display: flex;
+  align-items: center;
+}
+.icon-crop-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-primary);
+  margin: 0;
+}
+.icon-crop-title svg { color: var(--text-tertiary); }
+.icon-crop-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: var(--glass-l0);
+  border-radius: 12px;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+}
+.icon-crop-image {
+  position: absolute;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+.icon-crop-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+  cursor: move;
+}
+.icon-crop-grid {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+}
+.icon-crop-grid-v {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+.icon-crop-grid-h {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+.icon-crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #ffffff;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.icon-crop-handle[data-handle="nw"] { top: -6px; left: -6px; cursor: nwse-resize; }
+.icon-crop-handle[data-handle="ne"] { top: -6px; right: -6px; cursor: nesw-resize; }
+.icon-crop-handle[data-handle="sw"] { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.icon-crop-handle[data-handle="se"] { bottom: -6px; right: -6px; cursor: nwse-resize; }
+.icon-crop-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.icon-crop-footer-right {
+  display: flex;
+  gap: 8px;
+}
+
+/* Context menu */
+.context-menu {
+  position: fixed;
+  z-index: 100;
+  background: var(--glass-l4);
+  backdrop-filter: blur(var(--blur-heavy));
+  -webkit-backdrop-filter: blur(var(--blur-heavy));
+  border-radius: 12px;
+  padding: 4px;
+  min-width: 200px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border-black-soft);
+}
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 32px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-secondary);
+  transition: background-color 0.15s;
+  white-space: nowrap;
+}
+.ctx-item:hover {
+  background: var(--accent-blue-bg-active);
+}
+.ctx-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.ctx-item.ctx-danger {
+  color: var(--text-danger);
+}
+.ctx-item.ctx-danger:hover {
+  background: var(--accent-red-bg-hover);
+}
+
+.ctx-item.ctx-item-active {
+  color: var(--text-accent);
+  background: var(--accent-blue-bg-hover);
+}
+
+.ctx-size-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px 8px 6px;
+}
+.ctx-size-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-quaternary);
+  background: var(--glass-l1);
+  cursor: pointer;
+  transition: all 0.15s;
+  border: none;
+  user-select: none;
+}
+.ctx-size-btn:hover {
+  background: var(--accent-blue-bg-active);
+  color: var(--text-secondary);
+}
+.ctx-size-btn.size-active {
+  background: var(--accent-blue-bg-active);
+  color: var(--text-accent);
+}
+.ctx-item.ctx-danger svg {
+  opacity: 1;
+}
+.ctx-sep {
+  height: 1px;
+  background: var(--border-black-medium);
+  margin: 4px 8px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Slot-based folder preview for large-size cards */
+.folder-slot-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  justify-content: space-evenly;
+  align-content: space-evenly;
+  pointer-events: auto;
+}
+
+.folder-slot-normal {
+  background: transparent;
+  backdrop-filter: none;
+  border: none;
+  border-radius: 1rem;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.folder-slot-folder {
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-base));
+  box-shadow: var(--surface-shadow);
+}
+
+.folder-slot-normal[data-preview-child-id] {
+  cursor: pointer;
+}
+
+.folder-slot-normal img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.folder-slot-letter {
+  font-size: var(--preview-letter-size);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  pointer-events: none;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.folder-slot-folder-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+  padding: 14%;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.folder-slot-empty {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+/* Mini-group slot: outer shell matches a 1x1 card; the inner 2×2 preview scales with the current base card size. */
+.folder-slot-mini-group {
+  background: transparent;
+  backdrop-filter: none;
+  border: none;
+  border-radius: 1rem;
+  box-shadow: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  gap: var(--folder-mini-gap);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.folder-mini-icon {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border-radius: var(--folder-mini-radius);
+}
+
+.folder-mini-folder-slot {
+  background: var(--glass-l3);
+  backdrop-filter: blur(var(--blur-base));
+  box-shadow: var(--surface-shadow);
+}
+
+.folder-mini-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.folder-mini-folder-icon {
+  width: 100%;
+  height: 100%;
+  padding: 14%;
+  pointer-events: none;
+}
+
+.folder-mini-letter {
+  font-size: var(--folder-mini-letter-size);
+  font-weight: bold;
+  color: var(--text-tertiary);
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.folder-mini-icon-blank {
+  background: transparent;
+}
+
+.folder-mini-icon-empty {
+  background: transparent;
+  border: none;
+}
+
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%) translateY(16px);
+  min-width: min(28rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  padding: 0.85rem 1rem;
+  border-radius: 0.9rem;
+  background: var(--glass-l4-strong);
+  color: #fff;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  text-align: center;
+  backdrop-filter: blur(var(--blur-heavy));
+  -webkit-backdrop-filter: blur(var(--blur-heavy));
+  border: 1px solid var(--border-white-hairline);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
+  z-index: 120;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.app-toast.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.app-toast[data-variant="error"] {
+  color: var(--text-danger);
+  border-color: var(--text-danger);
+}
+
+/* Sign-in notice — Figma node 285:487.
+   Top-right card that flies in horizontally on first new-tab when unsigned,
+   stays ~5s, then flies out. No interaction. */
+.signin-notice {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  width: 320px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--glass-l4);
+  backdrop-filter: blur(var(--blur-soft));
+  -webkit-backdrop-filter: blur(var(--blur-soft));
+  border: 1px solid var(--border-white-hairline);
+  box-shadow: 0 12px 16px rgba(0, 0, 0, 0.36);
+  z-index: 70;
+  transform: translateX(calc(100% + 24px));
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.36s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              opacity 0.36s ease;
+}
+.signin-notice.is-visible {
+  transform: translateX(0);
+  opacity: 1;
+}
+.signin-notice-icon {
+  flex-shrink: 0;
+  color: var(--text-accent);   /* Figma uses text/accent #60a5fa on this icon */
+}
+.signin-notice-text {
+  flex: 1 0 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.signin-notice-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1;
+}
+.signin-notice-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+
+/* Login overlay */
+.login-card {
+  width: 100%;
+  max-width: 360px;
+}
+
+.login-desc {
+  color: var(--text-quaternary);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+.auth-tabs {
+  display: flex;
+  width: 100%;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 4px;
+  background: var(--glass-l3);
+  border-radius: 8px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-quaternary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.auth-tab:hover { color: var(--text-secondary); }
+
+.auth-tab.active {
+  background: var(--action-primary);
+  color: var(--text-primary);
+}
+
+.auth-pane {
+  margin-bottom: 12px;
+}
+
+.login-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-error {
+  color: var(--text-danger);
+  font-size: 13px;
+  min-height: 1.1em;
+  margin: 0;
+}
+
+.forgot-password-btn {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-accent);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.forgot-password-btn:hover { opacity: 0.8; }
+.forgot-password-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.verify-desc {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.verify-email-target {
+  color: var(--text-accent);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.verify-status {
+  color: var(--text-quaternary);
+  font-size: 13px;
+  min-height: 1.1em;
+  margin: 0;
+}
+
+.login-skip-btn {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.sync-btn-row {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+}
+
+.sync-btn-row .sidebar-action-btn {
+  flex: 1;
+  min-width: 0;
+}
+
+/* "Delete account" — Figma v1.1 hollow danger variant:
+   1.5px red border, transparent fill, 13px Medium, opacity 0.7 by default
+   to read as a destructive secondary action. */
+.sync-delete-btn {
+  margin-top: 0.5rem;
+  width: 100%;
+  height: auto;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1.5px solid var(--sidebar-danger-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sidebar-danger-fg);
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.sync-delete-btn:hover {
+  opacity: 1;
+  background: var(--accent-red-bg-soft);
+}
+
+/* Sync status in sidebar — inherits .sidebar-value chip styling.
+   Empty-state hiding is handled by the generic .sidebar-value:empty rule. */
+
+/* Folder open/close animations */
+@keyframes folder-open {
+  from {
+    transform: translateY(-12px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes folder-close {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes overlay-open {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes overlay-close {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.folder-modal.folder-opening {
+  animation: folder-open 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.folder-modal.folder-closing {
+  animation: folder-close 260ms ease-in both;
+}
+
+#folder-overlay.overlay-opening {
+  animation: overlay-open 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+#folder-overlay.overlay-closing {
+  animation: overlay-close 260ms ease-in both;
+}
+
+/* Language toggle (bottom-right pill) — placeholder styling, will be refined
+   during the v1.1 UI pass. */
+.lang-toggle {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 1.85rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-white-hairline);
+  border-radius: 999px;
+  background: var(--glass-l3);
+  color: var(--fg-strong);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  backdrop-filter: blur(var(--blur-base));
+  -webkit-backdrop-filter: blur(var(--blur-base));
+  z-index: 50;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.lang-toggle:hover {
+  background: var(--glass-l4);
+  border-color: var(--border-white-soft);
+  color: #fff;
+}
+
+.lang-toggle:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline-offset: 2px;
+}
+
+.lang-toggle-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.lang-toggle-label {
+  white-space: nowrap;
+}

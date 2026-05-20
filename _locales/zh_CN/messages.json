@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Lithium",
+    "description": "Extension name shown in the browser extensions list and store."
+  },
+  "extDesc": {
+    "message": "自定义新标签页，包含时钟、搜索、快捷方式与多时区。",
+    "description": "Short summary shown in the browser extensions list and store."
+  }
+}
