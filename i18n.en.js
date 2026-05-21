@@ -18,14 +18,14 @@
       toggleAria: 'Toggle left sidebar',
 
       title: {
-        gridColumns: 'Grid columns',
+        gridColumns: 'Max columns',
         wallpaper: 'Wallpaper',
         iconCache: 'Icon cache',
         sync: 'Cloud sync',
       },
 
       gridColumns: {
-        rangeAria: 'Adjust home grid column count',
+        rangeAria: 'Adjust home grid column upper limit',
       },
 
       wallpaper: {
@@ -109,7 +109,7 @@
         bullet1: 'Shortcuts and folders',
         bullet2: 'Custom search engines and current selection',
         bullet3: 'Clock configuration',
-        bullet4: 'Home grid columns',
+        bullet4: 'Home grid column limit',
         footnote: 'No other data is collected, and nothing is shared with any third party.',
         cancel: 'Cancel',
         agree: 'Agree and continue',

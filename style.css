@@ -94,7 +94,8 @@
 
   --clock-time-width: calc(8ch + 0.35em);
   --grid-gap: 1rem;
-  --main-grid-columns: 8;
+  --main-grid-track-size: 80px;
+  --main-grid-min-width: 560px;   /* MIN cols (6) * track (80) + 5 * gap (16) */
   --folder-grid-columns: 8;
   --main-grid-max-width: 752px;
   --main-content-max-width: 800px;
@@ -872,7 +873,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   padding: 0 0.25rem 2rem;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
@@ -909,13 +910,19 @@ body {
   position: relative;
   z-index: 10;
   max-width: var(--main-grid-max-width);
+  min-width: var(--main-grid-min-width);
   margin: 0 auto;
   width: 100%;
   padding-top: 0.5rem;
 }
 .grid-area > div {
   display: grid;
-  grid-template-columns: repeat(var(--main-grid-columns), minmax(0, 1fr));
+  /* User-configurable column count is now an UPPER LIMIT: the container's
+     max-width caps it at N columns, while auto-fill lets the row collapse to
+     fewer columns when the viewport is narrow — keeping the 80px track and
+     16px gap fixed instead of compressing the icons. */
+  grid-template-columns: repeat(auto-fill, var(--main-grid-track-size));
+  justify-content: center;
   gap: var(--grid-gap);
 }
 

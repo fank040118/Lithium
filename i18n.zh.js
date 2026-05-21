@@ -18,14 +18,14 @@
       toggleAria: '切换左侧侧栏',
 
       title: {
-        gridColumns: '主页列数',
+        gridColumns: '主页列数上限',
         wallpaper: '壁纸设置',
         iconCache: '图标缓存',
         sync: '云同步',
       },
 
       gridColumns: {
-        rangeAria: '调整主页快捷方式列数',
+        rangeAria: '调整主页快捷方式列数上限',
       },
 
       wallpaper: {
@@ -109,7 +109,7 @@
         bullet1: '快捷方式与文件夹',
         bullet2: '自定义搜索引擎与当前选中项',
         bullet3: '时钟配置',
-        bullet4: '主页列数',
+        bullet4: '主页列数上限',
         footnote: '不会收集其他数据，也不会向第三方共享。',
         cancel: '取消',
         agree: '同意并继续',

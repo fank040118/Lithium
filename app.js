@@ -307,7 +307,9 @@ function updateGridColumnsControls() {
 function applyMainGridColumns() {
   const root = document.documentElement;
   const gridWidth = getMainGridMaxWidth();
-  root.style.setProperty('--main-grid-columns', String(mainGridColumns));
+  // The configured column count is treated as an upper bound: it caps the
+  // grid container's max-width while auto-fill in CSS picks the actual track
+  // count based on available width (see .grid-area > div in style.css).
   root.style.setProperty('--main-grid-max-width', `${gridWidth}px`);
   root.style.setProperty('--main-content-max-width', `${gridWidth + MAIN_CONTENT_SIDE_PADDING}px`);
   updateGridColumnsControls();
