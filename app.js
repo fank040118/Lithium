@@ -493,7 +493,12 @@ async function saveWeatherCities() {
   await markSyncedDataChanged();
 }
 
-function addWeatherCity(location) {
+async function addWeatherCity(location) {
+  const dup = weatherCities.find(function (c) {
+    return Math.abs(c.lat - location.latitude) < 0.0001 &&
+           Math.abs(c.lon - location.longitude) < 0.0001;
+  });
+  if (dup) return dup;
   const entry = {
     id: generateId(),
     name: location.name,
@@ -504,14 +509,13 @@ function addWeatherCity(location) {
     admin1: location.admin1 || '',
   };
   weatherCities.push(entry);
-  saveWeatherCities();
+  await saveWeatherCities();
   return entry;
 }
 
-function removeWeatherCity(id) {
+async function removeWeatherCity(id) {
   weatherCities = weatherCities.filter(function (c) { return c.id !== id; });
-  saveWeatherCities();
-  // Prune stale cache entries for removed cities.
+  await saveWeatherCities();
   if (typeof LithiumWeather !== 'undefined' && LithiumWeather.pruneCache) {
     LithiumWeather.pruneCache(weatherCities);
   }

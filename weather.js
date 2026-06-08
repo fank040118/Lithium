@@ -67,7 +67,7 @@
   var _memCache = Object.create(null);
 
   function storageKey(lat, lon) {
-    return 'weather_fc_' + Number(lat).toFixed(2) + '_' + Number(lon).toFixed(2);
+    return 'weather_fc_' + Number(lat).toFixed(4) + '_' + Number(lon).toFixed(4);
   }
 
   function _getStorage() {
@@ -78,14 +78,26 @@
     return s;
   }
 
+  function _lastError() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) {
+        return chrome.runtime.lastError;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   function _storageGet(keys) {
     var s = _getStorage();
     if (!s) return Promise.resolve({});
     return new Promise(function (resolve) {
       s.get(keys, function (result) {
-        // chrome.storage uses `undefined` for missing keys (lastError is null in
-        // that case — it's not an error, just missing), but the result object
-        // simply omits the key. Normalize so callers can do `result[key]`.
+        var err = _lastError();
+        if (err) {
+          console.warn('[LithiumWeather] storage.get error:', err.message);
+          resolve({});
+          return;
+        }
         resolve(result || {});
       });
     });
@@ -95,7 +107,13 @@
     var s = _getStorage();
     if (!s) return Promise.resolve();
     return new Promise(function (resolve) {
-      s.set(obj, function () { resolve(); });
+      s.set(obj, function () {
+        var err = _lastError();
+        if (err) {
+          console.warn('[LithiumWeather] storage.set error:', err.message);
+        }
+        resolve();
+      });
     });
   }
 
@@ -103,7 +121,13 @@
     var s = _getStorage();
     if (!s) return Promise.resolve();
     return new Promise(function (resolve) {
-      s.remove(keys, function () { resolve(); });
+      s.remove(keys, function () {
+        var err = _lastError();
+        if (err) {
+          console.warn('[LithiumWeather] storage.remove error:', err.message);
+        }
+        resolve();
+      });
     });
   }
 
@@ -250,8 +274,6 @@
         return Promise.resolve(mem.data);
       }
 
-      var self = this;
-
       // Tier 2: chrome.storage.local
       return _storageGet(key).then(function (result) {
         var stored = result[key];
@@ -286,7 +308,6 @@
      * @returns {Promise<Array<{city:object, forecast:object|null, error?:string}>>}
      */
     getForecastForCities: function (cities) {
-      var self = this;
       return Promise.allSettled(
         cities.map(function (city) {
           return weather.getCachedForecast(city).then(function (forecast) {
@@ -318,7 +339,13 @@
      * @returns {Promise<void>}
      */
     clearCache: function (cities) {
-      _memCache = Object.create(null);
+      if (cities && cities.length > 0) {
+        for (var i = 0; i < cities.length; i++) {
+          delete _memCache[storageKey(cities[i].lat, cities[i].lon)];
+        }
+      } else {
+        _memCache = Object.create(null);
+      }
       var s = _getStorage();
       if (!s) return Promise.resolve();
 
@@ -331,11 +358,23 @@
       // Full clear: find all weather_fc_* keys and remove them.
       return new Promise(function (resolve) {
         s.get(null, function (all) {
+          var err = _lastError();
+          if (err) {
+            console.warn('[LithiumWeather] storage.get error:', err.message);
+            resolve();
+            return;
+          }
           var weatherKeys = Object.keys(all || {}).filter(function (k) {
             return k.indexOf('weather_fc_') === 0;
           });
           if (weatherKeys.length > 0) {
-            s.remove(weatherKeys, function () { resolve(); });
+            s.remove(weatherKeys, function () {
+              var err2 = _lastError();
+              if (err2) {
+                console.warn('[LithiumWeather] storage.remove error:', err2.message);
+              }
+              resolve();
+            });
           } else {
             resolve();
           }
@@ -366,14 +405,25 @@
 
       var s = _getStorage();
       if (!s) return Promise.resolve();
-      var self = this;
       return new Promise(function (resolve) {
         s.get(null, function (all) {
+          var err = _lastError();
+          if (err) {
+            console.warn('[LithiumWeather] storage.get error:', err.message);
+            resolve();
+            return;
+          }
           var stale = Object.keys(all || {}).filter(function (k) {
             return k.indexOf('weather_fc_') === 0 && !activeKeys[k];
           });
           if (stale.length > 0) {
-            s.remove(stale, function () { resolve(); });
+            s.remove(stale, function () {
+              var err2 = _lastError();
+              if (err2) {
+                console.warn('[LithiumWeather] storage.remove error:', err2.message);
+              }
+              resolve();
+            });
           } else {
             resolve();
           }

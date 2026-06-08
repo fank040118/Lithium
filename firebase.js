@@ -319,9 +319,7 @@ async function syncToCloud() {
       engines: JSON.stringify(customEngines),
       selected_engine: selectedEngineId,
       clocks: JSON.stringify(clocks),
-      weather_cities: JSON.stringify(
-        typeof globalThis.weatherCities !== 'undefined' ? globalThis.weatherCities : []
-      ),
+      weather_cities: JSON.stringify(weatherCities),
       grid_columns: mainGridColumns,
       updated_at: now,
     });
@@ -367,9 +365,7 @@ async function syncFromCloud(options = {}) {
     if (Array.isArray(cloudEngines)) customEngines = cloudEngines;
     if (typeof cloudEngine === 'string' && cloudEngine) selectedEngineId = cloudEngine;
     if (Array.isArray(cloudClocks) && cloudClocks.length > 0) clocks = cloudClocks;
-    if (Array.isArray(cloudWeatherCities)) {
-      if (typeof globalThis.weatherCities !== 'undefined') globalThis.weatherCities = cloudWeatherCities;
-    }
+    if (Array.isArray(cloudWeatherCities) && cloudWeatherCities.length > 0) weatherCities = cloudWeatherCities;
     if (typeof cloudColumns === 'number') mainGridColumns = cloudColumns;
 
     // Persist to local storage (wallpaper stays local-only)
@@ -380,7 +376,7 @@ async function syncFromCloud(options = {}) {
         startpage_engines: customEngines,
         startpage_selected_engine: selectedEngineId,
         startpage_clocks: clocks,
-        startpage_weather_cities: typeof globalThis.weatherCities !== 'undefined' ? globalThis.weatherCities : [],
+        startpage_weather_cities: weatherCities,
         startpage_grid_columns: mainGridColumns,
       });
     }
@@ -395,6 +391,12 @@ async function syncFromCloud(options = {}) {
     if (shouldResyncCloud) scheduleSyncToCloud();
     if (typeof globalThis.scheduleIconCacheRefresh === 'function') {
       globalThis.scheduleIconCacheRefresh();
+    }
+    if (typeof LithiumWeather !== 'undefined' && LithiumWeather.pruneCache) {
+      LithiumWeather.pruneCache(weatherCities);
+    }
+    if (weatherCities.length > 0 && typeof fetchWeatherForAllCities === 'function') {
+      fetchWeatherForAllCities();
     }
     return true;
   } catch (e) {
