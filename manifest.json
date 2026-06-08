@@ -22,7 +22,9 @@
   "host_permissions": [
     "https://www.google.com/*",
     "https://icon.horse/*",
-    "https://*.googleusercontent.com/*"
+    "https://*.googleusercontent.com/*",
+    "https://api.open-meteo.com/*",
+    "https://geocoding-api.open-meteo.com/*"
   ],
   "web_accessible_resources": [
     { "resources": ["_favicon/*"], "matches": ["<all_urls>"] }

@@ -102,6 +102,7 @@ const STORAGE_KEYS = [
   'startpage_wallpaper',
   'startpage_clocks',
   'startpage_grid_columns',
+  'startpage_weather_cities',
 ];
 
 const ICON_STYLE = 'width:100%;height:100%;display:block;object-fit:cover;pointer-events:none';
@@ -113,6 +114,7 @@ let wallpaper = null;
 let wallpaperBlur = 0;
 let wallpaperDim = 0;
 let clocks = [];
+let weatherCities = [];
 let mainGridColumns = DEFAULT_MAIN_GRID_COLUMNS;
 let currentFolderId = null;
 let dragState = null;
@@ -428,6 +430,7 @@ async function loadAll() {
   selectedEngineId = data.startpage_selected_engine || 'google';
   wallpaper = data.startpage_wallpaper || null;
   clocks = migrateClocks(data.startpage_clocks || deepClone(DEFAULT_CLOCKS));
+  weatherCities = data.startpage_weather_cities || [];
   mainGridColumns = clampMainGridColumns(data.startpage_grid_columns);
   if (itemResult.changed) {
     await storage.set({ startpage_items: items });
@@ -483,6 +486,45 @@ function applyWallpaperEffects() {
 async function saveClocks() {
   await storage.set({ startpage_clocks: clocks });
   await markSyncedDataChanged();
+}
+
+async function saveWeatherCities() {
+  await storage.set({ startpage_weather_cities: weatherCities });
+  await markSyncedDataChanged();
+}
+
+function addWeatherCity(location) {
+  const entry = {
+    id: generateId(),
+    name: location.name,
+    lat: location.latitude,
+    lon: location.longitude,
+    tz: location.timezone || 'auto',
+    country: location.country || '',
+    admin1: location.admin1 || '',
+  };
+  weatherCities.push(entry);
+  saveWeatherCities();
+  return entry;
+}
+
+function removeWeatherCity(id) {
+  weatherCities = weatherCities.filter(function (c) { return c.id !== id; });
+  saveWeatherCities();
+}
+
+async function fetchWeatherForAllCities() {
+  if (weatherCities.length === 0) return [];
+  if (typeof LithiumWeather === 'undefined') {
+    console.warn('[Lithium] LithiumWeather module not loaded');
+    return [];
+  }
+  try {
+    return await LithiumWeather.getForecastForCities(weatherCities);
+  } catch (err) {
+    console.warn('[Lithium] Weather fetch failed:', err);
+    return [];
+  }
 }
 
 function getAllEngines() {
@@ -2340,6 +2382,10 @@ async function init() {
   render();
   fbInit();
   scheduleIconCacheRefresh();
+  // Kick off weather data fetch in background (fire-and-forget).
+  // Results are cached in-memory by LithiumWeather; UI rendering layer
+  // reads from cache when it needs them.
+  if (weatherCities.length > 0) fetchWeatherForAllCities();
 }
 
 function scheduleIconCacheRefresh() {
