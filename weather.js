@@ -58,12 +58,53 @@
     99: 'thunderstormHeavyHail',
   };
 
-  // In-memory cache keyed by "lat,lon" (rounded to 2 decimal places to improve
-  // hit rate for close-but-not-identical coordinates).
-  var _cache = Object.create(null);
+  // Two-tier cache:
+  //   1. chrome.storage.local — persists across tabs/sessions (primary)
+  //   2. In-memory — avoids async I/O on repeated reads within the same page
+  //
+  // Each city gets its own storage key: weather_fc_<lat>_<lon>
+  // Value: JSON { ts: <epoch ms>, data: <forecast object> }
+  var _memCache = Object.create(null);
 
-  function cacheKey(lat, lon) {
-    return Number(lat).toFixed(2) + ',' + Number(lon).toFixed(2);
+  function storageKey(lat, lon) {
+    return 'weather_fc_' + Number(lat).toFixed(2) + '_' + Number(lon).toFixed(2);
+  }
+
+  function _getStorage() {
+    // MV3: chrome.storage.local (via Promise or callback)
+    var s = (typeof globalThis !== 'undefined' && globalThis.chrome && globalThis.chrome.storage && globalThis.chrome.storage.local) ||
+            (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) ||
+            null;
+    return s;
+  }
+
+  function _storageGet(keys) {
+    var s = _getStorage();
+    if (!s) return Promise.resolve({});
+    return new Promise(function (resolve) {
+      s.get(keys, function (result) {
+        // chrome.storage uses `undefined` for missing keys (lastError is null in
+        // that case — it's not an error, just missing), but the result object
+        // simply omits the key. Normalize so callers can do `result[key]`.
+        resolve(result || {});
+      });
+    });
+  }
+
+  function _storageSet(obj) {
+    var s = _getStorage();
+    if (!s) return Promise.resolve();
+    return new Promise(function (resolve) {
+      s.set(obj, function () { resolve(); });
+    });
+  }
+
+  function _storageRemove(keys) {
+    var s = _getStorage();
+    if (!s) return Promise.resolve();
+    return new Promise(function (resolve) {
+      s.remove(keys, function () { resolve(); });
+    });
   }
 
   // ----- public API -----
@@ -190,20 +231,52 @@
     },
 
     /**
-     * Get forecast for a single city, returning cached data if still fresh (< 30 min).
+     * Get forecast for a single city.
+     *
+     * Cache tiers (checked in order):
+     *   1. In-memory  — same page lifecycle, no I/O
+     *   2. chrome.storage.local — cross-tab, persists across sessions
+     *   3. Network fetch (Open-Meteo) — on miss or expiry
+     *
      * @param {{lat:number, lon:number, tz?:string}} city
      * @returns {Promise<object>} Same shape as fetchForecast return
      */
     getCachedForecast: function (city) {
-      var key = cacheKey(city.lat, city.lon);
-      var cached = _cache[key];
-      if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
-        return Promise.resolve(cached.data);
+      var key = storageKey(city.lat, city.lon);
+
+      // Tier 1: in-memory
+      var mem = _memCache[key];
+      if (mem && (Date.now() - mem.ts) < CACHE_TTL_MS) {
+        return Promise.resolve(mem.data);
       }
+
       var self = this;
-      return weather.fetchForecast(city.lat, city.lon, city.tz || 'auto').then(function (data) {
-        _cache[key] = { ts: Date.now(), data: data };
-        return data;
+
+      // Tier 2: chrome.storage.local
+      return _storageGet(key).then(function (result) {
+        var stored = result[key];
+        if (stored) {
+          try {
+            var parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
+            if (parsed && parsed.ts && (Date.now() - parsed.ts) < CACHE_TTL_MS && parsed.data) {
+              // Promote to memory so subsequent reads in this page skip storage I/O.
+              _memCache[key] = { ts: parsed.ts, data: parsed.data };
+              return Promise.resolve(parsed.data);
+            }
+          } catch (_) { /* corrupt entry — fall through to fetch */ }
+        }
+
+        // Tier 3: network fetch
+        return weather.fetchForecast(city.lat, city.lon, city.tz || 'auto').then(function (data) {
+          var entry = { ts: Date.now(), data: data };
+          // Save to memory
+          _memCache[key] = entry;
+          // Persist to storage (fire-and-forget — failure is non-fatal)
+          var setObj = {};
+          setObj[key] = JSON.stringify(entry);
+          _storageSet(setObj);
+          return data;
+        });
       });
     },
 
@@ -239,10 +312,73 @@
     },
 
     /**
-     * Clear the in-memory forecast cache (e.g. for force-refresh).
+     * Clear all cached forecasts (memory + storage).
+     * @param {Array<{lat:number, lon:number}>} [cities] — if provided, only
+     *   clear cache entries for these cities; otherwise clear everything.
+     * @returns {Promise<void>}
      */
-    clearCache: function () {
-      _cache = Object.create(null);
+    clearCache: function (cities) {
+      _memCache = Object.create(null);
+      var s = _getStorage();
+      if (!s) return Promise.resolve();
+
+      if (cities && cities.length > 0) {
+        // Targeted clear: only remove cache entries for known cities.
+        var keys = cities.map(function (c) { return storageKey(c.lat, c.lon); });
+        return _storageRemove(keys);
+      }
+
+      // Full clear: find all weather_fc_* keys and remove them.
+      return new Promise(function (resolve) {
+        s.get(null, function (all) {
+          var weatherKeys = Object.keys(all || {}).filter(function (k) {
+            return k.indexOf('weather_fc_') === 0;
+          });
+          if (weatherKeys.length > 0) {
+            s.remove(weatherKeys, function () { resolve(); });
+          } else {
+            resolve();
+          }
+        });
+      });
+    },
+
+    /**
+     * Remove stale cache entries for cities no longer in the user's list.
+     * Call this after removing a city from weatherCities.
+     * @param {Array<{lat:number, lon:number}>} activeCities
+     * @returns {Promise<void>}
+     */
+    pruneCache: function (activeCities) {
+      var activeKeys = {};
+      for (var i = 0; i < activeCities.length; i++) {
+        activeKeys[storageKey(activeCities[i].lat, activeCities[i].lon)] = true;
+      }
+      // Also clean corresponding memory entries.
+      var newMem = Object.create(null);
+      var memKeys = Object.keys(_memCache);
+      for (var j = 0; j < memKeys.length; j++) {
+        if (activeKeys[memKeys[j]]) {
+          newMem[memKeys[j]] = _memCache[memKeys[j]];
+        }
+      }
+      _memCache = newMem;
+
+      var s = _getStorage();
+      if (!s) return Promise.resolve();
+      var self = this;
+      return new Promise(function (resolve) {
+        s.get(null, function (all) {
+          var stale = Object.keys(all || {}).filter(function (k) {
+            return k.indexOf('weather_fc_') === 0 && !activeKeys[k];
+          });
+          if (stale.length > 0) {
+            s.remove(stale, function () { resolve(); });
+          } else {
+            resolve();
+          }
+        });
+      });
     },
 
     /**

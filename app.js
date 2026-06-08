@@ -511,6 +511,10 @@ function addWeatherCity(location) {
 function removeWeatherCity(id) {
   weatherCities = weatherCities.filter(function (c) { return c.id !== id; });
   saveWeatherCities();
+  // Prune stale cache entries for removed cities.
+  if (typeof LithiumWeather !== 'undefined' && LithiumWeather.pruneCache) {
+    LithiumWeather.pruneCache(weatherCities);
+  }
 }
 
 async function fetchWeatherForAllCities() {
