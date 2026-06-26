@@ -1964,7 +1964,9 @@ function handleContextAction(action) {
     });
     items = updateSize(items);
     saveItems();
+    const flipSnap = captureGridPositions();
     render();
+    animateGridFlip(flipSnap);
     return;
   }
 
