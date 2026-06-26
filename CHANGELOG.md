@@ -9,15 +9,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-26
+
 ### Added
 - Lithium logo and shortened extension name across both Chrome and Firefox manifests
 - Manual cropping step on custom icon upload (with switch to WebP encoding for smaller payloads)
 - Inline folder rename directly from the folder header
+- Weather data layer via Open-Meteo API (`weather.js`): current conditions, hourly/daily forecast, multi-city management
 
 ### Changed
 - Aligned the engine-form-input control to the standard `.form-input` design tokens
 - Unified `Escape` key to close all popups (folder, edit, clock, login, etc.)
 - Set the Firefox add-on ID to `lithium-newtab@fank040118`
+- Grid resize (via context menu) now animates displaced neighbours with the same FLIP transition used by drag-and-drop
+- Corrected `2x4`/`4x2` size naming to consistently follow rows×cols convention
+
+### Fixed
+- Large-size folder with only one remaining icon after the normal slots now renders it full-size instead of as a mini thumbnail
+- Letters with descenders (p, g, y, q) were clipped in grid item labels due to `line-height: 1`; increased to `1.2`
+- Weather forecast cache is now persisted to `chrome.storage.local` so it survives service-worker restarts
 
 ### Security / Privacy
 - `PRIVACY.md` now explicitly lists the favicon services (`google.com/s2/favicons`, `icon.horse`) that may receive shortcut hostnames when the browser-native favicon API isn't available
@@ -49,5 +59,6 @@ Initial public release.
 - Email verification required before any cloud read/write
 - Client-side guards in `syncToCloud` / `syncFromCloud` block sync attempts for unverified accounts (defense in depth on top of Firestore Rules)
 
-[Unreleased]: https://github.com/fank040118/Lithium/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/fank040118/Lithium/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/fank040118/Lithium/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/fank040118/Lithium/releases/tag/v1.0.0
