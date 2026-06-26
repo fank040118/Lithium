@@ -957,8 +957,8 @@ body {
 .grid-item-wrap[data-size="1x2"] { grid-column: span 2; }
 .grid-item-wrap[data-size="2x1"] { grid-row: span 2; }
 .grid-item-wrap[data-size="2x2"] { grid-column: span 2; grid-row: span 2; }
-.grid-item-wrap[data-size="2x4"] { grid-column: span 2; grid-row: span 4; }
-.grid-item-wrap[data-size="4x2"] { grid-column: span 4; grid-row: span 2; }
+.grid-item-wrap[data-size="2x4"] { grid-column: span 4; grid-row: span 2; }
+.grid-item-wrap[data-size="4x2"] { grid-column: span 2; grid-row: span 4; }
 /* Extended wraps: JS controls height via updateGridItemSizes(); disable ::before trick */
 .grid-item-wrap[data-size="1x2"]::before,
 .grid-item-wrap[data-size="2x1"]::before,

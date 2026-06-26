@@ -375,8 +375,8 @@ const FOLDER_SLOT_LAYOUTS = {
   '1x2': { cols: 2, rows: 1 },
   '2x1': { cols: 1, rows: 2 },
   '2x2': { cols: 2, rows: 2 },
-  '2x4': { cols: 2, rows: 4 },
-  '4x2': { cols: 4, rows: 2 },
+  '2x4': { cols: 4, rows: 2 },
+  '4x2': { cols: 2, rows: 4 },
 };
 
 function findItem(list, id) {
