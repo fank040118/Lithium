@@ -1176,7 +1176,9 @@ function renderIcon(item) {
   }
 
   // Large sizes: slot-based layout.
-  // (cols * rows - 1) normal icon slots + 1 mini-group slot (2×2 grid of 4 icons).
+  // (cols * rows - 1) normal icon slots + 1 last slot.
+  // The last slot is a mini-group (2×2 thumbnails) only when 2+ icons remain after the
+  // normal slots; if only 0 or 1 icon remains, show it as a full-size normal slot.
   const { cols, rows } = layout;
   const totalSlots = cols * rows;
   const normalCount = totalSlots - 1;
@@ -1184,11 +1186,15 @@ function renderIcon(item) {
   for (let i = 0; i < normalCount; i++) {
     slotsHtml += renderFolderNormalSlot(item.children[i] || null);
   }
-  const miniChildren = [];
-  for (let i = normalCount; i < normalCount + 4; i++) {
-    miniChildren.push(item.children[i] || null);
+  if (item.children.length <= normalCount + 1) {
+    slotsHtml += renderFolderNormalSlot(item.children[normalCount] || null);
+  } else {
+    const miniChildren = [];
+    for (let i = normalCount; i < normalCount + 4; i++) {
+      miniChildren.push(item.children[i] || null);
+    }
+    slotsHtml += renderFolderMiniSlot(miniChildren);
   }
-  slotsHtml += renderFolderMiniSlot(miniChildren);
   return `<div class="folder-slot-grid" style="grid-template-columns:repeat(${cols},var(--base-card-size));grid-template-rows:repeat(${rows},var(--base-card-size))">${slotsHtml}</div>`;
 }
 
