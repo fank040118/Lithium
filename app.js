@@ -102,7 +102,6 @@ const STORAGE_KEYS = [
   'startpage_wallpaper',
   'startpage_clocks',
   'startpage_grid_columns',
-  'startpage_weather_cities',
 ];
 
 const ICON_STYLE = 'width:100%;height:100%;display:block;object-fit:cover;pointer-events:none';
@@ -175,9 +174,17 @@ async function migrateLegacyLocalStorage() {
   if (!extensionStorageArea || typeof localStorage === 'undefined') return;
   const legacyData = readLegacyLocalStorage(STORAGE_KEYS);
   const legacyKeys = Object.keys(legacyData);
+
+  // Also migrate legacy weather cities key even though it's no longer in STORAGE_KEYS
+  const weatherLegacy = readLegacyLocalStorage(['startpage_weather_cities']);
+  if (weatherLegacy.startpage_weather_cities !== undefined) {
+    legacyData.startpage_weather_cities = weatherLegacy.startpage_weather_cities;
+    legacyKeys.push('startpage_weather_cities');
+  }
+
   if (legacyKeys.length === 0) return;
 
-  const currentData = await storage.get(STORAGE_KEYS);
+  const currentData = await storage.get(legacyKeys);
   const migratedData = {};
   for (const key of legacyKeys) {
     if (typeof currentData[key] === 'undefined') {
@@ -430,7 +437,15 @@ async function loadAll() {
   selectedEngineId = data.startpage_selected_engine || 'google';
   wallpaper = data.startpage_wallpaper || null;
   clocks = migrateClocks(data.startpage_clocks || deepClone(DEFAULT_CLOCKS));
-  legacyWeatherCities = data.startpage_weather_cities || [];
+  let legacyRaw = {};
+  try {
+    legacyRaw = await storage.get(['startpage_weather_cities']);
+  } catch (err) {
+    console.warn('[Lithium] Failed to read legacy weather cities:', err);
+  }
+  legacyWeatherCities = Array.isArray(legacyRaw.startpage_weather_cities)
+    ? legacyRaw.startpage_weather_cities
+    : [];
   mainGridColumns = clampMainGridColumns(data.startpage_grid_columns);
   if (itemResult.changed) {
     await storage.set({ startpage_items: items });
