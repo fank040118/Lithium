@@ -114,7 +114,7 @@ let wallpaper = null;
 let wallpaperBlur = 0;
 let wallpaperDim = 0;
 let clocks = [];
-let weatherCities = [];
+let legacyWeatherCities = [];
 let mainGridColumns = DEFAULT_MAIN_GRID_COLUMNS;
 let currentFolderId = null;
 let dragState = null;
@@ -430,13 +430,44 @@ async function loadAll() {
   selectedEngineId = data.startpage_selected_engine || 'google';
   wallpaper = data.startpage_wallpaper || null;
   clocks = migrateClocks(data.startpage_clocks || deepClone(DEFAULT_CLOCKS));
-  weatherCities = data.startpage_weather_cities || [];
+  legacyWeatherCities = data.startpage_weather_cities || [];
   mainGridColumns = clampMainGridColumns(data.startpage_grid_columns);
   if (itemResult.changed) {
     await storage.set({ startpage_items: items });
     await markSyncedDataChanged();
   }
   if (clocks.length === 0) clocks = deepClone(DEFAULT_CLOCKS);
+  if (legacyWeatherCities.length > 0) {
+    let migrated = false;
+    for (const c of legacyWeatherCities) {
+      const exists = getWeatherCitiesFromItems(items).some(
+        existing => Math.abs(existing.lat - c.lat) < 0.0001 && Math.abs(existing.lon - c.lon) < 0.0001
+      );
+      if (!exists) {
+        items.push({
+          id: generateId(),
+          type: 'weather',
+          name: c.name,
+          size: '1x2',
+          city: {
+            name: c.name,
+            lat: c.lat,
+            lon: c.lon,
+            tz: c.tz || 'auto',
+            country: c.country || '',
+            admin1: c.admin1 || '',
+          },
+        });
+        migrated = true;
+      }
+    }
+    if (migrated) {
+      await storage.set({ startpage_items: items });
+      await markSyncedDataChanged();
+    }
+    await storage.remove(['startpage_weather_cities']);
+    legacyWeatherCities = [];
+  }
 }
 
 async function saveItems() {
@@ -488,19 +519,8 @@ async function saveClocks() {
   await markSyncedDataChanged();
 }
 
-async function saveWeatherCities() {
-  await storage.set({ startpage_weather_cities: weatherCities });
-  await markSyncedDataChanged();
-}
-
-async function addWeatherCity(location) {
-  const dup = weatherCities.find(function (c) {
-    return Math.abs(c.lat - location.latitude) < 0.0001 &&
-           Math.abs(c.lon - location.longitude) < 0.0001;
-  });
-  if (dup) return dup;
-  const entry = {
-    id: generateId(),
+function bindCityToItem(item, location) {
+  item.city = {
     name: location.name,
     lat: location.latitude,
     lon: location.longitude,
@@ -508,27 +528,43 @@ async function addWeatherCity(location) {
     country: location.country || '',
     admin1: location.admin1 || '',
   };
-  weatherCities.push(entry);
-  await saveWeatherCities();
-  return entry;
 }
 
-async function removeWeatherCity(id) {
-  weatherCities = weatherCities.filter(function (c) { return c.id !== id; });
-  await saveWeatherCities();
+async function pruneWeatherCache() {
+  const cities = getWeatherCitiesFromItems(items);
   if (typeof LithiumWeather !== 'undefined' && LithiumWeather.pruneCache) {
-    LithiumWeather.pruneCache(weatherCities);
+    LithiumWeather.pruneCache(cities);
   }
 }
 
+function getWeatherCitiesFromItems(list) {
+  const cities = [];
+  const seen = new Set();
+  function walk(items) {
+    for (const item of items || []) {
+      if (item.type === 'weather' && item.city) {
+        const key = item.city.lat.toFixed(4) + '|' + item.city.lon.toFixed(4) + '|' + (item.city.tz || 'auto');
+        if (!seen.has(key)) {
+          seen.add(key);
+          cities.push(item.city);
+        }
+      }
+      if (item.children && item.children.length) walk(item.children);
+    }
+  }
+  walk(list);
+  return cities;
+}
+
 async function fetchWeatherForAllCities() {
-  if (weatherCities.length === 0) return [];
+  const cities = getWeatherCitiesFromItems(items);
+  if (cities.length === 0) return [];
   if (typeof LithiumWeather === 'undefined') {
     console.warn('[Lithium] LithiumWeather module not loaded');
     return [];
   }
   try {
-    return await LithiumWeather.getForecastForCities(weatherCities);
+    return await LithiumWeather.getForecastForCities(cities);
   } catch (err) {
     console.warn('[Lithium] Weather fetch failed:', err);
     return [];
@@ -2401,7 +2437,7 @@ async function init() {
   // Kick off weather data fetch in background (fire-and-forget).
   // Results are cached in-memory by LithiumWeather; UI rendering layer
   // reads from cache when it needs them.
-  if (weatherCities.length > 0) fetchWeatherForAllCities();
+  if (getWeatherCitiesFromItems(items).length > 0) fetchWeatherForAllCities();
 }
 
 function scheduleIconCacheRefresh() {
