@@ -62,12 +62,17 @@
   //   1. chrome.storage.local — persists across tabs/sessions (primary)
   //   2. In-memory — avoids async I/O on repeated reads within the same page
   //
-  // Each city gets its own storage key: weather_fc_<lat>_<lon>
+  // Each city gets its own storage key: weather_fc_<lat>_<lon>_<tz>
   // Value: JSON { ts: <epoch ms>, data: <forecast object> }
   var _memCache = Object.create(null);
 
-  function storageKey(lat, lon) {
-    return 'weather_fc_' + Number(lat).toFixed(4) + '_' + Number(lon).toFixed(4);
+  function storageKey(lat, lon, tz) {
+    var safeTz = (tz || 'auto').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return 'weather_fc_' + Number(lat).toFixed(4) + '_' + Number(lon).toFixed(4) + '_' + safeTz;
+  }
+
+  function cityKey(city) {
+    return storageKey(city.lat, city.lon, city.tz || 'auto');
   }
 
   function _getStorage() {
@@ -191,6 +196,8 @@
         'precipitation_probability_max',
         'wind_speed_10m_max',
         'wind_direction_10m_dominant',
+        'sunrise',
+        'sunset',
       ].join(',');
 
       var hourlyVars = [
@@ -225,6 +232,8 @@
             precipProbMax: data.daily.precipitation_probability_max[i],
             windSpeedMax: data.daily.wind_speed_10m_max[i],
             windDirDominant: data.daily.wind_direction_10m_dominant[i],
+            sunrise: data.daily.sunrise[i],
+            sunset: data.daily.sunset[i],
           };
         });
 
@@ -266,7 +275,7 @@
      * @returns {Promise<object>} Same shape as fetchForecast return
      */
     getCachedForecast: function (city) {
-      var key = storageKey(city.lat, city.lon);
+      var key = cityKey(city);
 
       // Tier 1: in-memory
       var mem = _memCache[key];
@@ -308,17 +317,39 @@
      * @returns {Promise<Array<{city:object, forecast:object|null, error?:string}>>}
      */
     getForecastForCities: function (cities) {
-      return Promise.allSettled(
-        cities.map(function (city) {
+      var keyToIndices = Object.create(null);
+      var uniqueCities = [];
+      cities.forEach(function (city, idx) {
+        var key = cityKey(city);
+        if (!keyToIndices[key]) {
+          keyToIndices[key] = [];
+          uniqueCities.push(city);
+        }
+        keyToIndices[key].push(idx);
+      });
+
+      return Promise.all(
+        uniqueCities.map(function (city) {
           return weather.getCachedForecast(city).then(function (forecast) {
-            return { city: city, forecast: forecast };
+            return { status: 'fulfilled', value: forecast };
+          }).catch(function (err) {
+            return { status: 'rejected', reason: err };
           });
         })
       ).then(function (results) {
-        return results.map(function (r, i) {
-          if (r.status === 'fulfilled') return r.value;
-          return { city: cities[i], forecast: null, error: (r.reason && r.reason.message) || 'Unknown error' };
+        var out = new Array(cities.length);
+        results.forEach(function (r, uidx) {
+          var city = uniqueCities[uidx];
+          var key = cityKey(city);
+          keyToIndices[key].forEach(function (idx) {
+            if (r.status === 'fulfilled') {
+              out[idx] = { city: cities[idx], forecast: r.value };
+            } else {
+              out[idx] = { city: cities[idx], forecast: null, error: (r.reason && r.reason.message) || 'Unknown error' };
+            }
+          });
         });
+        return out;
       });
     },
 
@@ -334,14 +365,14 @@
 
     /**
      * Clear all cached forecasts (memory + storage).
-     * @param {Array<{lat:number, lon:number}>} [cities] — if provided, only
+     * @param {Array<{lat:number, lon:number, tz?:string}>} [cities] — if provided, only
      *   clear cache entries for these cities; otherwise clear everything.
      * @returns {Promise<void>}
      */
     clearCache: function (cities) {
       if (cities && cities.length > 0) {
         for (var i = 0; i < cities.length; i++) {
-          delete _memCache[storageKey(cities[i].lat, cities[i].lon)];
+          delete _memCache[cityKey(cities[i])];
         }
       } else {
         _memCache = Object.create(null);
@@ -351,7 +382,7 @@
 
       if (cities && cities.length > 0) {
         // Targeted clear: only remove cache entries for known cities.
-        var keys = cities.map(function (c) { return storageKey(c.lat, c.lon); });
+        var keys = cities.map(function (c) { return cityKey(c); });
         return _storageRemove(keys);
       }
 
@@ -385,13 +416,13 @@
     /**
      * Remove stale cache entries for cities no longer in the user's list.
      * Call this after removing a city from weatherCities.
-     * @param {Array<{lat:number, lon:number}>} activeCities
+     * @param {Array<{lat:number, lon:number, tz?:string}>} activeCities
      * @returns {Promise<void>}
      */
     pruneCache: function (activeCities) {
       var activeKeys = {};
       for (var i = 0; i < activeCities.length; i++) {
-        activeKeys[storageKey(activeCities[i].lat, activeCities[i].lon)] = true;
+        activeKeys[cityKey(activeCities[i])] = true;
       }
       // Also clean corresponding memory entries.
       var newMem = Object.create(null);
