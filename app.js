@@ -571,6 +571,9 @@ async function fetchWeatherForAllCities() {
   }
 }
 
+globalThis.fetchWeatherForAllCities = fetchWeatherForAllCities;
+globalThis.pruneWeatherCache = pruneWeatherCache;
+
 function getAllEngines() {
   return [...DEFAULT_ENGINES, ...customEngines];
 }
