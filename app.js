@@ -165,9 +165,9 @@ const storage = extensionStorageArea
       },
     };
 
-async function markSyncedDataChanged() {
+async function markSyncedDataChanged(options = {}) {
   if (typeof globalThis.markLocalCloudDataChanged !== 'function') return;
-  await globalThis.markLocalCloudDataChanged();
+  await globalThis.markLocalCloudDataChanged(options);
 }
 
 async function migrateLegacyLocalStorage() {
@@ -449,7 +449,7 @@ async function loadAll() {
   mainGridColumns = clampMainGridColumns(data.startpage_grid_columns);
   if (itemResult.changed) {
     await storage.set({ startpage_items: items });
-    await markSyncedDataChanged();
+    // Schema normalization is not a user edit; do not advance local sync timestamp.
   }
   if (clocks.length === 0) clocks = deepClone(DEFAULT_CLOCKS);
   if (legacyWeatherCities.length > 0) {
@@ -478,7 +478,7 @@ async function loadAll() {
     }
     if (migrated) {
       await storage.set({ startpage_items: items });
-      await markSyncedDataChanged();
+      // One-time migration is not a user edit; do not advance local sync timestamp.
     }
     await storage.remove(['startpage_weather_cities']);
     legacyWeatherCities = [];

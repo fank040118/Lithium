@@ -613,10 +613,13 @@ function scheduleSyncToCloud() {
   }, 2000);
 }
 
-async function markLocalCloudDataChanged() {
-  _hasLocalChanges = true;
-  const now = Date.now();
-  await _saveLocalSyncTs(now);
+async function markLocalCloudDataChanged(options = {}) {
+  const { userEdit = true } = options;
+  if (userEdit) {
+    const now = Date.now();
+    await _saveLocalSyncTs(now);
+    _hasLocalChanges = true;
+  }
   scheduleSyncToCloud();
 }
 
