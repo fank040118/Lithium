@@ -13,6 +13,7 @@
 const FB_API_KEY = 'AIzaSyBtwj6EF347eJQS6W1WBdnXOB3LellcT1A';
 const FB_PROJECT_ID = 'mainpage-ext';
 const FB_LOCAL_SYNC_TS_KEY = '_fb_local_sync_ts';
+const FB_CLOUD_SYNC_TS_KEY = '_fb_cloud_sync_ts';
 
 const _fbStore = () =>
   globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local || null;
@@ -26,7 +27,7 @@ let _uid = null;
 let _emailVerified = false;
 let _email = null;
 
-// 带分类的同步错误，便于调用方按错误类型给出不同反馈
+// Categorized sync error so callers can show different feedback per error type.
 class CloudSyncError extends Error {
   constructor(code, status = 0, original = null) {
     super(original?.message || code);
@@ -66,7 +67,10 @@ async function _clearAuth() {
   _emailVerified = false;
   _email = null;
   const s = _fbStore();
-  if (s) await s.remove(['_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email']);
+  if (s) await s.remove([
+    '_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email',
+    FB_CLOUD_SYNC_TS_KEY,
+  ]);
 }
 
 // ── Token management ─────────────────────────────────────────
@@ -100,6 +104,9 @@ async function _getToken() {
       await _clearAuth();
       throw new CloudSyncError('auth', res.status, new Error(msg));
     }
+    if (res.status === 429) {
+      throw new CloudSyncError('quota', res.status, new Error(msg));
+    }
     if (res.status >= 500) {
       throw new CloudSyncError('network', res.status, new Error(msg));
     }
@@ -107,7 +114,7 @@ async function _getToken() {
   }
 
   _idToken = data.id_token;
-  _tokenExpiry = Date.now() + Number(data.expires_in) * 1000;
+  _tokenExpiry = Date.now() + (Number(data.expires_in) || 3600) * 1000;
   _refreshToken = data.refresh_token;
   _uid = data.user_id;
   await _saveAuth();
@@ -277,6 +284,13 @@ function _normalizeTs(value) {
   return Number.isFinite(ts) && ts > 0 ? ts : 0;
 }
 
+function _rfc3339ToMs(value) {
+  if (!value || typeof value !== 'string') return 0;
+  const trimmed = value.replace(/\.(\d{3})\d*Z$/, '.$1Z');
+  const d = new Date(trimmed);
+  return Number.isFinite(d.getTime()) ? d.getTime() : 0;
+}
+
 async function _loadLocalSyncTs() {
   const s = _fbStore();
   if (!s) return 0;
@@ -290,6 +304,21 @@ async function _saveLocalSyncTs(ts) {
   const s = _fbStore();
   if (!s) return;
   await s.set({ [FB_LOCAL_SYNC_TS_KEY]: _lastLocalTs });
+}
+
+async function _loadCloudSyncTs() {
+  const s = _fbStore();
+  if (!s) return 0;
+  const d = await s.get([FB_CLOUD_SYNC_TS_KEY]);
+  _lastCloudTs = _normalizeTs(d[FB_CLOUD_SYNC_TS_KEY]);
+  return _lastCloudTs;
+}
+
+async function _saveCloudSyncTs(ts) {
+  _lastCloudTs = _normalizeTs(ts);
+  const s = _fbStore();
+  if (!s) return;
+  await s.set({ [FB_CLOUD_SYNC_TS_KEY]: _lastCloudTs });
 }
 
 // ── Firestore helpers ────────────────────────────────────────
@@ -370,24 +399,28 @@ async function _fsSet(data) {
     throw new CloudSyncError(code, status);
   }
 
-  const doc = await res.json();
-  return doc.updateTime || null;
+  let doc = null;
+  try { doc = await res.json(); } catch { return null; }
+  return doc?.updateTime || null;
 }
 
 async function _parseFirestoreError(res) {
   let data = {};
   try { data = await res.json(); } catch {}
   const msg = data.error?.message || '';
+  const errStatus = data.error?.status || '';
   const status = res.status;
 
   if (status === 401 || status === 403 ||
+      errStatus === 'UNAUTHENTICATED' ||
+      errStatus === 'PERMISSION_DENIED' ||
       msg.includes('UNAUTHENTICATED') ||
       msg.includes('PERMISSION_DENIED')) {
-    _idToken = null;
-    _tokenExpiry = 0;
+    await _clearAuth();
     return { code: 'auth', status };
   }
   if (status === 429 ||
+      errStatus === 'RESOURCE_EXHAUSTED' ||
       msg.includes('QUOTA_EXCEEDED') ||
       msg.includes('RESOURCE_EXHAUSTED')) {
     return { code: 'quota', status };
@@ -398,44 +431,116 @@ async function _parseFirestoreError(res) {
 // ── Sync ────────────────────────────────────────────────────
 
 let _syncTimer = null;
-let _lastCloudTs = 0;
-let _lastLocalTs = 0;
+let _syncInFlight = null; // Promise | null
+let _lastCloudTs = 0;     // 来自 Firestore Document.updateTime（毫秒）
+let _lastLocalTs = 0;     // 本地用户编辑时间戳（毫秒）
+let _hasLocalChanges = false; // runtime dirty flag; persists via _lastLocalTs
+// _syncState and _lastSyncError are consumed by _updateSyncUI in Task 3.
+let _syncState = 'idle';  // 'idle' | 'uploading' | 'downloading' | 'error'
+let _lastSyncError = null;
 
-async function syncToCloud() {
-  if (!fbIsSignedIn() || !fbIsEmailVerified()) return;
-  try {
-    const now = Date.now();
-    await _fsSet({
-      items: JSON.stringify(items),
-      engines: JSON.stringify(customEngines),
-      selected_engine: selectedEngineId,
-      clocks: JSON.stringify(clocks),
-      grid_columns: mainGridColumns,
-      updated_at: now,
-    });
-    _lastCloudTs = now;
-    await _saveLocalSyncTs(now);
-    _updateSyncUI(now);
-  } catch (e) {
-    console.error('Sync to cloud failed:', e);
+async function _doSyncToCloud(options = {}) {
+  const { force = false } = options;
+  if (!fbIsSignedIn() || !fbIsEmailVerified()) {
+    throw new CloudSyncError('not-signed-in', 0);
   }
+
+  // Skip when no local changes and not forced.
+  if (!force && !_hasLocalChanges) return { ok: true, skipped: true };
+
+  _syncState = 'uploading';
+  _lastSyncError = null;
+  _updateSyncUI();
+
+  const now = Date.now();
+  const cloudUpdateTime = await _fsSet({
+    items: JSON.stringify(items),
+    engines: JSON.stringify(customEngines),
+    selected_engine: selectedEngineId,
+    clocks: JSON.stringify(clocks),
+    grid_columns: mainGridColumns,
+    updated_at: now, // 兼容旧客户端/UI 显示，不作为冲突判断依据
+  });
+
+  if (!cloudUpdateTime) throw new CloudSyncError('firestore', 0, new Error('No updateTime in response'));
+
+  const serverMs = _rfc3339ToMs(cloudUpdateTime);
+  if (serverMs === 0) {
+    throw new CloudSyncError('firestore', 0, new Error('Invalid updateTime from server'));
+  }
+  await _saveCloudSyncTs(serverMs);
+  await _saveLocalSyncTs(serverMs);
+  _hasLocalChanges = false;
+
+  _syncState = 'idle';
+  _updateSyncUI(serverMs);
+  return { ok: true, skipped: false, ts: serverMs };
+}
+
+function syncToCloud(options = {}) {
+  if (_syncInFlight) {
+    return _syncInFlight.then(
+      () => syncToCloud(options),
+      () => syncToCloud(options)
+    );
+  }
+
+  _syncInFlight = _doSyncToCloud(options);
+  _syncInFlight.catch((err) => {
+    _syncState = 'error';
+    _lastSyncError = err;
+    _updateSyncUI();
+  }).finally(() => {
+    _syncInFlight = null;
+  });
+
+  return _syncInFlight;
 }
 
 // Returns true if cloud data was found and applied
 async function syncFromCloud(options = {}) {
   const { force = false } = options;
   if (!fbIsSignedIn() || !fbIsEmailVerified()) return false;
+
+  _syncState = 'downloading';
+  _lastSyncError = null;
+  _updateSyncUI();
+
   try {
     const doc = await _fsGet();
-    if (!doc?.fields) return false;
+    if (!doc?.fields) {
+      _syncState = 'idle';
+      _updateSyncUI();
+      return false;
+    }
+
+    const cloudUpdateTime = doc.updateTime || null;
+    const cloudTsMs = _rfc3339ToMs(cloudUpdateTime);
+    const hasCloudTimestamp = cloudTsMs > 0;
+
+    // 非强制模式下，若云端没有变化则跳过
+    if (!force && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
+      _syncState = 'idle';
+      _updateSyncUI();
+      return true;
+    }
+
     const f = doc.fields;
-    const cloudTs = _fromFV(f.updated_at) || 0;
-    const hasCloudTimestamp = cloudTs > 0;
-    if (!force && hasCloudTimestamp && cloudTs <= _lastCloudTs) return true;
-    if (!force && _lastLocalTs > cloudTs) {
+    // 兼容：旧数据仍用 updated_at 字段显示
+    const legacyCloudTs = _fromFV(f.updated_at) || 0;
+
+    // Last-writer-on-this-device-wins: when both local and cloud have changed,
+    // prefer local edits and requeue an upload. This is an intentional design choice.
+    if (!force && _lastLocalTs > _lastCloudTs && cloudTsMs > _lastCloudTs) {
+      _syncState = 'idle';
+      _updateSyncUI();
       scheduleSyncToCloud();
       return false;
     }
+
+    // 真正要应用云端数据时，取消尚未执行的自动上传，防止本地过期状态覆盖刚拉取的数据
+    clearTimeout(_syncTimer);
+    _syncTimer = null;
 
     const cloudItems = _fromFV(f.items);
     const cloudEngines = _fromFV(f.engines);
@@ -456,7 +561,6 @@ async function syncFromCloud(options = {}) {
     if (Array.isArray(cloudClocks) && cloudClocks.length > 0) clocks = cloudClocks;
     if (typeof cloudColumns === 'number') mainGridColumns = cloudColumns;
 
-    // Persist to local storage (wallpaper stays local-only)
     const s = _fbStore();
     if (s) {
       await s.set({
@@ -468,13 +572,16 @@ async function syncFromCloud(options = {}) {
       });
     }
 
-    _lastCloudTs = cloudTs;
-    await _saveLocalSyncTs(cloudTs);
+    await _saveCloudSyncTs(cloudTsMs);
+    await _saveLocalSyncTs(cloudTsMs);
+    _hasLocalChanges = false;
+
     applyWallpaper();
     applyMainGridColumns();
     render();
     document.getElementById('engine-name').textContent = getSelectedEngine().name;
-    _updateSyncUI(cloudTs);
+    _syncState = 'idle';
+    _updateSyncUI(cloudTsMs || legacyCloudTs);
     if (shouldResyncCloud) scheduleSyncToCloud();
     if (typeof globalThis.scheduleIconCacheRefresh === 'function') {
       globalThis.scheduleIconCacheRefresh();
@@ -487,18 +594,23 @@ async function syncFromCloud(options = {}) {
     }
     return true;
   } catch (e) {
-    console.error('Sync from cloud failed:', e);
-    return false;
+    _syncState = 'error';
+    _lastSyncError = e;
+    _updateSyncUI();
+    throw e;
   }
 }
 
 function scheduleSyncToCloud() {
   if (!fbIsSignedIn() || !fbIsEmailVerified()) return;
   clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(syncToCloud, 2000);
+  _syncTimer = setTimeout(() => {
+    syncToCloud().catch(err => console.warn('[firebase] scheduled upload failed', err));
+  }, 2000);
 }
 
 async function markLocalCloudDataChanged() {
+  _hasLocalChanges = true;
   const now = Date.now();
   await _saveLocalSyncTs(now);
   scheduleSyncToCloud();
@@ -915,6 +1027,8 @@ async function _handleCheckVerified() {
 async function fbInit() {
   await _loadAuth();
   await _loadLocalSyncTs();
+  await _loadCloudSyncTs();
+  if (_lastLocalTs > _lastCloudTs) _hasLocalChanges = true;
   _updateSyncUI();
 
   // Auth mode tabs (login / signup)
@@ -1021,5 +1135,7 @@ async function fbInit() {
 
   syncFromCloud().then(hadCloudData => {
     if (!hadCloudData) scheduleSyncToCloud();
+  }).catch((err) => {
+    console.warn('[firebase] startup pull failed', err);
   });
 }
