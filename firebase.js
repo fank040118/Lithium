@@ -582,7 +582,11 @@ async function syncFromCloud(options = {}) {
     document.getElementById('engine-name').textContent = getSelectedEngine().name;
     _syncState = 'idle';
     _updateSyncUI(cloudTsMs || legacyCloudTs);
-    if (shouldResyncCloud) scheduleSyncToCloud();
+    if (shouldResyncCloud) {
+      // Cloud data was normalized on apply; re-upload so other devices see the canonical form.
+      _hasLocalChanges = true;
+      scheduleSyncToCloud();
+    }
     if (typeof globalThis.scheduleIconCacheRefresh === 'function') {
       globalThis.scheduleIconCacheRefresh();
     }
