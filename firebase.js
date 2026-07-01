@@ -605,7 +605,11 @@ function scheduleSyncToCloud() {
   if (!fbIsSignedIn() || !fbIsEmailVerified()) return;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(() => {
-    syncToCloud().catch(err => console.warn('[firebase] scheduled upload failed', err));
+    _syncTimer = null;
+    syncToCloud().catch((err) => {
+      // 自动上传失败只记录并更新状态栏，不弹 toast 打扰用户
+      console.error('[firebase] scheduled upload failed', err);
+    });
   }, 2000);
 }
 
@@ -630,15 +634,31 @@ async function _handleSyncBtn(direction) {
 
   try {
     if (direction === 'upload') {
-      await syncToCloud();
+      await syncToCloud({ force: true });
       showToast(t('toast.syncUploaded'), 'default');
     } else {
+      // 关键：手动拉取前取消尚未执行的自动上传，并等待正在执行的上传完成
+      clearTimeout(_syncTimer);
+      _syncTimer = null;
+      if (_syncInFlight) await _syncInFlight;
+
       const pulled = await syncFromCloud({ force: true });
       showToast(pulled ? t('toast.syncDownloaded') : t('toast.syncNoCloudData'), 'default');
     }
   } catch (e) {
-    showToast(t('toast.syncFailed'), 'error');
+    const code = e?.code || 'firestore';
+    if (code === 'auth') {
+      showToast(t('toast.syncAuthFailed'), 'error');
+    } else if (code === 'network') {
+      showToast(t('toast.syncNetworkFailed'), 'error');
+    } else if (code === 'quota') {
+      showToast(t('toast.syncQuotaFailed'), 'error');
+    } else {
+      showToast(t('toast.syncFailed'), 'error');
+    }
   } finally {
+    _syncState = 'idle';
+    _updateSyncUI();
     if (uploadBtn) uploadBtn.disabled = false;
     if (downloadBtn) downloadBtn.disabled = false;
   }
@@ -677,6 +697,12 @@ function _updateSyncUI(ts) {
     loggedSection?.classList.remove('hidden');
     if (!fbIsEmailVerified()) {
       statusEl.textContent = t('sidebar.sync.status.notVerified');
+    } else if (_syncState === 'uploading') {
+      statusEl.textContent = t('sidebar.sync.status.uploading');
+    } else if (_syncState === 'downloading') {
+      statusEl.textContent = t('sidebar.sync.status.downloading');
+    } else if (_syncState === 'error') {
+      statusEl.textContent = t('sidebar.sync.status.error');
     } else if (ts) {
       const d = new Date(ts);
       const hh = String(d.getHours()).padStart(2, '0');
@@ -790,7 +816,12 @@ async function _handleLogin() {
     }
     _hideLoginOverlay();
     _updateSyncUI();
-    const hadCloudData = await syncFromCloud();
+    let hadCloudData = false;
+    try {
+      hadCloudData = await syncFromCloud();
+    } catch (err) {
+      console.error('[firebase] initial pull failed', err);
+    }
     if (!hadCloudData) scheduleSyncToCloud();
   } catch (e) {
     errEl.textContent = _friendlyAuthError(e.message);
@@ -1010,7 +1041,12 @@ async function _handleCheckVerified() {
       if (statusEl) statusEl.textContent = '';
       _hideLoginOverlay();
       _updateSyncUI();
-      const hadCloudData = await syncFromCloud();
+      let hadCloudData = false;
+      try {
+        hadCloudData = await syncFromCloud();
+      } catch (err) {
+        console.error('[firebase] initial pull failed', err);
+      }
       if (!hadCloudData) scheduleSyncToCloud();
     } else {
       if (statusEl) statusEl.textContent = t('auth.verifyNotYet');
