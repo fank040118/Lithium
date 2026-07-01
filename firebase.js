@@ -26,6 +26,17 @@ let _uid = null;
 let _emailVerified = false;
 let _email = null;
 
+// 带分类的同步错误，便于调用方按错误类型给出不同反馈
+class CloudSyncError extends Error {
+  constructor(code, status = 0, original = null) {
+    super(original?.message || code);
+    this.name = 'CloudSyncError';
+    this.code = code; // 'network' | 'auth' | 'quota' | 'firestore' | 'not-signed-in'
+    this.status = status;
+    this.original = original;
+  }
+}
+
 async function _loadAuth() {
   const s = _fbStore();
   if (!s) return;
@@ -63,20 +74,42 @@ async function _clearAuth() {
 async function _getToken() {
   if (_idToken && Date.now() < _tokenExpiry - 60000) return _idToken;
   if (!_refreshToken) return null;
-  const res = await fetch(
-    `https://securetoken.googleapis.com/v1/token?key=${FB_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: _refreshToken }),
+
+  let res;
+  try {
+    res = await fetch(
+      `https://securetoken.googleapis.com/v1/token?key=${FB_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: _refreshToken }),
+        cache: 'no-store',
+      }
+    );
+  } catch (err) {
+    throw new CloudSyncError('network', 0, err);
+  }
+
+  let data = {};
+  try { data = await res.json(); } catch {}
+
+  if (!res.ok) {
+    const msg = data.error?.message || '';
+    const fatal = res.status === 400 && /INVALID_GRANT|USER_DISABLED|TOKEN_EXPIRED/.test(msg);
+    if (fatal || res.status === 401 || res.status === 403) {
+      await _clearAuth();
+      throw new CloudSyncError('auth', res.status, new Error(msg));
     }
-  );
-  if (!res.ok) { await _clearAuth(); return null; }
-  const d = await res.json();
-  _idToken = d.id_token;
-  _tokenExpiry = Date.now() + Number(d.expires_in) * 1000;
-  _refreshToken = d.refresh_token;
-  _uid = d.user_id;
+    if (res.status >= 500) {
+      throw new CloudSyncError('network', res.status, new Error(msg));
+    }
+    throw new CloudSyncError('auth', res.status, new Error(msg));
+  }
+
+  _idToken = data.id_token;
+  _tokenExpiry = Date.now() + Number(data.expires_in) * 1000;
+  _refreshToken = data.refresh_token;
+  _uid = data.user_id;
   await _saveAuth();
   return _idToken;
 }
@@ -285,23 +318,81 @@ const _docUrl = () =>
 
 async function _fsGet() {
   const token = await _getToken();
-  if (!token) return null;
-  const res = await fetch(_docUrl(), { headers: { Authorization: `Bearer ${token}` } });
+  if (!token) throw new CloudSyncError('not-signed-in', 0);
+
+  let res;
+  try {
+    res = await fetch(_docUrl(), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+      },
+      cache: 'no-store',
+    });
+  } catch (err) {
+    throw new CloudSyncError('network', 0, err);
+  }
+
   if (res.status === 404) return null;
-  if (!res.ok) return null;
+
+  if (!res.ok) {
+    const { code, status } = await _parseFirestoreError(res);
+    throw new CloudSyncError(code, status);
+  }
   return await res.json();
 }
 
 async function _fsSet(data) {
   const token = await _getToken();
-  if (!token) throw new Error('Not signed in');
+  if (!token) throw new CloudSyncError('not-signed-in', 0);
+
   const fields = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, _toFV(v)]));
-  const res = await fetch(_docUrl(), {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fields }),
-  });
-  if (!res.ok) throw new Error('Firestore write failed');
+  let res;
+  try {
+    res = await fetch(_docUrl(), {
+      method: 'PATCH',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+      },
+      body: JSON.stringify({ fields }),
+    });
+  } catch (err) {
+    throw new CloudSyncError('network', 0, err);
+  }
+
+  if (!res.ok) {
+    const { code, status } = await _parseFirestoreError(res);
+    throw new CloudSyncError(code, status);
+  }
+
+  const doc = await res.json();
+  return doc.updateTime || null;
+}
+
+async function _parseFirestoreError(res) {
+  let data = {};
+  try { data = await res.json(); } catch {}
+  const msg = data.error?.message || '';
+  const status = res.status;
+
+  if (status === 401 || status === 403 ||
+      msg.includes('UNAUTHENTICATED') ||
+      msg.includes('PERMISSION_DENIED')) {
+    _idToken = null;
+    _tokenExpiry = 0;
+    return { code: 'auth', status };
+  }
+  if (status === 429 ||
+      msg.includes('QUOTA_EXCEEDED') ||
+      msg.includes('RESOURCE_EXHAUSTED')) {
+    return { code: 'quota', status };
+  }
+  return { code: 'firestore', status };
 }
 
 // ── Sync ────────────────────────────────────────────────────
