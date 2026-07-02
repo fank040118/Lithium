@@ -23,6 +23,16 @@ const EXPORTED_NAMES = [
   'scheduleSyncToCloud',
   '_toFV',
   '_fromFV',
+  '_getToken',
+  '_parseEmailVerifiedFromToken',
+  'fbGetEmail',
+  'fbSignIn',
+  'fbSignUp',
+  'fbSendPasswordReset',
+  'fbSendEmailVerification',
+  '_fsGet',
+  '_fsSet',
+  '_parseFirestoreError',
 ];
 
 // firebase.js is a classic (non-module) script: its top-level `function`
