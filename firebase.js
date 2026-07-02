@@ -1072,6 +1072,11 @@ async function fbInit() {
   await _loadLocalSyncTs();
   await _loadCloudSyncTs();
   if (_lastLocalTs > _lastCloudTs) _hasLocalChanges = true;
+  // Seed the displayed sync time from the persisted cloud timestamp so a
+  // fresh page load shows "synced at HH:MM" immediately instead of falling
+  // through to the "syncing..." placeholder while nothing has actually
+  // changed (syncFromCloud's no-op paths don't pass a ts to _updateSyncUI).
+  _lastSyncDisplayTs = _lastCloudTs;
   _updateSyncUI();
 
   // Auth mode tabs (login / signup)
