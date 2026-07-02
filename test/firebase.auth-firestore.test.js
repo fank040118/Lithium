@@ -820,14 +820,25 @@ describe('fbSignUp', () => {
     expect(sendOobCalls).toBe(0);
   });
 
-  it('throws SIGNUP_FAILED when no error message is provided', async () => {
+  it('throws SIGNUP_FAILED when no error message is provided and does not send verification email', async () => {
     const fb = loadFirebaseModule();
     globalThis.chrome = createMockChromeStorage({});
-    globalThis.fetch = createRoutedFetch([{
-      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signUp'),
-      respond: async () => jsonResponse(400, {}),
-    }]);
+    let sendOobCalls = 0;
+    globalThis.fetch = createRoutedFetch([
+      {
+        match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signUp'),
+        respond: async () => jsonResponse(400, {}),
+      },
+      {
+        match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('sendOobCode'),
+        respond: async () => {
+          sendOobCalls++;
+          return jsonResponse(200, {});
+        },
+      },
+    ]);
 
     await expect(fb.fbSignUp('new@example.com', 'pw')).rejects.toThrow('SIGNUP_FAILED');
+    expect(sendOobCalls).toBe(0);
   });
 });
