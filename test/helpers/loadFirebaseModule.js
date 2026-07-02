@@ -37,6 +37,14 @@ const EXPORTED_NAMES = [
   'fbSignOut',
   'fbDeleteAccount',
   'markLocalCloudDataChanged',
+  '_showLoginOverlay',
+  '_hideLoginOverlay',
+  '_hasLoginConsent',
+  '_persistLoginConsent',
+  '_showLoginConsentOverlay',
+  '_hideLoginConsentOverlay',
+  '_friendlyAuthError',
+  '_updateVerifyEmailDisplay',
 ];
 
 // firebase.js is a classic (non-module) script: its top-level `function`
