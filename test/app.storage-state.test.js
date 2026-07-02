@@ -545,12 +545,14 @@ describe('app.js storage/state (batch 2, task 1)', () => {
   });
 
   describe('setMainGridColumns', () => {
-    // Intercept the four downstream helpers. MUST be installed AFTER loadAll()
-    // (loadAll itself calls the real applyMainGridColumns at line 2448) and
-    // AFTER loadAppModule (so the reassignment targets the global binding the
-    // closure resolves). Cleanup deletes the overrides so the shared
-    // afterEach's vi.restoreAllMocks() + next beforeEach's loadAppModule()
-    // see a clean state.
+    // Intercept the four downstream helpers. Installed AFTER loadAppModule()
+    // so the reassignment targets the global binding the closure resolves
+    // (sloppy indirect eval puts function declarations on globalThis, so a
+    // bare-identifier call inside setMainGridColumns hits the overridden vi.fn).
+    // loadAll() does not call any of these four, so the ordering relative to
+    // loadAll is not load-bearing — only relative to loadAppModule matters.
+    // Cleanup deletes the overrides so the shared afterEach's
+    // vi.restoreAllMocks() + next beforeEach's loadAppModule() see clean state.
     let applyMainGridColumns, updateGridItemSizes, updateGridColumnsControls, saveMainGridColumns;
 
     beforeEach(async () => {
