@@ -17,5 +17,5 @@ export function createMockChromeStorage(initial = {}) {
       for (const key of keyList) delete data[key];
     },
   };
-  return { local, _data: data };
+  return { storage: { local }, _data: data };
 }
