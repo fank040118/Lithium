@@ -36,6 +36,7 @@ const EXPORTED_NAMES = [
   'fbRefreshEmailVerifiedStatus',
   'fbSignOut',
   'fbDeleteAccount',
+  'markLocalCloudDataChanged',
 ];
 
 // firebase.js is a classic (non-module) script: its top-level `function`
