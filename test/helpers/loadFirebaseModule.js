@@ -34,6 +34,8 @@ const EXPORTED_NAMES = [
   '_fsSet',
   '_parseFirestoreError',
   'fbRefreshEmailVerifiedStatus',
+  'fbSignOut',
+  'fbDeleteAccount',
 ];
 
 // firebase.js is a classic (non-module) script: its top-level `function`

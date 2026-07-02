@@ -2,6 +2,12 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
+import { TEST_UID, setupSignedInFirebase } from './helpers/setupSignedInFirebase.js';
+
+// Re-derived locally: setupSignedInFirebase.js keeps this as a private const,
+// not exported. Same shape as the Firestore doc URL fragment _docUrl() builds
+// internally, used here to match the DELETE-method request in extraRoutes.
+const FIRESTORE_DOC_URL_PART = `/documents/users/${TEST_UID}/data/settings`;
 
 afterEach(() => {
   delete globalThis.chrome;
@@ -150,5 +156,167 @@ describe('fbRefreshEmailVerifiedStatus', () => {
     expect(secureCalls).toBe(1);
     expect(setSpy).toHaveBeenCalledTimes(1);
     expect(storage._data._fb_email_verified).toBe(false);
+  });
+});
+
+describe('fbSignOut', () => {
+  it('clears auth state and removes storage keys without throwing when signed in', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'user-uid',
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+      _fb_cloud_sync_ts: 123456789,
+    });
+    globalThis.chrome = storage;
+    const removeSpy = vi.spyOn(storage.storage.local, 'remove');
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    await expect(fb.fbSignOut()).resolves.toBeUndefined();
+
+    expect(fb.fbIsSignedIn()).toBe(false);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy.mock.calls[0][0]).toEqual([
+      '_fb_refresh',
+      '_fb_uid',
+      '_fb_email_verified',
+      '_fb_email',
+      '_fb_cloud_sync_ts',
+    ]);
+    expect(storage._data).not.toHaveProperty('_fb_refresh');
+    expect(storage._data).not.toHaveProperty('_fb_uid');
+    expect(storage._data).not.toHaveProperty('_fb_email_verified');
+    expect(storage._data).not.toHaveProperty('_fb_email');
+    expect(storage._data).not.toHaveProperty('_fb_cloud_sync_ts');
+  });
+
+  it('does not throw when no chrome storage is available', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = undefined;
+
+    await expect(fb.fbSignOut()).resolves.toBeUndefined();
+
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+});
+
+describe('fbDeleteAccount', () => {
+  it('throws NOT_SIGNED_IN and makes no fetch calls when not signed in', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      throw new Error('should not be called');
+    };
+
+    await fb._loadAuth();
+
+    await expect(fb.fbDeleteAccount()).rejects.toThrow('NOT_SIGNED_IN');
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('deletes the Firestore document and the auth account, then clears local state', async () => {
+    const fb = loadFirebaseModule();
+    let firestoreDeleteCalls = 0;
+    let accountDeleteCalls = 0;
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        {
+          match: (url, options = {}) =>
+            url.includes(FIRESTORE_DOC_URL_PART) && options.method === 'DELETE',
+          respond: async () => {
+            firestoreDeleteCalls++;
+            return jsonResponse(200, {});
+          },
+        },
+        {
+          match: (url) => url.includes('accounts:delete'),
+          respond: async () => {
+            accountDeleteCalls++;
+            return jsonResponse(200, {});
+          },
+        },
+      ],
+    });
+
+    await expect(fb.fbDeleteAccount()).resolves.toBeUndefined();
+
+    expect(firestoreDeleteCalls).toBe(1);
+    expect(accountDeleteCalls).toBe(1);
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('continues to accounts:delete and clears local state when the Firestore delete throws (best-effort)', async () => {
+    const fb = loadFirebaseModule();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let accountDeleteCalls = 0;
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        {
+          match: (url, options = {}) =>
+            url.includes(FIRESTORE_DOC_URL_PART) && options.method === 'DELETE',
+          respond: async () => {
+            throw new Error('boom');
+          },
+        },
+        {
+          match: (url) => url.includes('accounts:delete'),
+          respond: async () => {
+            accountDeleteCalls++;
+            return jsonResponse(200, {});
+          },
+        },
+      ],
+    });
+
+    await expect(fb.fbDeleteAccount()).resolves.toBeUndefined();
+
+    expect(accountDeleteCalls).toBe(1);
+    expect(fb.fbIsSignedIn()).toBe(false);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('throws the server error message and does not clear state when accounts:delete is non-ok with a message', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        {
+          match: (url, options = {}) =>
+            url.includes(FIRESTORE_DOC_URL_PART) && options.method === 'DELETE',
+          respond: async () => jsonResponse(200, {}),
+        },
+        {
+          match: (url) => url.includes('accounts:delete'),
+          respond: async () => jsonResponse(400, { error: { message: 'CREDENTIAL_TOO_OLD_LOGIN_AGAIN' } }),
+        },
+      ],
+    });
+
+    await expect(fb.fbDeleteAccount()).rejects.toThrow('CREDENTIAL_TOO_OLD_LOGIN_AGAIN');
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('throws DELETE_ACCOUNT_FAILED when accounts:delete is non-ok with no error message', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        {
+          match: (url, options = {}) =>
+            url.includes(FIRESTORE_DOC_URL_PART) && options.method === 'DELETE',
+          respond: async () => jsonResponse(200, {}),
+        },
+        {
+          match: (url) => url.includes('accounts:delete'),
+          respond: async () => jsonResponse(400, {}),
+        },
+      ],
+    });
+
+    await expect(fb.fbDeleteAccount()).rejects.toThrow('DELETE_ACCOUNT_FAILED');
+    expect(fb.fbIsSignedIn()).toBe(true);
   });
 });
