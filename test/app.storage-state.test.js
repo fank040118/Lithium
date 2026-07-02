@@ -416,4 +416,200 @@ describe('app.js storage/state (batch 2, task 1)', () => {
       expect(app.getSelectedEngine().id).toBe('google');
     });
   });
+
+  // ---- Batch 2, Task 3: weather cross-module + grid-columns coordinator ----
+  // pruneWeatherCache / fetchWeatherForAllCities reach out to a free var
+  // `LithiumWeather` (resolved against globalThis). updateGridColumnsControls
+  // touches light-DOM controls. setMainGridColumns coordinates four downstream
+  // helpers (applyMainGridColumns / updateGridItemSizes / updateGridColumnsControls
+  // / saveMainGridColumns); because app.js is loaded via sloppy indirect eval,
+  // those function declarations attach to globalThis, so reassigning
+  // globalThis.<name> = vi.fn() AFTER loadAppModule intercepts the internal
+  // calls. Closure mainGridColumns is observed via the no-arg probe
+  // getMainGridMaxWidth() (8->752, 10->944, 12->1136).
+
+  describe('pruneWeatherCache', () => {
+    it('no-op (no throw) when LithiumWeather is undefined and items empty', async () => {
+      expect(globalThis.LithiumWeather).toBeUndefined();
+      await app.loadAll();
+
+      await expect(app.pruneWeatherCache()).resolves.toBeUndefined();
+    });
+
+    it('calls LithiumWeather.pruneCache with the city array derived from weather items', async () => {
+      const pruneCache = vi.fn();
+      globalThis.LithiumWeather = { pruneCache };
+      cs._data.startpage_items = [
+        { id: 'w', type: 'weather', size: '1x1', city: { name: '北京', lat: 39.9, lon: 116.4, tz: 'Asia/Shanghai' } },
+      ];
+
+      await app.loadAll();
+      await app.pruneWeatherCache();
+
+      expect(pruneCache).toHaveBeenCalledTimes(1);
+      expect(pruneCache).toHaveBeenCalledWith([
+        { name: '北京', lat: 39.9, lon: 116.4, tz: 'Asia/Shanghai' },
+      ]);
+    });
+
+    it('calls pruneCache with an empty array when items contain no weather item', async () => {
+      const pruneCache = vi.fn();
+      globalThis.LithiumWeather = { pruneCache };
+      cs._data.startpage_items = [{ id: 'l', type: 'link', size: '1x1' }];
+
+      await app.loadAll();
+      await app.pruneWeatherCache();
+
+      expect(pruneCache).toHaveBeenCalledTimes(1);
+      expect(pruneCache).toHaveBeenCalledWith([]);
+    });
+  });
+
+  describe('fetchWeatherForAllCities', () => {
+    it('empty items -> returns [] and does not touch LithiumWeather', async () => {
+      const getForecastForCities = vi.fn();
+      globalThis.LithiumWeather = { getForecastForCities };
+
+      await app.loadAll();
+      const result = await app.fetchWeatherForAllCities();
+
+      expect(result).toEqual([]);
+      expect(getForecastForCities).not.toHaveBeenCalled();
+    });
+
+    it('LithiumWeather undefined + weather item -> returns [] and warns without throwing', async () => {
+      expect(globalThis.LithiumWeather).toBeUndefined();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      cs._data.startpage_items = [
+        { id: 'w', type: 'weather', size: '1x1', city: { name: 'x', lat: 1, lon: 2, tz: 'auto' } },
+      ];
+
+      await app.loadAll();
+      const result = await app.fetchWeatherForAllCities();
+
+      expect(result).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('LithiumWeather.getForecastForCities resolves -> returns its result, called once with cities', async () => {
+      const getForecastForCities = vi.fn().mockResolvedValue(['forecast1', 'forecast2']);
+      globalThis.LithiumWeather = { getForecastForCities };
+      cs._data.startpage_items = [
+        { id: 'w', type: 'weather', size: '1x1', city: { name: '北京', lat: 39.9, lon: 116.4, tz: 'Asia/Shanghai' } },
+      ];
+
+      await app.loadAll();
+      const result = await app.fetchWeatherForAllCities();
+
+      expect(result).toEqual(['forecast1', 'forecast2']);
+      expect(getForecastForCities).toHaveBeenCalledTimes(1);
+      expect(getForecastForCities).toHaveBeenCalledWith([
+        { name: '北京', lat: 39.9, lon: 116.4, tz: 'Asia/Shanghai' },
+      ]);
+    });
+
+    it('getForecastForCities rejects -> catch returns [] and warns without throwing', async () => {
+      const getForecastForCities = vi.fn().mockRejectedValue(new Error('boom'));
+      globalThis.LithiumWeather = { getForecastForCities };
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      cs._data.startpage_items = [
+        { id: 'w', type: 'weather', size: '1x1', city: { name: 'x', lat: 1, lon: 2, tz: 'auto' } },
+      ];
+
+      await app.loadAll();
+      const result = await app.fetchWeatherForAllCities();
+
+      expect(result).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('updateGridColumnsControls', () => {
+    it('writes mainGridColumns into the slider value and text label', async () => {
+      document.body.innerHTML = '<input id="grid-columns-range"><span id="grid-columns-value"></span>';
+      cs._data.startpage_grid_columns = 10;
+
+      await app.loadAll();
+      app.updateGridColumnsControls();
+
+      expect(document.querySelector('#grid-columns-range').value).toBe('10');
+      expect(document.querySelector('#grid-columns-value').textContent).toBe('10');
+    });
+
+    it('empty body (controls absent) -> no throw (if-null guards)', async () => {
+      document.body.innerHTML = '';
+      await app.loadAll();
+
+      expect(() => app.updateGridColumnsControls()).not.toThrow();
+    });
+  });
+
+  describe('setMainGridColumns', () => {
+    // Intercept the four downstream helpers. MUST be installed AFTER loadAll()
+    // (loadAll itself calls the real applyMainGridColumns at line 2448) and
+    // AFTER loadAppModule (so the reassignment targets the global binding the
+    // closure resolves). Cleanup deletes the overrides so the shared
+    // afterEach's vi.restoreAllMocks() + next beforeEach's loadAppModule()
+    // see a clean state.
+    let applyMainGridColumns, updateGridItemSizes, updateGridColumnsControls, saveMainGridColumns;
+
+    beforeEach(async () => {
+      await app.loadAll(); // empty storage -> mainGridColumns = 8 (default)
+      applyMainGridColumns = vi.fn();
+      updateGridItemSizes = vi.fn();
+      updateGridColumnsControls = vi.fn();
+      saveMainGridColumns = vi.fn();
+      globalThis.applyMainGridColumns = applyMainGridColumns;
+      globalThis.updateGridItemSizes = updateGridItemSizes;
+      globalThis.updateGridColumnsControls = updateGridColumnsControls;
+      globalThis.saveMainGridColumns = saveMainGridColumns;
+    });
+
+    afterEach(() => {
+      delete globalThis.applyMainGridColumns;
+      delete globalThis.updateGridItemSizes;
+      delete globalThis.updateGridColumnsControls;
+      delete globalThis.saveMainGridColumns;
+    });
+
+    it('value=10, persist=false: non-equal branch -> applyMainGridColumns + updateGridItemSizes called; updateGridColumnsControls + saveMainGridColumns NOT; closure now 10', () => {
+      app.setMainGridColumns(10, false);
+
+      expect(applyMainGridColumns).toHaveBeenCalledTimes(1);
+      expect(updateGridItemSizes).toHaveBeenCalledTimes(1);
+      expect(updateGridColumnsControls).not.toHaveBeenCalled();
+      expect(saveMainGridColumns).not.toHaveBeenCalled();
+      expect(app.getMainGridMaxWidth()).toBe(944);
+    });
+
+    it('value=8 (=default), persist=false: equal branch -> updateGridColumnsControls called; applyMainGridColumns + updateGridItemSizes NOT; closure unchanged (752)', () => {
+      app.setMainGridColumns(8, false);
+
+      expect(updateGridColumnsControls).toHaveBeenCalledTimes(1);
+      expect(applyMainGridColumns).not.toHaveBeenCalled();
+      expect(updateGridItemSizes).not.toHaveBeenCalled();
+      expect(saveMainGridColumns).not.toHaveBeenCalled();
+      expect(app.getMainGridMaxWidth()).toBe(752);
+    });
+
+    it('value=10, persist=true: non-equal branch -> saveMainGridColumns called once; applyMainGridColumns called', () => {
+      app.setMainGridColumns(10, true);
+
+      expect(saveMainGridColumns).toHaveBeenCalledTimes(1);
+      expect(applyMainGridColumns).toHaveBeenCalledTimes(1);
+    });
+
+    it("value='15' -> clamped to 12 -> closure 12 (getMainGridMaxWidth===1136)", () => {
+      app.setMainGridColumns('15', false);
+
+      expect(app.getMainGridMaxWidth()).toBe(1136);
+    });
+
+    it("value='abc' -> clamped to 8 (=default) -> equal branch: applyMainGridColumns NOT called, updateGridColumnsControls called", () => {
+      app.setMainGridColumns('abc', false);
+
+      expect(applyMainGridColumns).not.toHaveBeenCalled();
+      expect(updateGridColumnsControls).toHaveBeenCalledTimes(1);
+    });
+  });
 });
