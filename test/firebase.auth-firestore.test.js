@@ -2,10 +2,22 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
+import { setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
 
 afterEach(() => {
   delete globalThis.chrome;
   delete globalThis.fetch;
+  delete globalThis.items;
+  delete globalThis.customEngines;
+  delete globalThis.selectedEngineId;
+  delete globalThis.clocks;
+  delete globalThis.mainGridColumns;
+  delete globalThis.applyWallpaper;
+  delete globalThis.applyMainGridColumns;
+  delete globalThis.render;
+  delete globalThis.getSelectedEngine;
+  delete globalThis.normalizeFolderChildItemSizes;
+  document.body.innerHTML = '';
 });
 
 function base64urlEncode(payload) {
@@ -416,5 +428,268 @@ describe('_getToken', () => {
     expect(fb.fbIsSignedIn()).toBe(true);
     await expect(fb._getToken()).rejects.toMatchObject({ code: 'auth', status: 404 });
     expect(fb.fbIsSignedIn()).toBe(true);
+  });
+});
+
+describe('_parseFirestoreError', () => {
+  it('returns auth and clears auth on status 401', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(401, { error: { message: 'UNAUTHENTICATED' } }));
+
+    expect(result).toEqual({ code: 'auth', status: 401 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('returns auth and clears auth on status 403', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+
+    expect(result).toEqual({ code: 'auth', status: 403 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('returns auth and clears auth when errStatus is UNAUTHENTICATED', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(200, { error: { status: 'UNAUTHENTICATED', message: 'nope' } }));
+
+    expect(result).toEqual({ code: 'auth', status: 200 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('returns auth and clears auth when message contains PERMISSION_DENIED', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: '... PERMISSION_DENIED ...' } }));
+
+    expect(result).toEqual({ code: 'auth', status: 400 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('returns quota and keeps auth on status 429', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(429, { error: { message: 'rate limited' } }));
+
+    expect(result).toEqual({ code: 'quota', status: 429 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('returns quota and keeps auth when errStatus is RESOURCE_EXHAUSTED', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { status: 'RESOURCE_EXHAUSTED' } }));
+
+    expect(result).toEqual({ code: 'quota', status: 400 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('returns quota and keeps auth when message contains QUOTA_EXCEEDED', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: 'QUOTA_EXCEEDED' } }));
+
+    expect(result).toEqual({ code: 'quota', status: 400 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('returns firestore and keeps auth on other error statuses', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(500, {}));
+
+    expect(result).toEqual({ code: 'firestore', status: 500 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+});
+
+describe('_fsGet', () => {
+  it('returns null when the document does not exist (404)', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(404, {}))],
+    });
+
+    const result = await fb._fsGet();
+
+    expect(result).toBeNull();
+  });
+
+  it('returns the document json on 200', async () => {
+    const fb = loadFirebaseModule();
+    const doc = { fields: { x: { stringValue: 'y' } } };
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, doc))],
+    });
+
+    const result = await fb._fsGet();
+
+    expect(result).toEqual(doc);
+  });
+
+  it('throws an auth CloudSyncError and clears auth on 401', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(401, { error: { message: 'UNAUTHENTICATED' } }))],
+    });
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'auth', status: 401 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('throws an auth CloudSyncError and clears auth on 403', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(403, { error: { message: 'PERMISSION_DENIED' } }))],
+    });
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'auth', status: 403 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('throws a network CloudSyncError when fetch throws', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => { throw new Error('net'); })],
+    });
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'network' });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('throws not-signed-in and does not fetch when no token', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      throw new Error('should not be called');
+    };
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(false);
+    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'not-signed-in' });
+    expect(fetchCalls).toBe(0);
+  });
+});
+
+describe('_fsSet', () => {
+  it('returns updateTime on 200 with updateTime', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () =>
+        jsonResponse(200, { updateTime: '2024-01-01T00:00:00.000000000Z' })
+      )],
+    });
+
+    const result = await fb._fsSet({ items: '[]' });
+
+    expect(result).toBe('2024-01-01T00:00:00.000000000Z');
+  });
+
+  it('returns null when response body has no updateTime', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, {}))],
+    });
+
+    const result = await fb._fsSet({ items: '[]' });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when response body cannot be parsed', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => { throw new Error('no body'); },
+      }))],
+    });
+
+    const result = await fb._fsSet({ items: '[]' });
+
+    expect(result).toBeNull();
+  });
+
+  it('throws an auth CloudSyncError and clears auth on 401', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () =>
+        jsonResponse(401, { error: { message: 'UNAUTHENTICATED' } })
+      )],
+    });
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'auth', status: 401 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('throws a network CloudSyncError when fetch throws', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => { throw new Error('net'); })],
+    });
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'network' });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('throws not-signed-in and does not fetch when no token', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      throw new Error('should not be called');
+    };
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(false);
+    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'not-signed-in' });
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('encodes data fields with _toFV in the PATCH body', async () => {
+    const fb = loadFirebaseModule();
+    let capturedBody;
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async (url, options) => {
+        capturedBody = JSON.parse(options.body);
+        return jsonResponse(200, { updateTime: '2024-02-02T00:00:00.000000000Z' });
+      })],
+    });
+
+    await fb._fsSet({ n: 123, s: 'str', o: { a: 1 }, n2: null });
+
+    expect(capturedBody.fields).toEqual({
+      n: fb._toFV(123),
+      s: fb._toFV('str'),
+      o: fb._toFV({ a: 1 }),
+      n2: fb._toFV(null),
+    });
   });
 });
