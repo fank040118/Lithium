@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { mountAuthDom } from './helpers/authDomFixture.js';
 import { installUiMocks } from './helpers/uiMocks.js';
@@ -687,5 +687,220 @@ describe('_handleSignUp', () => {
     const btn = document.getElementById('signup-submit-btn');
     expect(btn.disabled).toBe(false);
     expect(btn.textContent).toBe('dialog.login.submitSignup');
+  });
+});
+
+function cleanupVerifyIntercepts() {
+  delete globalThis.fbSendEmailVerification;
+  delete globalThis.fbSendPasswordReset;
+  delete globalThis.fbRefreshEmailVerifiedStatus;
+  delete globalThis.syncFromCloud;
+  delete globalThis.scheduleSyncToCloud;
+  delete globalThis._hideLoginOverlay;
+  delete globalThis._updateSyncUI;
+}
+
+describe('_handleResendVerification', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    cleanupVerifyIntercepts();
+    vi.useRealTimers();
+  });
+
+  it('sets pending status, then success, and re-enables the button after 30s', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    const { promise, resolve } = deferred();
+    globalThis.fbSendEmailVerification = vi.fn(() => promise);
+
+    const callPromise = fb._handleResendVerification();
+    const statusEl = document.getElementById('verify-status');
+    const btn = document.getElementById('verify-resend-btn');
+    expect(statusEl.textContent).toBe('auth.verifyResendPending');
+    expect(btn.disabled).toBe(true);
+
+    resolve();
+    await callPromise;
+    expect(statusEl.textContent).toBe('auth.verifyResendSuccess');
+    expect(btn.disabled).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('shows error status when fbSendEmailVerification rejects', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbSendEmailVerification = vi.fn(async () => {
+      throw new Error('OPERATION_NOT_ALLOWED');
+    });
+
+    await fb._handleResendVerification();
+
+    expect(document.getElementById('verify-status').textContent).toBe('auth.verifyResendError');
+  });
+});
+
+describe('_handleForgotPassword', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    cleanupVerifyIntercepts();
+    vi.useRealTimers();
+  });
+
+  it('returns early when the button is already disabled', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbSendPasswordReset = vi.fn(async () => {});
+    const btn = document.getElementById('forgot-password-btn');
+    btn.disabled = true;
+
+    await fb._handleForgotPassword();
+
+    expect(globalThis.fbSendPasswordReset).not.toHaveBeenCalled();
+    expect(btn.disabled).toBe(true);
+  });
+
+  it('toasts an error and does not call reset when the email input is empty', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('login-email').value = '';
+    globalThis.fbSendPasswordReset = vi.fn(async () => {});
+    const btn = document.getElementById('forgot-password-btn');
+
+    await fb._handleForgotPassword();
+
+    expect(globalThis.fbSendPasswordReset).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith('auth.passwordResetEmptyEmail', 'error');
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('sends reset, toasts success and locks the button for 30s', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('login-email').value = 'user@example.com';
+    globalThis.fbSendPasswordReset = vi.fn(async () => {});
+    const btn = document.getElementById('forgot-password-btn');
+
+    await fb._handleForgotPassword();
+
+    expect(globalThis.fbSendPasswordReset).toHaveBeenCalledTimes(1);
+    expect(globalThis.fbSendPasswordReset).toHaveBeenCalledWith('user@example.com');
+    expect(showToast).toHaveBeenCalledWith('auth.passwordResetSent', 'default');
+    expect(btn.disabled).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('toasts an error and immediately re-enables the button when reset fails', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('login-email').value = 'user@example.com';
+    globalThis.fbSendPasswordReset = vi.fn(async () => {
+      throw new Error('INVALID_EMAIL');
+    });
+    const btn = document.getElementById('forgot-password-btn');
+
+    await fb._handleForgotPassword();
+
+    expect(showToast).toHaveBeenCalledWith('auth.passwordResetError', 'error');
+    expect(btn.disabled).toBe(false);
+  });
+});
+
+describe('_handleCheckVerified', () => {
+  afterEach(() => {
+    cleanupVerifyIntercepts();
+  });
+
+  it('hides overlay and does not schedule sync when cloud data exists', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    const { promise, resolve } = deferred();
+    globalThis.fbRefreshEmailVerifiedStatus = vi.fn(() => promise);
+    globalThis.syncFromCloud = vi.fn(async () => true);
+    globalThis.scheduleSyncToCloud = vi.fn();
+    globalThis._hideLoginOverlay = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    const callPromise = fb._handleCheckVerified();
+    const statusEl = document.getElementById('verify-status');
+    const btn = document.getElementById('verify-check-btn');
+    expect(statusEl.textContent).toBe('auth.verifyChecking');
+    expect(btn.disabled).toBe(true);
+
+    resolve(true);
+    await callPromise;
+    expect(statusEl.textContent).toBe('');
+    expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
+    expect(globalThis._updateSyncUI).toHaveBeenCalled();
+    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis.scheduleSyncToCloud).not.toHaveBeenCalled();
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('hides overlay and schedules sync when no cloud data exists', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbRefreshEmailVerifiedStatus = vi.fn(async () => true);
+    globalThis.syncFromCloud = vi.fn(async () => false);
+    globalThis.scheduleSyncToCloud = vi.fn();
+    globalThis._hideLoginOverlay = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleCheckVerified();
+
+    expect(document.getElementById('verify-status').textContent).toBe('');
+    expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
+    expect(globalThis._updateSyncUI).toHaveBeenCalled();
+    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis.scheduleSyncToCloud).toHaveBeenCalledTimes(1);
+    expect(document.getElementById('verify-check-btn').disabled).toBe(false);
+  });
+
+  it('shows not-yet status and does not hide overlay when email is not verified', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbRefreshEmailVerifiedStatus = vi.fn(async () => false);
+    globalThis.syncFromCloud = vi.fn();
+    globalThis._hideLoginOverlay = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleCheckVerified();
+
+    expect(document.getElementById('verify-status').textContent).toBe('auth.verifyNotYet');
+    expect(globalThis._hideLoginOverlay).not.toHaveBeenCalled();
+    expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
+  });
+
+  it('shows error status and re-enables the button when refresh throws', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbRefreshEmailVerifiedStatus = vi.fn(async () => {
+      throw new Error('TOO_MANY_ATTEMPTS');
+    });
+
+    await fb._handleCheckVerified();
+
+    expect(document.getElementById('verify-status').textContent).toBe('auth.verifyCheckError');
+    expect(document.getElementById('verify-check-btn').disabled).toBe(false);
   });
 });
