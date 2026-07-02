@@ -22,6 +22,14 @@ const EXPORTED_NAMES = [
   'getWeatherCitiesFromItems', 'bindCityToItem', 'getGridItemMetrics',
   'buildManagedImageTag', 'getWallpaperUploadErrorMessage',
   'getFavicon', 'getFaviconFallback', 'hasFaviconApi',
+  // Batch 2: storage/state functions (15). Task 1 tests the first 3
+  // (markSyncedDataChanged, migrateLegacyLocalStorage, loadAll); Task 2/3
+  // use the rest — listed up front so neither task needs to modify this helper.
+  'markSyncedDataChanged', 'migrateLegacyLocalStorage', 'loadAll',
+  'saveItems', 'saveEngines', 'saveWallpaper', 'saveWallpaperEffects',
+  'saveClocks', 'saveMainGridColumns', 'pruneWeatherCache',
+  'fetchWeatherForAllCities', 'getAllEngines', 'getSelectedEngine',
+  'updateGridColumnsControls', 'setMainGridColumns',
 ];
 
 // app.js is a classic (non-module) script: its top-level `function`
