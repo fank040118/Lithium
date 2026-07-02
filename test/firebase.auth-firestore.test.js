@@ -1,9 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
+import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
 
 afterEach(() => {
   delete globalThis.chrome;
+  delete globalThis.fetch;
 });
 
 function base64urlEncode(payload) {
@@ -231,5 +233,188 @@ describe('_clearAuth', () => {
     expect(fb.fbIsSignedIn()).toBe(false);
     expect(fb.fbIsEmailVerified()).toBe(false);
     expect(fb.fbGetEmail()).toBeNull();
+  });
+});
+
+describe('_getToken', () => {
+  afterEach(() => {
+    delete globalThis.fetch;
+  });
+
+  it('returns a cached idToken without making a second fetch when still valid', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    let calls = 0;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => {
+        calls++;
+        return jsonResponse(200, {
+          id_token: 'cached-token',
+          expires_in: '3600',
+          refresh_token: 'new-refresh',
+          user_id: 'uid-1',
+        });
+      },
+    }]);
+
+    await fb._loadAuth();
+    const first = await fb._getToken();
+    expect(first).toBe('cached-token');
+    expect(calls).toBe(1);
+
+    const second = await fb._getToken();
+    expect(second).toBe('cached-token');
+    expect(calls).toBe(1);
+  });
+
+  it('returns null and does not fetch when no refresh token is loaded', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({});
+    globalThis.chrome = storage;
+    let calls = 0;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => {
+        calls++;
+        return jsonResponse(200, {
+          id_token: 'should-not-reach',
+          expires_in: '3600',
+          refresh_token: 'refresh',
+          user_id: 'uid-2',
+        });
+      },
+    }]);
+
+    await fb._loadAuth();
+    const result = await fb._getToken();
+    expect(result).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  it('refreshes the token, updates internal state and persists the new refresh token', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => jsonResponse(200, {
+        id_token: 'fresh-id-token',
+        expires_in: '3600',
+        refresh_token: 'refreshed-refresh-token',
+        user_id: 'user-1',
+      }),
+    }]);
+
+    await fb._loadAuth();
+    const result = await fb._getToken();
+    expect(result).toBe('fresh-id-token');
+    expect(storage._data._fb_refresh).toBe('refreshed-refresh-token');
+  });
+
+  it('throws a network CloudSyncError when fetch throws', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = async () => { throw new Error('net down'); };
+
+    await fb._loadAuth();
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'network' });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it.each([
+    ['INVALID_GRANT'],
+    ['USER_DISABLED'],
+    ['TOKEN_EXPIRED'],
+  ])('throws an auth CloudSyncError and clears auth on fatal 400 (%s)', async (message) => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => jsonResponse(400, { error: { message } }),
+    }]);
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'auth', status: 400 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('throws an auth CloudSyncError and clears auth on 401', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => jsonResponse(401, { error: { message: 'TOKEN_INVALID' } }),
+    }]);
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'auth', status: 401 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('throws an auth CloudSyncError and clears auth on 403', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => jsonResponse(403, { error: { message: 'FORBIDDEN' } }),
+    }]);
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'auth', status: 403 });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('throws a quota CloudSyncError on 429 without clearing auth', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => jsonResponse(429, { error: { message: 'rate limited' } }),
+    }]);
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'quota', status: 429 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('throws a network CloudSyncError on 5xx without clearing auth', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => jsonResponse(503, { error: { message: 'server down' } }),
+    }]);
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'network', status: 503 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('throws an auth CloudSyncError on other non-ok responses without clearing auth', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => jsonResponse(404, { error: { message: 'not found' } }),
+    }]);
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'auth', status: 404 });
+    expect(fb.fbIsSignedIn()).toBe(true);
   });
 });
