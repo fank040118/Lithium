@@ -45,6 +45,21 @@ const EXPORTED_NAMES = [
   '_hideLoginConsentOverlay',
   '_friendlyAuthError',
   '_updateVerifyEmailDisplay',
+  '_updateSyncUI',
+  '_bindSyncActionButtons',
+  '_handleSyncBtn',
+  '_showAuthMode',
+  '_handleSyncLoginClick',
+  '_handleLogin',
+  '_handleSignUp',
+  '_handleResendVerification',
+  '_handleForgotPassword',
+  '_handleCheckVerified',
+  '_renderDeleteAccountConfirmBtn',
+  '_closeDeleteAccountModal',
+  '_showDeleteAccountConfirm',
+  '_handleDeleteAccount',
+  'fbInit',
 ];
 
 // firebase.js is a classic (non-module) script: its top-level `function`
