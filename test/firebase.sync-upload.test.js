@@ -50,6 +50,15 @@ describe('_doSyncToCloud / syncToCloud', () => {
     await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
   });
 
+  it('throws a firestore error when the server response has an unparseable updateTime', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, { updateTime: 'not-a-valid-timestamp' }))],
+    });
+
+    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+  });
+
   it('serializes concurrent syncToCloud calls instead of dropping them', async () => {
     const fb = loadFirebaseModule();
     let patchCalls = 0;

@@ -1,7 +1,23 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { jsonResponse } from './helpers/mockFetch.js';
 import { setupSignedInFirebase, firestoreGetRoute } from './helpers/setupSignedInFirebase.js';
+
+afterEach(() => {
+  delete globalThis.chrome;
+  delete globalThis.fetch;
+  delete globalThis.items;
+  delete globalThis.customEngines;
+  delete globalThis.selectedEngineId;
+  delete globalThis.clocks;
+  delete globalThis.mainGridColumns;
+  delete globalThis.applyWallpaper;
+  delete globalThis.applyMainGridColumns;
+  delete globalThis.render;
+  delete globalThis.getSelectedEngine;
+  delete globalThis.normalizeFolderChildItemSizes;
+  document.body.innerHTML = '';
+});
 
 function firestoreDoc(fb, { items, engines, selectedEngine, clocks, gridColumns, updateTime }) {
   return {
@@ -118,17 +134,20 @@ describe('syncFromCloud', () => {
         })))],
       });
 
-      const result = await fb.syncFromCloud();
+      try {
+        const result = await fb.syncFromCloud();
 
-      expect(result).toBe(true);
-      expect(await fb._loadLocalSyncTs()).toBe(expectedTs);
-      delete globalThis.normalizeFolderChildItemSizes;
+        expect(result).toBe(true);
+        expect(await fb._loadLocalSyncTs()).toBe(expectedTs);
+      } finally {
+        delete globalThis.normalizeFolderChildItemSizes;
+      }
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('sets syncState to error and rethrows when the network request fails', async () => {
+  it('rethrows when the network request fails', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb, {
       extraRoutes: [firestoreGetRoute(async () => { throw new TypeError('network down'); })],
