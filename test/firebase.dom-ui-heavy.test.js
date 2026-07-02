@@ -904,3 +904,248 @@ describe('_handleCheckVerified', () => {
     expect(document.getElementById('verify-check-btn').disabled).toBe(false);
   });
 });
+
+function cleanupDeleteAccountIntercepts() {
+  delete globalThis._showDeleteAccountConfirm;
+  delete globalThis.fbDeleteAccount;
+  delete globalThis.fbIsSignedIn;
+  delete globalThis._updateSyncUI;
+}
+
+describe('_renderDeleteAccountConfirmBtn', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('renders the confirm button in its initial enabled state', () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    fb._renderDeleteAccountConfirmBtn();
+
+    const btn = document.getElementById('delete-account-confirm');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.deleteAccount.confirm');
+  });
+
+  it('renders the countdown state after _showDeleteAccountConfirm starts the timer', () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    fb._showDeleteAccountConfirm();
+    const btn = document.getElementById('delete-account-confirm');
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toBe('dialog.deleteAccount.confirmCountdown');
+
+    fb._closeDeleteAccountModal(false);
+  });
+
+  it('does not throw when the confirm button is absent', () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+
+    expect(() => fb._renderDeleteAccountConfirmBtn()).not.toThrow();
+  });
+});
+
+describe('_showDeleteAccountConfirm', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('unhides the overlay and starts the 5-second countdown', () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    const promise = fb._showDeleteAccountConfirm();
+    const overlay = document.getElementById('delete-account-overlay');
+    const btn = document.getElementById('delete-account-confirm');
+    expect(promise).toBeInstanceOf(Promise);
+    expect(overlay.classList.contains('hidden')).toBe(false);
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toBe('dialog.deleteAccount.confirmCountdown');
+
+    fb._closeDeleteAccountModal(false);
+  });
+
+  it('counts down to 0 and re-enables the confirm button', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    fb._showDeleteAccountConfirm();
+    const btn = document.getElementById('delete-account-confirm');
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.deleteAccount.confirm');
+
+    fb._closeDeleteAccountModal(false);
+  });
+
+  it('resolves to false when the overlay is absent', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+
+    const result = await fb._showDeleteAccountConfirm();
+    expect(result).toBe(false);
+  });
+
+  it('cancels a prior pending dialog before opening a new one', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    const first = fb._showDeleteAccountConfirm();
+    const second = fb._showDeleteAccountConfirm();
+
+    expect(second).toBeInstanceOf(Promise);
+    expect(document.getElementById('delete-account-overlay').classList.contains('hidden')).toBe(false);
+
+    const firstResult = await first;
+    expect(firstResult).toBe(false);
+
+    fb._closeDeleteAccountModal(false);
+  });
+});
+
+describe('_closeDeleteAccountModal', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves the pending promise with true and hides the overlay', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    const promise = fb._showDeleteAccountConfirm();
+    fb._closeDeleteAccountModal(true);
+
+    expect(await promise).toBe(true);
+    expect(document.getElementById('delete-account-overlay').classList.contains('hidden')).toBe(true);
+  });
+
+  it('resolves the pending promise with false and clears the interval', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    const promise = fb._showDeleteAccountConfirm();
+    fb._closeDeleteAccountModal(false);
+
+    expect(await promise).toBe(false);
+
+    const btn = document.getElementById('delete-account-confirm');
+    const disabledAfterClose = btn.disabled;
+    const textAfterClose = btn.textContent;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(btn.disabled).toBe(disabledAfterClose);
+    expect(btn.textContent).toBe(textAfterClose);
+  });
+});
+
+describe('_handleDeleteAccount', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    cleanupDeleteAccountIntercepts();
+    vi.useRealTimers();
+  });
+
+  it('returns early when the user is not signed in', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbIsSignedIn = vi.fn(() => false);
+    globalThis._showDeleteAccountConfirm = vi.fn(async () => true);
+    globalThis.fbDeleteAccount = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleDeleteAccount();
+
+    expect(globalThis._showDeleteAccountConfirm).not.toHaveBeenCalled();
+    expect(globalThis.fbDeleteAccount).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('returns without deleting when the user cancels', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    globalThis._showDeleteAccountConfirm = vi.fn(async () => false);
+    globalThis.fbDeleteAccount = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleDeleteAccount();
+
+    expect(globalThis._showDeleteAccountConfirm).toHaveBeenCalledTimes(1);
+    expect(globalThis.fbDeleteAccount).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+    expect(globalThis._updateSyncUI).not.toHaveBeenCalled();
+  });
+
+  it('toasts success, updates UI and shows pending state when deletion succeeds', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    globalThis._showDeleteAccountConfirm = vi.fn(async () => true);
+    globalThis.fbDeleteAccount = vi.fn(async () => {});
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleDeleteAccount();
+
+    expect(globalThis.fbDeleteAccount).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith('toast.accountDeleted', 'default');
+    expect(globalThis._updateSyncUI).toHaveBeenCalledTimes(1);
+    const btn = document.getElementById('sync-delete-account-btn');
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toBe('auth.deleteAccountPending');
+  });
+
+  it('toasts an error and resets the button when deletion fails', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    globalThis._showDeleteAccountConfirm = vi.fn(async () => true);
+    globalThis.fbDeleteAccount = vi.fn(async () => {
+      throw new Error('CREDENTIAL_TOO_OLD_LOGIN_AGAIN');
+    });
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleDeleteAccount();
+
+    expect(globalThis.fbDeleteAccount).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith('auth.deleteAccountError', 'error');
+    expect(globalThis._updateSyncUI).not.toHaveBeenCalled();
+    const btn = document.getElementById('sync-delete-account-btn');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('sidebar.sync.deleteAccount');
+  });
+});
