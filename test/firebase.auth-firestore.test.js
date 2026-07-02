@@ -128,3 +128,98 @@ describe('auth state readers', () => {
     expect(fb.fbGetEmail()).toBe('seed@example.com');
   });
 });
+
+describe('_loadAuth', () => {
+  it('reads the four auth keys from storage into internal state', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'user-uid',
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+    });
+
+    await fb._loadAuth();
+
+    expect(fb.fbIsSignedIn()).toBe(true);
+    expect(fb.fbIsEmailVerified()).toBe(true);
+    expect(fb.fbGetEmail()).toBe('user@example.com');
+  });
+
+  it('silently returns when no storage is available', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = undefined;
+
+    await expect(fb._loadAuth()).resolves.toBeUndefined();
+    expect(fb.fbIsSignedIn()).toBe(false);
+    expect(fb.fbIsEmailVerified()).toBe(false);
+    expect(fb.fbGetEmail()).toBeNull();
+  });
+});
+
+describe('_saveAuth', () => {
+  it('persists current internal auth state to storage', async () => {
+    const fb = loadFirebaseModule();
+    const mock = createMockChromeStorage({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'user-uid',
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+    });
+    globalThis.chrome = mock;
+
+    await fb._loadAuth();
+    await fb._saveAuth();
+
+    expect(mock._data._fb_refresh).toBe('refresh-token');
+    expect(mock._data._fb_uid).toBe('user-uid');
+    expect(mock._data._fb_email_verified).toBe(true);
+    expect(mock._data._fb_email).toBe('user@example.com');
+  });
+
+  it('silently returns when no storage is available', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = undefined;
+
+    await expect(fb._saveAuth()).resolves.toBeUndefined();
+  });
+});
+
+describe('_clearAuth', () => {
+  it('resets internal state and removes auth keys plus cloud sync ts from storage', async () => {
+    const fb = loadFirebaseModule();
+    const mock = createMockChromeStorage({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'user-uid',
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+      _fb_cloud_sync_ts: 123456789,
+    });
+    globalThis.chrome = mock;
+
+    await fb._loadAuth();
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    await fb._clearAuth();
+
+    expect(fb.fbIsSignedIn()).toBe(false);
+    expect(fb.fbIsEmailVerified()).toBe(false);
+    expect(fb.fbGetEmail()).toBeNull();
+    expect(mock._data).not.toHaveProperty('_fb_refresh');
+    expect(mock._data).not.toHaveProperty('_fb_uid');
+    expect(mock._data).not.toHaveProperty('_fb_email_verified');
+    expect(mock._data).not.toHaveProperty('_fb_email');
+    expect(mock._data).not.toHaveProperty('_fb_cloud_sync_ts');
+  });
+
+  it('resets internal state and skips storage removal when storage is unavailable', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = undefined;
+
+    await fb._clearAuth();
+
+    expect(fb.fbIsSignedIn()).toBe(false);
+    expect(fb.fbIsEmailVerified()).toBe(false);
+    expect(fb.fbGetEmail()).toBeNull();
+  });
+});
