@@ -59,7 +59,7 @@ describe('_toFV', () => {
 });
 
 describe('_fromFV', () => {
-  it('returns null for nullish input', () => {
+  it('returns null for null/falsy input', () => {
     const fb = loadFirebaseModule();
     expect(fb._fromFV(null)).toBeNull();
     expect(fb._fromFV(undefined)).toBeNull();
@@ -181,10 +181,18 @@ describe('_saveAuth', () => {
       _fb_email: 'user@example.com',
     });
     globalThis.chrome = mock;
+    const setSpy = vi.spyOn(mock.storage.local, 'set');
 
     await fb._loadAuth();
     await fb._saveAuth();
 
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setSpy.mock.calls[0][0]).toMatchObject({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'user-uid',
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+    });
     expect(mock._data._fb_refresh).toBe('refresh-token');
     expect(mock._data._fb_uid).toBe('user-uid');
     expect(mock._data._fb_email_verified).toBe(true);
@@ -249,10 +257,6 @@ describe('_clearAuth', () => {
 });
 
 describe('_getToken', () => {
-  afterEach(() => {
-    delete globalThis.fetch;
-  });
-
   it('returns a cached idToken without making a second fetch when still valid', async () => {
     const fb = loadFirebaseModule();
     const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
@@ -760,6 +764,93 @@ describe('fbSignIn', () => {
   });
 });
 
+describe('fbSendPasswordReset', () => {
+  it('sends a password reset email on success', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('sendOobCode'),
+      respond: async () => jsonResponse(200, {}),
+    }]);
+
+    await expect(fb.fbSendPasswordReset('user@example.com')).resolves.toBeUndefined();
+  });
+
+  it('throws the server error message on non-ok response', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('sendOobCode'),
+      respond: async () => jsonResponse(400, { error: { message: 'EMAIL_NOT_FOUND' } }),
+    }]);
+
+    await expect(fb.fbSendPasswordReset('user@example.com')).rejects.toThrow('EMAIL_NOT_FOUND');
+  });
+
+  it('throws SEND_PASSWORD_RESET_FAILED when no error message is provided', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('sendOobCode'),
+      respond: async () => jsonResponse(400, {}),
+    }]);
+
+    await expect(fb.fbSendPasswordReset('user@example.com')).rejects.toThrow('SEND_PASSWORD_RESET_FAILED');
+  });
+});
+
+describe('fbSendEmailVerification', () => {
+  it('throws NOT_SIGNED_IN and does not fetch when no token is available', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      throw new Error('should not be called');
+    };
+
+    await fb._loadAuth();
+    await expect(fb.fbSendEmailVerification()).rejects.toThrow('NOT_SIGNED_IN');
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('sends a verification email when signed in', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({
+      _fb_refresh: 'seed-refresh-token',
+      _fb_uid: 'uid-1',
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+    });
+    let sendOobBody;
+    globalThis.fetch = createRoutedFetch([
+      {
+        match: (url) => url.includes('securetoken.googleapis.com'),
+        respond: async () => jsonResponse(200, {
+          id_token: 'fresh-id-token',
+          expires_in: '3600',
+          refresh_token: 'refreshed-refresh-token',
+          user_id: 'uid-1',
+        }),
+      },
+      {
+        match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('sendOobCode'),
+        respond: async (url, options) => {
+          sendOobBody = JSON.parse(options.body);
+          return jsonResponse(200, {});
+        },
+      },
+    ]);
+
+    await fb._loadAuth();
+    await expect(fb.fbSendEmailVerification()).resolves.toBeUndefined();
+    expect(sendOobBody).toMatchObject({
+      requestType: 'VERIFY_EMAIL',
+      idToken: 'fresh-id-token',
+    });
+  });
+});
+
 describe('fbSignUp', () => {
   it('sets auth state, persists it, and sends verification email on success', async () => {
     const fb = loadFirebaseModule();
@@ -794,7 +885,7 @@ describe('fbSignUp', () => {
     expect(fb.fbIsEmailVerified()).toBe(false);
     expect(storage._data._fb_refresh).toBe('rt-new');
     expect(storage._data._fb_uid).toBe('uid-new');
-    expect(sendOobCalls).toBeGreaterThanOrEqual(1);
+    expect(sendOobCalls).toBe(1);
   });
 
   it('throws the server error message and does not send verification email on non-ok', async () => {
