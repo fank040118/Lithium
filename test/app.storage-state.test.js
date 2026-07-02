@@ -255,4 +255,165 @@ describe('app.js storage/state (batch 2, task 1)', () => {
       expect(cs._data.startpage_items.filter(i => i.type === 'weather')).toHaveLength(1);
     });
   });
+
+  // ---- Batch 2, Task 2: save* persistence + engine getters ----
+  // Closure state is populated via loadAll() (see file header note). We
+  // assert on cs._data (real storage writes through the mock) and on a
+  // globalThis.markLocalCloudDataChanged vi.fn to verify markSyncedDataChanged
+  // is/isn't invoked. saveWallpaper and saveWallpaperEffects deliberately do
+  // NOT call markSyncedDataChanged (per app.js source).
+
+  describe('saveItems', () => {
+    it('persists current items to storage and calls markSyncedDataChanged once', async () => {
+      cs._data.startpage_items = [{ id: '1', type: 'link', size: '1x1' }];
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+
+      await app.loadAll();
+      const before = cs._data.startpage_items;
+      await app.saveItems();
+
+      expect(cs._data.startpage_items).toEqual(before);
+      expect(markMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('saveEngines', () => {
+    it('persists customEngines and selectedEngineId, calls markSyncedDataChanged once', async () => {
+      cs._data.startpage_engines = [{ id: 'x', name: 'X', url: 'u' }];
+      cs._data.startpage_selected_engine = 'x';
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+
+      await app.loadAll();
+      await app.saveEngines();
+
+      expect(cs._data.startpage_engines).toEqual([{ id: 'x', name: 'X', url: 'u' }]);
+      expect(cs._data.startpage_selected_engine).toBe('x');
+      expect(markMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('saveWallpaper', () => {
+    it('when wallpaper is truthy, persists it and does NOT call markSyncedDataChanged', async () => {
+      cs._data.startpage_wallpaper = { data: 'abc' };
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+
+      await app.loadAll();
+      await app.saveWallpaper();
+
+      expect(cs._data.startpage_wallpaper).toEqual({ data: 'abc' });
+      expect(markMock).not.toHaveBeenCalled();
+    });
+
+    it('when wallpaper is null, removes the startpage_wallpaper key', async () => {
+      // Empty storage -> loadAll leaves wallpaper null.
+      const removeSpy = vi.spyOn(cs.storage.local, 'remove');
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+
+      await app.loadAll();
+      await app.saveWallpaper();
+
+      expect(removeSpy).toHaveBeenCalledWith('startpage_wallpaper');
+      expect(cs._data.startpage_wallpaper).toBeUndefined();
+      expect(markMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('saveWallpaperEffects', () => {
+    // Known limitation: wallpaperBlur/wallpaperDim are closure-private with no
+    // public setter, so only the default {0, 0} state is testable here. Non-
+    // default blur/dim values cannot be driven through loadAll() either (it
+    // does not read startpage_wallpaper_blur/dim into the closure). Hence we
+    // assert only the default-0 write path.
+    it('persists default blur=0 and dim=0, does NOT call markSyncedDataChanged', async () => {
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+
+      await app.loadAll();
+      await app.saveWallpaperEffects();
+
+      expect(cs._data.startpage_wallpaper_blur).toBe(0);
+      expect(cs._data.startpage_wallpaper_dim).toBe(0);
+      expect(markMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('saveClocks', () => {
+    it('persists current clocks and calls markSyncedDataChanged once', async () => {
+      cs._data.startpage_clocks = [{ tz: 'Asia/Tokyo', key: 'tokyo' }];
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+
+      await app.loadAll();
+      await app.saveClocks();
+
+      expect(cs._data.startpage_clocks).toEqual([{ tz: 'Asia/Tokyo', key: 'tokyo' }]);
+      expect(markMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('saveMainGridColumns', () => {
+    it('persists current mainGridColumns and calls markSyncedDataChanged once', async () => {
+      cs._data.startpage_grid_columns = 10;
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+
+      await app.loadAll();
+      await app.saveMainGridColumns();
+
+      expect(cs._data.startpage_grid_columns).toBe(10);
+      expect(markMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getAllEngines', () => {
+    it('default (empty storage) -> 3 defaults (google/bing/duckduckgo), not same ref as DEFAULT_ENGINES', async () => {
+      await app.loadAll();
+
+      const engines = app.getAllEngines();
+      expect(engines).toHaveLength(3);
+      expect(engines.map(e => e.id)).toEqual(['google', 'bing', 'duckduckgo']);
+      // Spread copy: not the same array reference as the closure's DEFAULT_ENGINES.
+      // Two calls return distinct array instances.
+      expect(app.getAllEngines()).not.toBe(engines);
+    });
+
+    it('with custom engines -> defaults + custom appended', async () => {
+      cs._data.startpage_engines = [{ id: 'x', name: 'X', url: 'u' }];
+
+      await app.loadAll();
+
+      const engines = app.getAllEngines();
+      expect(engines).toHaveLength(4);
+      expect(engines[3]).toEqual({ id: 'x', name: 'X', url: 'u' });
+    });
+  });
+
+  describe('getSelectedEngine', () => {
+    it('default -> DEFAULT_ENGINES[0] (google)', async () => {
+      await app.loadAll();
+
+      expect(app.getSelectedEngine().id).toBe('google');
+    });
+
+    it('selected custom engine -> returns that engine', async () => {
+      cs._data.startpage_engines = [{ id: 'x', name: 'X', url: 'u' }];
+      cs._data.startpage_selected_engine = 'x';
+
+      await app.loadAll();
+
+      expect(app.getSelectedEngine()).toEqual({ id: 'x', name: 'X', url: 'u' });
+    });
+
+    it('invalid selectedEngineId -> falls back to DEFAULT_ENGINES[0]', async () => {
+      cs._data.startpage_selected_engine = 'nope';
+
+      await app.loadAll();
+
+      expect(app.getSelectedEngine().id).toBe('google');
+    });
+  });
 });
