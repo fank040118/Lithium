@@ -693,3 +693,141 @@ describe('_fsSet', () => {
     });
   });
 });
+
+describe('fbSignIn', () => {
+  it('sets auth state and persists it on successful sign in', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({});
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signInWithPassword'),
+      respond: async () => jsonResponse(200, {
+        idToken: makeJwt({ email_verified: true }),
+        expiresIn: '3600',
+        refreshToken: 'rt-123',
+        localId: 'uid-1',
+      }),
+    }]);
+
+    await fb.fbSignIn('user@example.com', 'pw');
+
+    expect(fb.fbIsSignedIn()).toBe(true);
+    expect(fb.fbGetEmail()).toBe('user@example.com');
+    expect(fb.fbIsEmailVerified()).toBe(true);
+    expect(storage._data._fb_refresh).toBe('rt-123');
+    expect(storage._data._fb_uid).toBe('uid-1');
+  });
+
+  it('parses email_verified=false from the idToken', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({});
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signInWithPassword'),
+      respond: async () => jsonResponse(200, {
+        idToken: makeJwt({ email_verified: false }),
+        expiresIn: '3600',
+        refreshToken: 'rt-123',
+        localId: 'uid-1',
+      }),
+    }]);
+
+    await fb.fbSignIn('user@example.com', 'pw');
+
+    expect(fb.fbIsEmailVerified()).toBe(false);
+  });
+
+  it('throws the server error message on non-ok response', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signInWithPassword'),
+      respond: async () => jsonResponse(400, { error: { message: 'EMAIL_NOT_FOUND' } }),
+    }]);
+
+    await expect(fb.fbSignIn('user@example.com', 'pw')).rejects.toThrow('EMAIL_NOT_FOUND');
+  });
+
+  it('throws LOGIN_FAILED when no error message is provided', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signInWithPassword'),
+      respond: async () => jsonResponse(400, {}),
+    }]);
+
+    await expect(fb.fbSignIn('user@example.com', 'pw')).rejects.toThrow('LOGIN_FAILED');
+  });
+});
+
+describe('fbSignUp', () => {
+  it('sets auth state, persists it, and sends verification email on success', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({});
+    let sendOobCalls = 0;
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([
+      {
+        match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signUp'),
+        respond: async () => jsonResponse(200, {
+          idToken: makeJwt({ email_verified: true }),
+          expiresIn: '3600',
+          refreshToken: 'rt-new',
+          localId: 'uid-new',
+        }),
+      },
+      {
+        match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('sendOobCode'),
+        respond: async (url, options) => {
+          sendOobCalls++;
+          const body = JSON.parse(options.body);
+          expect(body.requestType).toBe('VERIFY_EMAIL');
+          return jsonResponse(200, {});
+        },
+      },
+    ]);
+
+    await fb.fbSignUp('new@example.com', 'pw');
+
+    expect(fb.fbIsSignedIn()).toBe(true);
+    expect(fb.fbGetEmail()).toBe('new@example.com');
+    expect(fb.fbIsEmailVerified()).toBe(false);
+    expect(storage._data._fb_refresh).toBe('rt-new');
+    expect(storage._data._fb_uid).toBe('uid-new');
+    expect(sendOobCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('throws the server error message and does not send verification email on non-ok', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({});
+    let sendOobCalls = 0;
+    globalThis.chrome = storage;
+    globalThis.fetch = createRoutedFetch([
+      {
+        match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signUp'),
+        respond: async () => jsonResponse(400, { error: { message: 'EMAIL_EXISTS' } }),
+      },
+      {
+        match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('sendOobCode'),
+        respond: async () => {
+          sendOobCalls++;
+          return jsonResponse(200, {});
+        },
+      },
+    ]);
+
+    await expect(fb.fbSignUp('new@example.com', 'pw')).rejects.toThrow('EMAIL_EXISTS');
+    expect(sendOobCalls).toBe(0);
+  });
+
+  it('throws SIGNUP_FAILED when no error message is provided', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('identitytoolkit.googleapis.com') && url.includes('signUp'),
+      respond: async () => jsonResponse(400, {}),
+    }]);
+
+    await expect(fb.fbSignUp('new@example.com', 'pw')).rejects.toThrow('SIGNUP_FAILED');
+  });
+});
