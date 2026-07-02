@@ -33,6 +33,7 @@ const EXPORTED_NAMES = [
   '_fsGet',
   '_fsSet',
   '_parseFirestoreError',
+  'fbRefreshEmailVerifiedStatus',
 ];
 
 // firebase.js is a classic (non-module) script: its top-level `function`
