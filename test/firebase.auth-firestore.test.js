@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 
@@ -197,6 +197,8 @@ describe('_clearAuth', () => {
     });
     globalThis.chrome = mock;
 
+    const removeSpy = vi.spyOn(mock.storage.local, 'remove');
+
     await fb._loadAuth();
     expect(fb.fbIsSignedIn()).toBe(true);
 
@@ -205,6 +207,14 @@ describe('_clearAuth', () => {
     expect(fb.fbIsSignedIn()).toBe(false);
     expect(fb.fbIsEmailVerified()).toBe(false);
     expect(fb.fbGetEmail()).toBeNull();
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy.mock.calls[0][0]).toEqual([
+      '_fb_refresh',
+      '_fb_uid',
+      '_fb_email_verified',
+      '_fb_email',
+      '_fb_cloud_sync_ts',
+    ]);
     expect(mock._data).not.toHaveProperty('_fb_refresh');
     expect(mock._data).not.toHaveProperty('_fb_uid');
     expect(mock._data).not.toHaveProperty('_fb_email_verified');
