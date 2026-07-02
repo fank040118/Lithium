@@ -1149,3 +1149,219 @@ describe('_handleDeleteAccount', () => {
     expect(btn.textContent).toBe('sidebar.sync.deleteAccount');
   });
 });
+
+let _fbInitLangchangeListeners = [];
+let _origWindowAddEventListener = null;
+
+function cleanupFbInitIntercepts() {
+  for (const listener of _fbInitLangchangeListeners) {
+    window.removeEventListener('lithium:langchange', listener);
+  }
+  _fbInitLangchangeListeners = [];
+  if (_origWindowAddEventListener) {
+    window.addEventListener = _origWindowAddEventListener;
+    _origWindowAddEventListener = null;
+  }
+
+  delete globalThis._loadAuth;
+  delete globalThis._loadLocalSyncTs;
+  delete globalThis._loadCloudSyncTs;
+  delete globalThis._updateSyncUI;
+  delete globalThis._bindSyncActionButtons;
+  delete globalThis._showAuthMode;
+  delete globalThis._showLoginOverlay;
+  delete globalThis._updateVerifyEmailDisplay;
+  delete globalThis._handleLogin;
+  delete globalThis._handleSyncLoginClick;
+  delete globalThis._closeDeleteAccountModal;
+  delete globalThis.fbGetEmail;
+  delete globalThis.fbRefreshEmailVerifiedStatus;
+  delete globalThis.syncFromCloud;
+  delete globalThis.scheduleSyncToCloud;
+  delete globalThis.fbSignOut;
+  delete globalThis.showSigninNotice;
+  delete window.showSigninNotice;
+}
+
+function installFbInitEventTracking() {
+  _origWindowAddEventListener = window.addEventListener;
+  window.addEventListener = vi.fn((type, listener, options) => {
+    if (type === 'lithium:langchange') _fbInitLangchangeListeners.push(listener);
+    return _origWindowAddEventListener.call(window, type, listener, options);
+  });
+}
+
+describe('fbInit', () => {
+  afterEach(() => {
+    cleanupFbInitIntercepts();
+  });
+
+  function setupFbInit() {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    installFbInitEventTracking();
+
+    const _loadAuth = vi.fn(async () => {});
+    const _loadLocalSyncTs = vi.fn(async () => {});
+    const _loadCloudSyncTs = vi.fn(async () => {});
+    const _updateSyncUI = vi.fn();
+    const _bindSyncActionButtons = vi.fn();
+    const _showAuthMode = vi.fn();
+    const _showLoginOverlay = vi.fn();
+    const _updateVerifyEmailDisplay = vi.fn();
+    const _handleLogin = vi.fn();
+    const _handleSyncLoginClick = vi.fn();
+    const _closeDeleteAccountModal = vi.fn();
+    const fbGetEmail = vi.fn(() => 'user@example.com');
+    const fbRefreshEmailVerifiedStatus = vi.fn(async () => false);
+    const syncFromCloud = vi.fn(async () => false);
+    const scheduleSyncToCloud = vi.fn();
+    const fbSignOut = vi.fn(async () => {});
+    const fbIsSignedIn = vi.fn(() => false);
+    const fbIsEmailVerified = vi.fn(() => false);
+    const showSigninNotice = vi.fn();
+
+    globalThis._loadAuth = _loadAuth;
+    globalThis._loadLocalSyncTs = _loadLocalSyncTs;
+    globalThis._loadCloudSyncTs = _loadCloudSyncTs;
+    globalThis._updateSyncUI = _updateSyncUI;
+    globalThis._bindSyncActionButtons = _bindSyncActionButtons;
+    globalThis._showAuthMode = _showAuthMode;
+    globalThis._showLoginOverlay = _showLoginOverlay;
+    globalThis._updateVerifyEmailDisplay = _updateVerifyEmailDisplay;
+    globalThis._handleLogin = _handleLogin;
+    globalThis._handleSyncLoginClick = _handleSyncLoginClick;
+    globalThis._closeDeleteAccountModal = _closeDeleteAccountModal;
+    globalThis.fbGetEmail = fbGetEmail;
+    globalThis.fbRefreshEmailVerifiedStatus = fbRefreshEmailVerifiedStatus;
+    globalThis.syncFromCloud = syncFromCloud;
+    globalThis.scheduleSyncToCloud = scheduleSyncToCloud;
+    globalThis.fbSignOut = fbSignOut;
+    globalThis.fbIsSignedIn = fbIsSignedIn;
+    globalThis.fbIsEmailVerified = fbIsEmailVerified;
+    window.showSigninNotice = showSigninNotice;
+
+    return { fb, _loadAuth, _loadLocalSyncTs, _loadCloudSyncTs, _updateSyncUI, _bindSyncActionButtons, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, scheduleSyncToCloud, fbSignOut, fbIsSignedIn, fbIsEmailVerified, showSigninNotice };
+  }
+
+  it('shows signin notice and binds sync action buttons when not signed in', async () => {
+    const { fb, _updateSyncUI, _bindSyncActionButtons, syncFromCloud, showSigninNotice } = setupFbInit();
+
+    await fb.fbInit();
+
+    expect(showSigninNotice).toHaveBeenCalledTimes(1);
+    expect(_updateSyncUI).toHaveBeenCalled();
+    expect(_bindSyncActionButtons).toHaveBeenCalledTimes(1);
+    expect(syncFromCloud).not.toHaveBeenCalled();
+  });
+
+  it('switches to verify overlay when signed in but email is still not verified', async () => {
+    const { fb, _updateSyncUI, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, showSigninNotice, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
+    fbIsSignedIn.mockReturnValue(true);
+    fbIsEmailVerified.mockReturnValue(false);
+
+    await fb.fbInit();
+
+    expect(fbRefreshEmailVerifiedStatus).toHaveBeenCalledTimes(1);
+    expect(_updateSyncUI).toHaveBeenCalled();
+    expect(_updateVerifyEmailDisplay).toHaveBeenCalledTimes(1);
+    expect(_updateVerifyEmailDisplay).toHaveBeenCalledWith(fbGetEmail());
+    expect(_showAuthMode).toHaveBeenCalledTimes(1);
+    expect(_showAuthMode).toHaveBeenCalledWith('verify');
+    expect(_showLoginOverlay).toHaveBeenCalledTimes(1);
+    expect(syncFromCloud).not.toHaveBeenCalled();
+    expect(showSigninNotice).not.toHaveBeenCalled();
+  });
+
+  it('pulls from cloud and does not schedule upload when cloud data exists', async () => {
+    const { fb, syncFromCloud, scheduleSyncToCloud, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
+    fbIsSignedIn.mockReturnValue(true);
+    fbIsEmailVerified.mockReturnValue(true);
+    syncFromCloud.mockResolvedValue(true);
+
+    await fb.fbInit();
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(scheduleSyncToCloud).not.toHaveBeenCalled();
+  });
+
+  it('pulls from cloud and schedules upload when no cloud data exists', async () => {
+    const { fb, syncFromCloud, scheduleSyncToCloud, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
+    fbIsSignedIn.mockReturnValue(true);
+    fbIsEmailVerified.mockReturnValue(true);
+    syncFromCloud.mockResolvedValue(false);
+
+    await fb.fbInit();
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(scheduleSyncToCloud).toHaveBeenCalledTimes(1);
+  });
+
+  it('wires representative auth button event listeners', async () => {
+    const { fb, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, _showAuthMode } = setupFbInit();
+
+    // The fixture does not include the sidebar login trigger; add it so the
+    // listener can bind without touching the shared fixture helper.
+    const syncLoginBtn = document.createElement('button');
+    syncLoginBtn.id = 'sync-login-btn';
+    document.body.appendChild(syncLoginBtn);
+
+    await fb.fbInit();
+
+    document.getElementById('login-submit-btn').click();
+    expect(_handleLogin).toHaveBeenCalledTimes(1);
+
+    syncLoginBtn.click();
+    expect(_handleSyncLoginClick).toHaveBeenCalledTimes(1);
+
+    document.getElementById('delete-account-cancel').click();
+    expect(_closeDeleteAccountModal).toHaveBeenCalledTimes(1);
+    expect(_closeDeleteAccountModal).toHaveBeenCalledWith(false);
+
+    const loginTab = document.querySelector('.auth-tab[data-mode="login"]');
+    loginTab.click();
+    expect(_showAuthMode).toHaveBeenCalledWith('login');
+  });
+
+  it('re-renders dynamic text on lithium:langchange', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    installFbInitEventTracking();
+
+    // Drive the closure-private _pendingVerifyEmail through its public setter.
+    fb._updateVerifyEmailDisplay('x@y.com');
+    expect(document.getElementById('verify-email-target').textContent).toBe('x@y.com');
+
+    const _updateSyncUI = vi.fn();
+    globalThis._updateSyncUI = _updateSyncUI;
+    globalThis._loadAuth = vi.fn(async () => {});
+    globalThis._loadLocalSyncTs = vi.fn(async () => {});
+    globalThis._loadCloudSyncTs = vi.fn(async () => {});
+    globalThis._bindSyncActionButtons = vi.fn();
+    globalThis._showAuthMode = vi.fn();
+    globalThis._showLoginOverlay = vi.fn();
+    globalThis._handleLogin = vi.fn();
+    globalThis._handleSyncLoginClick = vi.fn();
+    globalThis._closeDeleteAccountModal = vi.fn();
+    globalThis.fbRefreshEmailVerifiedStatus = vi.fn(async () => false);
+    globalThis.syncFromCloud = vi.fn(async () => true);
+    globalThis.scheduleSyncToCloud = vi.fn();
+    globalThis.fbSignOut = vi.fn(async () => {});
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    globalThis.fbIsEmailVerified = vi.fn(() => true);
+    globalThis.fbGetEmail = vi.fn(() => 'user@example.com');
+    window.showSigninNotice = vi.fn();
+
+    await fb.fbInit();
+    _updateSyncUI.mockClear();
+
+    window.dispatchEvent(new Event('lithium:langchange'));
+
+    expect(_updateSyncUI).toHaveBeenCalledTimes(1);
+    expect(document.getElementById('verify-email-target').textContent).toBe('x@y.com');
+  });
+});
