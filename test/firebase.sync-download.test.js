@@ -105,22 +105,27 @@ describe('syncFromCloud', () => {
   });
 
   it('does not treat a schema migration as a user edit when re-queuing the upload', async () => {
-    const fb = loadFirebaseModule();
-    const cloudUpdateTime = '2024-06-02T00:00:00.000000000Z';
-    const expectedTs = fb._rfc3339ToMs(cloudUpdateTime);
-    globalThis.normalizeFolderChildItemSizes = (items) => ({ items, changed: true });
-    await setupSignedInFirebase(fb, {
-      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
-        items: [{ id: 'cloud', type: 'folder', children: [] }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
-        updateTime: cloudUpdateTime,
-      })))],
-    });
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const cloudUpdateTime = '2024-06-02T00:00:00.000000000Z';
+      const expectedTs = fb._rfc3339ToMs(cloudUpdateTime);
+      globalThis.normalizeFolderChildItemSizes = (items) => ({ items, changed: true });
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+          items: [{ id: 'cloud', type: 'folder', children: [] }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+          updateTime: cloudUpdateTime,
+        })))],
+      });
 
-    const result = await fb.syncFromCloud();
+      const result = await fb.syncFromCloud();
 
-    expect(result).toBe(true);
-    expect(await fb._loadLocalSyncTs()).toBe(expectedTs);
-    delete globalThis.normalizeFolderChildItemSizes;
+      expect(result).toBe(true);
+      expect(await fb._loadLocalSyncTs()).toBe(expectedTs);
+      delete globalThis.normalizeFolderChildItemSizes;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('sets syncState to error and rethrows when the network request fails', async () => {
