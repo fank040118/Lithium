@@ -316,3 +316,376 @@ describe('_handleSyncBtn', () => {
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
   });
 });
+
+function cleanupAuthIntercepts() {
+  delete globalThis.fbSignIn;
+  delete globalThis.fbSignUp;
+  delete globalThis.fbIsEmailVerified;
+  delete globalThis.syncFromCloud;
+  delete globalThis.scheduleSyncToCloud;
+  delete globalThis._updateSyncUI;
+  delete globalThis._showAuthMode;
+  delete globalThis._hideLoginOverlay;
+  delete globalThis._updateVerifyEmailDisplay;
+  delete globalThis._hasLoginConsent;
+  delete globalThis._showLoginOverlay;
+  delete globalThis._showLoginConsentOverlay;
+}
+
+describe('_showAuthMode', () => {
+  afterEach(() => {
+    cleanupAuthIntercepts();
+  });
+
+  it("activates the signup pane and tab", () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    fb._showAuthMode('signup');
+
+    document.querySelectorAll('.auth-pane').forEach(el => {
+      const expectedHidden = el.id !== 'auth-pane-signup';
+      expect(el.classList.contains('hidden')).toBe(expectedHidden);
+    });
+    document.querySelectorAll('.auth-tab').forEach(el => {
+      const expectedActive = el.dataset.mode === 'signup';
+      expect(el.classList.contains('active')).toBe(expectedActive);
+    });
+  });
+
+  it("activates the login pane and tab", () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+
+    fb._showAuthMode('login');
+
+    document.querySelectorAll('.auth-pane').forEach(el => {
+      const expectedHidden = el.id !== 'auth-pane-login';
+      expect(el.classList.contains('hidden')).toBe(expectedHidden);
+    });
+    document.querySelectorAll('.auth-tab').forEach(el => {
+      const expectedActive = el.dataset.mode === 'login';
+      expect(el.classList.contains('active')).toBe(expectedActive);
+    });
+  });
+});
+
+describe('_handleSyncLoginClick', () => {
+  afterEach(() => {
+    cleanupAuthIntercepts();
+  });
+
+  it('opens login overlay directly when consent has already been granted', () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis._hasLoginConsent = vi.fn(() => true);
+    globalThis._showAuthMode = vi.fn();
+    globalThis._showLoginOverlay = vi.fn();
+    globalThis._showLoginConsentOverlay = vi.fn();
+
+    fb._handleSyncLoginClick();
+
+    expect(globalThis._showAuthMode).toHaveBeenCalledTimes(1);
+    expect(globalThis._showAuthMode).toHaveBeenCalledWith('login');
+    expect(globalThis._showLoginOverlay).toHaveBeenCalledTimes(1);
+    expect(globalThis._showLoginConsentOverlay).not.toHaveBeenCalled();
+  });
+
+  it('shows the consent overlay when consent has not been granted', () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis._hasLoginConsent = vi.fn(() => false);
+    globalThis._showAuthMode = vi.fn();
+    globalThis._showLoginOverlay = vi.fn();
+    globalThis._showLoginConsentOverlay = vi.fn();
+
+    fb._handleSyncLoginClick();
+
+    expect(globalThis._showLoginConsentOverlay).toHaveBeenCalledTimes(1);
+    expect(globalThis._showAuthMode).not.toHaveBeenCalled();
+    expect(globalThis._showLoginOverlay).not.toHaveBeenCalled();
+  });
+});
+
+describe('_handleLogin', () => {
+  afterEach(() => {
+    cleanupAuthIntercepts();
+  });
+
+  it('returns early when email or password is empty', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbSignIn = vi.fn();
+
+    await fb._handleLogin();
+
+    expect(globalThis.fbSignIn).not.toHaveBeenCalled();
+  });
+
+  it('hides overlay and does not schedule sync when cloud data exists', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('login-email').value = 'user@example.com';
+    document.getElementById('login-password').value = 'password123';
+    globalThis.fbSignIn = vi.fn(async () => {});
+    globalThis.fbIsEmailVerified = vi.fn(() => true);
+    globalThis.syncFromCloud = vi.fn(async () => true);
+    globalThis.scheduleSyncToCloud = vi.fn();
+    globalThis._hideLoginOverlay = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleLogin();
+
+    expect(globalThis.fbSignIn).toHaveBeenCalledTimes(1);
+    expect(globalThis.fbSignIn).toHaveBeenCalledWith('user@example.com', 'password123');
+    expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
+    expect(globalThis._updateSyncUI).toHaveBeenCalled();
+    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis.scheduleSyncToCloud).not.toHaveBeenCalled();
+    const btn = document.getElementById('login-submit-btn');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.login.submitLogin');
+  });
+
+  it('schedules sync to cloud when no cloud data exists', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('login-email').value = 'user@example.com';
+    document.getElementById('login-password').value = 'password123';
+    globalThis.fbSignIn = vi.fn(async () => {});
+    globalThis.fbIsEmailVerified = vi.fn(() => true);
+    globalThis.syncFromCloud = vi.fn(async () => false);
+    globalThis.scheduleSyncToCloud = vi.fn();
+    globalThis._hideLoginOverlay = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleLogin();
+
+    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis.scheduleSyncToCloud).toHaveBeenCalledTimes(1);
+    const btn = document.getElementById('login-submit-btn');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.login.submitLogin');
+  });
+
+  it('switches to verify pane when signed in but email is not verified', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('login-email').value = 'user@example.com';
+    document.getElementById('login-password').value = 'password123';
+    globalThis.fbSignIn = vi.fn(async () => {});
+    globalThis.fbIsEmailVerified = vi.fn(() => false);
+    globalThis._updateVerifyEmailDisplay = vi.fn();
+    globalThis._showAuthMode = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+    globalThis._hideLoginOverlay = vi.fn();
+    globalThis.syncFromCloud = vi.fn();
+
+    await fb._handleLogin();
+
+    expect(globalThis._updateVerifyEmailDisplay).toHaveBeenCalledTimes(1);
+    expect(globalThis._updateVerifyEmailDisplay).toHaveBeenCalledWith('user@example.com');
+    expect(globalThis._showAuthMode).toHaveBeenCalledTimes(1);
+    expect(globalThis._showAuthMode).toHaveBeenCalledWith('verify');
+    expect(globalThis._updateSyncUI).toHaveBeenCalled();
+    expect(globalThis._hideLoginOverlay).not.toHaveBeenCalled();
+    expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
+    const btn = document.getElementById('login-submit-btn');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.login.submitLogin');
+  });
+
+  it('shows friendly error and resets button when fbSignIn rejects', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('login-email').value = 'user@example.com';
+    document.getElementById('login-password').value = 'password123';
+    globalThis.fbSignIn = vi.fn(async () => {
+      throw new Error('EMAIL_NOT_FOUND');
+    });
+
+    await fb._handleLogin();
+
+    expect(document.getElementById('login-error').textContent).toBe('error.emailNotFound');
+    const btn = document.getElementById('login-submit-btn');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.login.submitLogin');
+  });
+});
+
+describe('_handleSignUp', () => {
+  afterEach(() => {
+    cleanupAuthIntercepts();
+  });
+
+  it('returns early when email or password is empty', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('shows mismatch error when passwords do not match', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'Abcdefg1';
+    document.getElementById('signup-password-confirm').value = 'Abcdefg2';
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('auth.signupPasswordMismatch');
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('shows too-short error for passwords shorter than 8 characters', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'Aa1';
+    document.getElementById('signup-password-confirm').value = 'Aa1';
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('auth.signupPasswordTooShort');
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('shows too-long error for passwords longer than 128 characters', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    const longPassword = 'Abcdefg1' + 'a'.repeat(121);
+    document.getElementById('signup-password').value = longPassword;
+    document.getElementById('signup-password-confirm').value = longPassword;
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('auth.signupPasswordTooLong');
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('shows needs-upper error when password has no uppercase letter', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'abcdefg1';
+    document.getElementById('signup-password-confirm').value = 'abcdefg1';
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('auth.signupPasswordNeedsUpper');
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('shows needs-lower error when password has no lowercase letter', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'ABCDEFG1';
+    document.getElementById('signup-password-confirm').value = 'ABCDEFG1';
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('auth.signupPasswordNeedsLower');
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('shows needs-digit error when password has no digit', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'Abcdefgh';
+    document.getElementById('signup-password-confirm').value = 'Abcdefgh';
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('auth.signupPasswordNeedsDigit');
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('shows invalid-char error when password contains a non-whitelisted character', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'Abcdefg1^';
+    document.getElementById('signup-password-confirm').value = 'Abcdefg1^';
+    globalThis.fbSignUp = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('auth.signupPasswordInvalidChar');
+    expect(globalThis.fbSignUp).not.toHaveBeenCalled();
+  });
+
+  it('creates account and switches to verify pane on valid input', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'Abcdefg1';
+    document.getElementById('signup-password-confirm').value = 'Abcdefg1';
+    globalThis.fbSignUp = vi.fn(async () => {});
+    globalThis._updateVerifyEmailDisplay = vi.fn();
+    globalThis._showAuthMode = vi.fn();
+    globalThis._updateSyncUI = vi.fn();
+
+    await fb._handleSignUp();
+
+    expect(globalThis.fbSignUp).toHaveBeenCalledTimes(1);
+    expect(globalThis.fbSignUp).toHaveBeenCalledWith('user@example.com', 'Abcdefg1');
+    expect(globalThis._updateVerifyEmailDisplay).toHaveBeenCalledTimes(1);
+    expect(globalThis._updateVerifyEmailDisplay).toHaveBeenCalledWith('user@example.com');
+    expect(globalThis._showAuthMode).toHaveBeenCalledTimes(1);
+    expect(globalThis._showAuthMode).toHaveBeenCalledWith('verify');
+    expect(globalThis._updateSyncUI).toHaveBeenCalled();
+    const btn = document.getElementById('signup-submit-btn');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.login.submitSignup');
+  });
+
+  it('shows friendly error and resets button when fbSignUp rejects', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    document.getElementById('signup-email').value = 'user@example.com';
+    document.getElementById('signup-password').value = 'Abcdefg1';
+    document.getElementById('signup-password-confirm').value = 'Abcdefg1';
+    globalThis.fbSignUp = vi.fn(async () => {
+      throw new Error('EMAIL_EXISTS');
+    });
+
+    await fb._handleSignUp();
+
+    expect(document.getElementById('signup-error').textContent).toBe('error.emailExists');
+    const btn = document.getElementById('signup-submit-btn');
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('dialog.login.submitSignup');
+  });
+});
