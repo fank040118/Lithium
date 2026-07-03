@@ -9,9 +9,9 @@ const APP_SRC = readFileSync(path.join(__dirname, '../../app.js'), 'utf8');
 // kick off the startup chain (migrate→loadAll→render→fbInit...).
 const APP_SRC_NO_INIT = APP_SRC.replace(/\ninit\(\);\s*$/, '\n');
 
-// All 30 pure-logic function names exposed on globalThis after eval.
-// Task 1 tests the first 9; Task 2/3 will use the rest — listed up front
-// so neither task needs to modify this helper.
+// Function names exposed on globalThis after eval, accumulated across test
+// batches (see per-batch section comments below). Each batch's full list is
+// added up front so no task within that batch needs to modify this helper.
 const EXPORTED_NAMES = [
   'getDefaultData', 'getClockCityName', 'getCityKeyForTz', 'migrateClocks',
   'generateId', 'deepClone', 'escapeHtml', 'escapeAttr', 'escapeCssUrl',
