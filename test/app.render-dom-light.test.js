@@ -1276,4 +1276,499 @@ describe('app.js render/dom-light layer', () => {
       expect(renderSpy).toHaveBeenCalledTimes(1);
     });
   });
+
+  // Batch 3, Task 5 (final task of this batch): delete confirm + form save +
+  // context menu — 4 functions. confirmDelete/handleSaveItem write through
+  // chrome.storage (via saveItems), so per Global Constraint 7 those
+  // describes attach createMockChromeStorage to globalThis.chrome BEFORE
+  // loadAppModule() re-evaluates app.js. showContextMenu/handleContextAction
+  // need a synchronous requestAnimationFrame stub (showContextMenu's
+  // positioning logic runs inside a RAF callback), and
+  // handleContextAction's `size-` branch needs the classic-script
+  // globalThis interception trick to stub out captureGridPositions/
+  // animateGridFlip (both are "heavy DOM/drag" functions covered by the
+  // batch-4 task, out of scope here).
+  //
+  // Known limitation (same as the `render`/`closeFolderWithAnimation`
+  // describes above): currentFolderId is always null in this batch, so:
+  //  - showContextMenu's size-grid branch (`if (!currentFolderId)`) and the
+  //    blank-area "add" button are always shown/enabled; the currentFolderId
+  //    non-null variants are left for the setupEventListeners task (batch 6).
+  //  - handleContextAction's `size-` branch early-return is only exercised
+  //    via its "no item" and "invalid size string" sub-conditions, since
+  //    `currentFolderId || ...` can never be the reason for the early return
+  //    here.
+  describe('confirmDelete', () => {
+    it('removes the target item from `items`, persists via saveItems, hides the delete overlay, and re-renders', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'a', type: 'link', name: 'A', url: 'https://a', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.openDeleteConfirm('a');
+      const overlay = document.getElementById('delete-overlay');
+      expect(overlay.classList.contains('hidden')).toBe(false);
+
+      localApp.confirmDelete();
+
+      expect(cs._data.startpage_items).toEqual([]);
+      expect(overlay.classList.contains('hidden')).toBe(true); // real hideDeleteConfirm() call
+      // real render() call: the deleted item's grid-item-wrap is gone
+      expect(document.getElementById('grid-container').querySelector('[data-id="a"]')).toBeNull();
+    });
+
+    it('is a no-op when itemToDelete is null (no prior openDeleteConfirm call): does not throw, does not touch storage or the overlay', () => {
+      const overlay = document.getElementById('delete-overlay');
+      expect(overlay.classList.contains('hidden')).toBe(true); // fixture default, never opened
+
+      expect(() => app.confirmDelete()).not.toThrow();
+
+      expect(overlay.classList.contains('hidden')).toBe(true);
+    });
+
+    it('fire-and-forget prunes orphans via window.iconCache.pruneOrphans(items) once the microtask queue flushes', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'a', type: 'link', name: 'A', url: 'https://a', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.openDeleteConfirm('a');
+      const pruneOrphans = vi.fn().mockResolvedValue();
+      window.iconCache = { pruneOrphans };
+
+      localApp.confirmDelete();
+      await Promise.resolve();
+
+      expect(pruneOrphans).toHaveBeenCalledTimes(1);
+      // 'a' was already spliced out of the closure's `items` array by the
+      // time the fire-and-forget .then() callback runs.
+      expect(pruneOrphans).toHaveBeenCalledWith([]);
+    });
+
+    it('does not throw when window.iconCache is undefined (no prune attempted)', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'a', type: 'link', name: 'A', url: 'https://a', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.openDeleteConfirm('a');
+
+      expect(() => localApp.confirmDelete()).not.toThrow();
+      await Promise.resolve();
+    });
+  });
+
+  describe('handleSaveItem', () => {
+    afterEach(() => {
+      // Only set by the fire-and-forget-render test below; harmless no-op
+      // for every other test in this describe.
+      delete globalThis.render;
+    });
+
+    it('adds a new top-level link item, persists via saveItems, hides the modal, and re-renders (currentFolderId is always null here, so only the top-level-add path is reachable — Known Limitation)', () => {
+      const cs = createMockChromeStorage({});
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      localApp.showEditModal(null, false); // getCurrentType() -> 'link' (fixture default active type-btn)
+      document.getElementById('edit-name').value = 'X';
+      document.getElementById('edit-url').value = 'https://x.com';
+      const e = { preventDefault: vi.fn() };
+
+      localApp.handleSaveItem(e);
+
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      expect(cs._data.startpage_items).toHaveLength(1);
+      expect(cs._data.startpage_items[0]).toMatchObject({ type: 'link', name: 'X', url: 'https://x.com', icon: '', size: '1x1' });
+      expect(document.getElementById('edit-overlay').classList.contains('hidden')).toBe(true); // real hideEditModal() call
+      const gridContainer = document.getElementById('grid-container');
+      const nonAddWraps = Array.from(gridContainer.querySelectorAll('.grid-item-wrap')).filter((el) => !el.classList.contains('add-wrap'));
+      expect(nonAddWraps).toHaveLength(1); // real render() call
+    });
+
+    it('is a no-op when the name field is empty (whitespace-only): no new item, modal stays open', () => {
+      app.showEditModal(null, false);
+      document.getElementById('edit-name').value = '   ';
+      document.getElementById('edit-url').value = 'https://x.com';
+      const e = { preventDefault: vi.fn() };
+
+      app.handleSaveItem(e);
+
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      expect(document.getElementById('edit-overlay').classList.contains('hidden')).toBe(false);
+    });
+
+    it('is a no-op when type is link and the url is invalid: no new item, modal stays open', () => {
+      app.showEditModal(null, false); // fixture default active type-btn is "link"
+      document.getElementById('edit-name').value = 'X';
+      document.getElementById('edit-url').value = 'not-a-url';
+      const e = { preventDefault: vi.fn() };
+
+      app.handleSaveItem(e);
+
+      expect(document.getElementById('edit-overlay').classList.contains('hidden')).toBe(false);
+    });
+
+    it('updates name/url/icon of an existing item (by id) instead of adding a new one', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'e1', type: 'link', name: 'Old', url: 'https://old.com', icon: 'data:existing', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      // loadAll() is required here (unlike the "add" test above) so the
+      // closure's `items` array actually contains an 'e1' entry for
+      // updateList()'s map to match against and update in place.
+      await localApp.loadAll();
+      // showEditModal's `item` argument only needs to be shaped like the
+      // real item (matched by id, not by reference) to drive
+      // editingItem/pendingIcon.
+      localApp.showEditModal({ id: 'e1', type: 'link', name: 'Old', url: 'https://old.com', icon: 'data:existing' }, false);
+      document.getElementById('edit-name').value = 'New';
+      document.getElementById('edit-url').value = 'https://new.com';
+      const e = { preventDefault: vi.fn() };
+
+      localApp.handleSaveItem(e);
+
+      expect(cs._data.startpage_items).toHaveLength(1); // no new item added
+      expect(cs._data.startpage_items[0]).toMatchObject({
+        id: 'e1', name: 'New', url: 'https://new.com', icon: 'data:existing',
+      });
+    });
+
+    it('fetches the favicon via window.iconCache.ensureIconForUrl for a new icon-less link, then fire-and-forget re-renders a second time once it resolves', async () => {
+      const cs = createMockChromeStorage({});
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      localApp.showEditModal(null, false);
+      document.getElementById('edit-name').value = 'Y';
+      document.getElementById('edit-url').value = 'https://y.com';
+      // Intercept every unqualified render() call (the classic-script
+      // globalThis trick) so the synchronous call and the later
+      // fire-and-forget call can be told apart by count, since the DOM's
+      // final state looks identical either way.
+      const renderSpy = vi.fn();
+      globalThis.render = renderSpy;
+      const ensureIconForUrl = vi.fn().mockResolvedValue('data:image/png;base64,ZZZ');
+      window.iconCache = { ensureIconForUrl };
+      const e = { preventDefault: vi.fn() };
+
+      localApp.handleSaveItem(e);
+
+      expect(renderSpy).toHaveBeenCalledTimes(1); // the synchronous call
+      // ensureIconForUrl is only invoked inside the fire-and-forget
+      // .then(async () => ...) callback, so it has not run yet synchronously.
+      expect(ensureIconForUrl).not.toHaveBeenCalled();
+
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(ensureIconForUrl).toHaveBeenCalledWith('https://y.com', { force: false });
+      expect(renderSpy).toHaveBeenCalledTimes(2); // the fire-and-forget async call after dataURL resolves
+    });
+
+    it('does not throw when window.iconCache is undefined (no favicon fetch attempted)', () => {
+      const cs = createMockChromeStorage({});
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      localApp.showEditModal(null, false);
+      document.getElementById('edit-name').value = 'Z';
+      document.getElementById('edit-url').value = 'https://z.com';
+      const e = { preventDefault: vi.fn() };
+
+      expect(() => localApp.handleSaveItem(e)).not.toThrow();
+    });
+  });
+
+  describe('showContextMenu', () => {
+    beforeEach(() => {
+      globalThis.requestAnimationFrame = vi.fn((cb) => { cb(); return 1; });
+    });
+
+    afterEach(() => {
+      delete globalThis.requestAnimationFrame;
+    });
+
+    it('returns early without opening the menu when the target is inside an excluded selector (e.g. #edit-overlay)', () => {
+      const menu = document.getElementById('context-menu');
+      const target = document.getElementById('edit-overlay');
+      const e = { preventDefault: vi.fn(), target, clientX: 10, clientY: 10 };
+
+      app.showContextMenu(e);
+
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      expect(menu.classList.contains('hidden')).toBe(true);
+      expect(menu.innerHTML).toBe('');
+    });
+
+    it('shows the clock-settings item when the target is inside a .clock-container', () => {
+      const clockEl = document.createElement('div');
+      clockEl.className = 'clock-container';
+      document.body.appendChild(clockEl);
+      const menu = document.getElementById('context-menu');
+      const e = { preventDefault: vi.fn(), target: clockEl, clientX: 10, clientY: 10 };
+
+      app.showContextMenu(e);
+
+      expect(menu.classList.contains('hidden')).toBe(false);
+      expect(menu.querySelector('[data-ctx="clock-settings"]')).not.toBeNull();
+    });
+
+    it('returns early without opening the menu when the grid-item-wrap id matches no known item', () => {
+      const container = document.getElementById('grid-container');
+      container.innerHTML = '<div class="grid-item-wrap" data-id="ghost"><div class="grid-item-card"></div></div>';
+      const card = container.querySelector('.grid-item-card');
+      const menu = document.getElementById('context-menu');
+      const e = { preventDefault: vi.fn(), target: card, clientX: 10, clientY: 10 };
+
+      app.showContextMenu(e); // items is [] in the fresh fixture closure -> findItem returns null
+
+      expect(menu.classList.contains('hidden')).toBe(true);
+    });
+
+    it('shows open-new-tab/edit/size-grid/delete for a real link grid item (currentFolderId is always null here, so the size grid is always shown — Known Limitation)', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'gi1', type: 'link', name: 'Link', url: 'https://link.com', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.render();
+      const card = document.querySelector('.grid-item-wrap[data-id="gi1"] .grid-item-card');
+      const menu = document.getElementById('context-menu');
+      const e = { preventDefault: vi.fn(), target: card, clientX: 10, clientY: 10 };
+
+      localApp.showContextMenu(e);
+
+      expect(menu.classList.contains('hidden')).toBe(false);
+      expect(menu.querySelector('[data-ctx="open-new-tab"]')).not.toBeNull();
+      expect(menu.querySelector('[data-ctx="edit"]')).not.toBeNull();
+      expect(menu.querySelector('.ctx-size-grid')).not.toBeNull();
+      expect(menu.querySelectorAll('.ctx-size-btn')).toHaveLength(6); // SIZES.length
+      expect(menu.querySelector('[data-ctx="delete"]')).not.toBeNull();
+    });
+
+    it('omits open-new-tab for a folder grid item', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'gf1', type: 'folder', name: 'Folder', size: '1x1', children: [] }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.render();
+      const card = document.querySelector('.grid-item-wrap[data-id="gf1"] .grid-item-card');
+      const menu = document.getElementById('context-menu');
+      const e = { preventDefault: vi.fn(), target: card, clientX: 10, clientY: 10 };
+
+      localApp.showContextMenu(e);
+
+      expect(menu.querySelector('[data-ctx="open-new-tab"]')).toBeNull();
+      expect(menu.querySelector('[data-ctx="edit"]')).not.toBeNull();
+    });
+
+    it('shows add + wallpaper (no remove-wallpaper) for a blank-area click when wallpaper is unset (currentFolderId is always null here — Known Limitation: add is always available)', () => {
+      const menu = document.getElementById('context-menu');
+      const e = { preventDefault: vi.fn(), target: document.body, clientX: 10, clientY: 10 };
+
+      app.showContextMenu(e);
+
+      expect(menu.querySelector('[data-ctx="add"]')).not.toBeNull();
+      expect(menu.querySelector('[data-ctx="wallpaper"]')).not.toBeNull();
+      expect(menu.querySelector('[data-ctx="remove-wallpaper"]')).toBeNull();
+    });
+
+    it('adds remove-wallpaper for a blank-area click once wallpaper is set via loadAll', async () => {
+      const cs = createMockChromeStorage({ startpage_wallpaper: 'https://x/y.png' });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      const menu = document.getElementById('context-menu');
+      const e = { preventDefault: vi.fn(), target: document.body, clientX: 10, clientY: 10 };
+
+      localApp.showContextMenu(e);
+
+      expect(menu.querySelector('[data-ctx="remove-wallpaper"]')).not.toBeNull();
+    });
+
+    it('positions the menu at clientX/clientY when it fits within the viewport (jsdom getBoundingClientRect returns width/height 0, so no overflow correction fires)', () => {
+      const menu = document.getElementById('context-menu');
+      const e = { preventDefault: vi.fn(), target: document.body, clientX: 10, clientY: 10 };
+
+      app.showContextMenu(e);
+
+      expect(menu.style.left).toBe('10px');
+      expect(menu.style.top).toBe('10px');
+    });
+
+    it('corrects the position to stay inside the viewport when the menu would overflow (mocked getBoundingClientRect)', () => {
+      // A small (but nonzero) mocked size + a clientX/Y near the viewport's
+      // edge triggers the overflow-correction branch (`x = innerWidth -
+      // mRect.width - 8`) while keeping the corrected value positive — a
+      // mRect as large as the viewport itself would double-correct through
+      // the `x < 0 -> 8` clamp instead, masking this branch.
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        width: 100, height: 50, top: 0, left: 0, right: 100, bottom: 50, x: 0, y: 0, toJSON() {},
+      });
+      const menu = document.getElementById('context-menu');
+      const clientX = window.innerWidth - 10;
+      const clientY = window.innerHeight - 10;
+      const e = { preventDefault: vi.fn(), target: document.body, clientX, clientY };
+
+      app.showContextMenu(e);
+
+      expect(menu.style.left).toBe(`${window.innerWidth - 100 - 8}px`);
+      expect(menu.style.top).toBe(`${window.innerHeight - 50 - 8}px`);
+    });
+  });
+
+  describe('handleContextAction', () => {
+    beforeEach(() => {
+      globalThis.requestAnimationFrame = vi.fn((cb) => { cb(); return 1; });
+    });
+
+    afterEach(() => {
+      delete globalThis.requestAnimationFrame;
+      // Only set by the size-* tests below; harmless no-op otherwise.
+      delete globalThis.captureGridPositions;
+      delete globalThis.animateGridFlip;
+    });
+
+    it('updates the item size to 2x2, drives the intercepted B-group functions (captureGridPositions/animateGridFlip), and persists via saveItems', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'ct1', type: 'link', name: 'CT', url: 'https://ct.com', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      // B-group functions belong to the drag/DOM-heavy batch (batch 4, not
+      // this task); intercept them per Global Constraint so this test does
+      // not depend on their real (untested-here) behavior.
+      globalThis.captureGridPositions = vi.fn().mockReturnValue([]);
+      globalThis.animateGridFlip = vi.fn();
+      await localApp.loadAll();
+      localApp.render();
+      const card = document.querySelector('.grid-item-wrap[data-id="ct1"] .grid-item-card');
+      // contextTarget has no independent setter; it can only be set by a
+      // real showContextMenu() call on a real grid-item-card.
+      localApp.showContextMenu({ preventDefault: vi.fn(), target: card, clientX: 0, clientY: 0 });
+
+      localApp.handleContextAction('size-2x2');
+
+      expect(cs._data.startpage_items[0]).toMatchObject({ id: 'ct1', size: '2x2' });
+      expect(globalThis.captureGridPositions).toHaveBeenCalledTimes(1);
+      expect(globalThis.animateGridFlip).toHaveBeenCalledTimes(1);
+      expect(globalThis.animateGridFlip).toHaveBeenCalledWith([]);
+    });
+
+    it('returns early (no size change, B-group functions untouched) when action is size-* but contextTarget was never set via showContextMenu', () => {
+      globalThis.captureGridPositions = vi.fn().mockReturnValue([]);
+      globalThis.animateGridFlip = vi.fn();
+
+      expect(() => app.handleContextAction('size-2x2')).not.toThrow();
+
+      expect(globalThis.captureGridPositions).not.toHaveBeenCalled();
+      expect(globalThis.animateGridFlip).not.toHaveBeenCalled();
+    });
+
+    it('returns early (no size change) when the size suffix is not a recognized SIZES value', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'ct2', type: 'link', name: 'CT2', url: 'https://ct2.com', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.render();
+      const card = document.querySelector('.grid-item-wrap[data-id="ct2"] .grid-item-card');
+      localApp.showContextMenu({ preventDefault: vi.fn(), target: card, clientX: 0, clientY: 0 });
+      globalThis.captureGridPositions = vi.fn().mockReturnValue([]);
+      globalThis.animateGridFlip = vi.fn();
+
+      localApp.handleContextAction('size-bogus');
+
+      expect(cs._data.startpage_items[0].size).toBe('1x1'); // unchanged: saveItems() never reached
+      expect(globalThis.captureGridPositions).not.toHaveBeenCalled();
+    });
+
+    it('opens the item url in a new tab via window.open for a link item', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'ol1', type: 'link', name: 'OL', url: 'https://ol.com', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.render();
+      const card = document.querySelector('.grid-item-wrap[data-id="ol1"] .grid-item-card');
+      localApp.showContextMenu({ preventDefault: vi.fn(), target: card, clientX: 0, clientY: 0 });
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {});
+
+      localApp.handleContextAction('open-new-tab');
+
+      expect(openSpy).toHaveBeenCalledWith('https://ol.com', '_blank');
+    });
+
+    it('opens the edit modal (real showEditModal call) populated with the context item', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'ed1', type: 'link', name: 'ED', url: 'https://ed.com', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.render();
+      const card = document.querySelector('.grid-item-wrap[data-id="ed1"] .grid-item-card');
+      localApp.showContextMenu({ preventDefault: vi.fn(), target: card, clientX: 0, clientY: 0 });
+
+      localApp.handleContextAction('edit');
+
+      expect(document.getElementById('edit-overlay').classList.contains('hidden')).toBe(false);
+      expect(document.getElementById('edit-name').value).toBe('ED');
+      expect(document.getElementById('edit-url').value).toBe('https://ed.com');
+    });
+
+    it('opens the delete confirm overlay (real openDeleteConfirm call) for the context item', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'del1', type: 'link', name: 'DEL', url: 'https://del.com', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.render();
+      const card = document.querySelector('.grid-item-wrap[data-id="del1"] .grid-item-card');
+      localApp.showContextMenu({ preventDefault: vi.fn(), target: card, clientX: 0, clientY: 0 });
+
+      localApp.handleContextAction('delete');
+
+      expect(document.getElementById('delete-overlay').classList.contains('hidden')).toBe(false);
+    });
+
+    it('opens the "add" edit modal for a blank-area add action (currentFolderId is always null here — Known Limitation: add is never blocked in this batch)', () => {
+      app.handleContextAction('add');
+
+      expect(document.getElementById('edit-overlay').classList.contains('hidden')).toBe(false);
+      expect(document.getElementById('edit-title').textContent).toBe('dialog.edit.add');
+    });
+
+    it('clicks the hidden #wallpaper-input for the "wallpaper" action, without throwing', () => {
+      expect(() => app.handleContextAction('wallpaper')).not.toThrow();
+    });
+
+    it('removes the wallpaper via the real removeWallpaperAction for the "remove-wallpaper" action', async () => {
+      const cs = createMockChromeStorage({ startpage_wallpaper: 'https://x/y.png' });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+
+      localApp.handleContextAction('remove-wallpaper');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(cs._data.startpage_wallpaper).toBeUndefined();
+    });
+
+    it('opens clock settings (real showClockSettings call) for the "clock-settings" action', () => {
+      app.handleContextAction('clock-settings');
+
+      expect(document.getElementById('clock-overlay').classList.contains('hidden')).toBe(false);
+    });
+  });
 });
