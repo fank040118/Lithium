@@ -39,28 +39,19 @@ const EXPORTED_NAMES = [
   'hideDeleteConfirm', 'hideClockSettings', 'setUrlFieldVisible',
   'applyWallpaperEffects', 'updateSidebarWallpaperPreview',
   'handleManagedImageError', 'updateGridItemSizes', 'applyMainGridColumns',
-  // Tasks 2-5 (29) — NOT yet backed by written briefs at the time Task 1 ran
-  // (task-1-brief.md referenced a "Global Constraint 4" list of 41 names
-  // that was not actually present in the brief file delivered to Task 1;
-  // see task-1-report.md for details). This sub-list is a best-effort
-  // reconstruction: every name below is a real app.js top-level function
-  // (verified via `grep -n "^function \|^async function " app.js`), grouped
-  // by the batch-3 task titles from progress.md. Extra/misplaced entries here
-  // are harmless (unused globalThis lookups); the risk is only in omission —
-  // whoever writes/executes Tasks 2-5 should verify this sub-list against
-  // their real brief and append anything still missing.
+  // Tasks 2-5 (29), sourced verbatim from the batch-3 plan's Global
+  // Constraint 4 (docs/superpowers/plans/2026-07-02-app-batch3-render-dom-light.md).
   // Task 2 (9): engine dropdown + wallpaper apply + toast/signin
-  'selectEngine', 'renderEngineDropdown', 'toggleEngineDropdown', 'deleteEngine',
+  'renderEngineDropdown', 'toggleEngineDropdown', 'selectEngine', 'deleteEngine',
   'addEngine', 'applyWallpaper', 'removeWallpaperAction', 'showToast',
   'showSigninNotice',
   // Task 3 (9): clock settings + edit modal type toggle
   'updateClock', 'renderClockSettings', 'showClockSettings', 'saveClockSettings',
-  'showEditModal', 'hideEditModal', 'resetTypeToggle', 'setActiveType',
-  'updateIconPreview',
+  'resetTypeToggle', 'setActiveType', 'updateIconPreview', 'showEditModal',
+  'hideEditModal',
   // Task 4 (7): icon/grid render family
   'renderFolderNormalSlot', 'renderFolderMiniSlot', 'renderIcon',
-  'createGridItemHTML', 'renderGrid', 'scheduleIconCacheRefresh',
-  'handleRefreshAllIcons',
+  'createGridItemHTML', 'renderGrid', 'render', 'closeFolderWithAnimation',
   // Task 5 (4): delete confirm + form save + context menu
   'confirmDelete', 'handleSaveItem', 'showContextMenu', 'handleContextAction',
 ];
