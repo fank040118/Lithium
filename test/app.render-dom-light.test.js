@@ -633,4 +633,289 @@ describe('app.js render/dom-light layer', () => {
       expect(notice.classList.contains('is-visible')).toBe(false);
     });
   });
+
+  // Batch 3, Task 3: clock settings + edit modal type toggle — 9 functions.
+  // updateClock/saveClockSettings write through chrome.storage (via
+  // saveClocks/loadAll), so per Global Constraint 8 those describes attach
+  // createMockChromeStorage to globalThis.chrome BEFORE loadAppModule()
+  // re-evaluates app.js, then re-load a local `app` inside their own
+  // beforeEach/tests (mirroring the selectEngine/addEngine pattern above).
+  // The mock's local.set assigns synchronously into `_data` before it hits
+  // its own `await`/return, so callers here can assert on `cs._data`
+  // immediately after calling the sync app.* function under test, without
+  // awaiting anything extra (same as the deleteEngine/selectEngine tests).
+  describe('updateClock', () => {
+    it('sets data-count="0" and creates no .clock-container when clocks is the empty default (no loadAll called)', () => {
+      const wrap = document.getElementById('clocks-wrap');
+
+      app.updateClock();
+
+      expect(wrap.dataset.count).toBe('0');
+      expect(wrap.querySelectorAll('.clock-container').length).toBe(0);
+    });
+
+    it('renders one populated .clock-container once clocks is driven to 1 entry via loadAll', async () => {
+      const cs = createMockChromeStorage({
+        startpage_clocks: [{ tz: 'Asia/Shanghai', key: 'beijing' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      const wrap = document.getElementById('clocks-wrap');
+
+      localApp.updateClock();
+
+      expect(wrap.dataset.count).toBe('1');
+      const containers = wrap.querySelectorAll('.clock-container');
+      expect(containers.length).toBe(1);
+
+      const clockText = wrap.querySelector('.clock-text[data-clock-idx="0"]');
+      const dateText = wrap.querySelector('.date-text[data-clock-idx="0"]');
+      const tzLabel = wrap.querySelector('.tz-label[data-clock-idx="0"]');
+      expect(clockText.textContent).not.toBe('');
+      expect(dateText.textContent).not.toBe('');
+      expect(tzLabel.textContent).not.toBe('');
+
+      const c = { tz: 'Asia/Shanghai', key: 'beijing' };
+      const expectedPrefix = localApp.getClockCityName(c) + ' · UTC' + localApp.getTimezoneOffset(c.tz, new Date());
+      expect(tzLabel.textContent).toBe(expectedPrefix);
+
+      delete globalThis.chrome;
+    });
+
+    it('does not rebuild existing .clock-container elements on a second call with the same count', async () => {
+      const cs = createMockChromeStorage({
+        startpage_clocks: [{ tz: 'Asia/Shanghai', key: 'beijing' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      const wrap = document.getElementById('clocks-wrap');
+
+      localApp.updateClock();
+      const container = wrap.querySelector('.clock-container');
+      container.setAttribute('data-marker', 'x');
+
+      localApp.updateClock();
+
+      expect(wrap.dataset.count).toBe('1');
+      expect(wrap.querySelectorAll('.clock-container').length).toBe(1);
+      expect(wrap.querySelector('.clock-container').getAttribute('data-marker')).toBe('x');
+
+      delete globalThis.chrome;
+    });
+  });
+
+  describe('renderClockSettings', () => {
+    it('renders one .clock-entry with a select and an add-clock button when tempClocks has 1 entry (< MAX_CLOCKS)', async () => {
+      const cs = createMockChromeStorage({
+        startpage_clocks: [{ tz: 'Asia/Shanghai', key: 'beijing' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.showClockSettings(); // drives the private tempClocks via deepClone(clocks)
+
+      const list = document.getElementById('clock-list');
+
+      expect(list.querySelectorAll('.clock-entry').length).toBe(1);
+      expect(list.querySelector('.clock-entry .clock-tz-select')).not.toBeNull();
+      expect(list.querySelector('[data-action="add-clock"]')).not.toBeNull();
+      expect(list.querySelector('.clock-limit-msg')).toBeNull();
+
+      delete globalThis.chrome;
+    });
+
+    it('renders 2 .clock-entry elements and an atLimit message (no add-clock button) when tempClocks has 2 entries', async () => {
+      const cs = createMockChromeStorage({
+        startpage_clocks: [
+          { tz: 'Asia/Shanghai', key: 'beijing' },
+          { tz: 'Asia/Tokyo', key: 'tokyo' },
+        ],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      localApp.showClockSettings();
+
+      const list = document.getElementById('clock-list');
+
+      expect(list.querySelectorAll('.clock-entry').length).toBe(2);
+      expect(list.querySelector('[data-action="add-clock"]')).toBeNull();
+      const limitMsg = list.querySelector('.clock-limit-msg');
+      expect(limitMsg).not.toBeNull();
+      // t() is mocked to return the key verbatim; the {max:2} interpolation
+      // argument is ignored by the mock (Global Constraint 5).
+      expect(limitMsg.textContent).toBe('dialog.clockSettings.atLimit');
+
+      delete globalThis.chrome;
+    });
+  });
+
+  describe('showClockSettings', () => {
+    it('sets tempClocks to an empty deep clone of the default clocks=[] and removes #clock-overlay hidden', () => {
+      const overlay = document.getElementById('clock-overlay');
+      const list = document.getElementById('clock-list');
+
+      app.showClockSettings();
+
+      expect(overlay.classList.contains('hidden')).toBe(false);
+      // Observed indirectly via renderClockSettings' output (tempClocks has no public getter).
+      expect(list.querySelectorAll('.clock-entry').length).toBe(0);
+      expect(list.querySelector('[data-action="add-clock"]')).not.toBeNull();
+    });
+  });
+
+  describe('saveClockSettings', () => {
+    it('rebuilds clocks from #clock-list selects, persists via saveClocks, hides the overlay, and refreshes #clocks-wrap', () => {
+      const cs = createMockChromeStorage({});
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      localApp.showClockSettings();
+
+      // renderClockSettings' real <select> (grouped optgroups) is complex to
+      // reproduce; a hand-built <select class="clock-tz-select"> is enough
+      // since saveClockSettings only queries that selector (Global Constraint 7).
+      const list = document.getElementById('clock-list');
+      list.innerHTML = '<select class="clock-tz-select"><option value="Asia/Tokyo" data-key="tokyo" selected></option></select>';
+
+      localApp.saveClockSettings();
+
+      expect(cs._data.startpage_clocks).toEqual([
+        { id: expect.any(String), tz: 'Asia/Tokyo', key: 'tokyo' },
+      ]);
+      expect(document.getElementById('clock-overlay').classList.contains('hidden')).toBe(true);
+      expect(document.getElementById('clocks-wrap').dataset.count).toBe('1');
+
+      delete globalThis.chrome;
+    });
+  });
+
+  describe('resetTypeToggle', () => {
+    it('resets #type-toggle to visible, calls setUrlFieldVisible(true), and reactivates the link type-btn', () => {
+      const typeToggle = document.getElementById('type-toggle');
+      const urlFieldWrap = document.getElementById('url-field-wrap');
+      const linkBtn = document.querySelector('.type-btn[data-type="link"]');
+      const folderBtn = document.querySelector('.type-btn[data-type="folder"]');
+
+      // Simulate a prior "folder" selection, to verify resetTypeToggle flips it back.
+      typeToggle.style.display = 'none';
+      urlFieldWrap.style.display = 'none';
+      linkBtn.classList.remove('type-btn-active');
+      folderBtn.classList.add('type-btn-active');
+
+      app.resetTypeToggle();
+
+      expect(typeToggle.style.display).toBe('');
+      expect(urlFieldWrap.style.display).toBe(''); // real setUrlFieldVisible(true) call
+      expect(linkBtn.classList.contains('type-btn-active')).toBe(true);
+      expect(folderBtn.classList.contains('type-btn-active')).toBe(false);
+    });
+  });
+
+  describe('setActiveType', () => {
+    it('activates the folder type-btn and hides the url field wrap', () => {
+      app.setActiveType('folder');
+
+      expect(document.querySelector('.type-btn[data-type="folder"]').classList.contains('type-btn-active')).toBe(true);
+      expect(document.querySelector('.type-btn[data-type="link"]').classList.contains('type-btn-active')).toBe(false);
+      expect(document.getElementById('url-field-wrap').style.display).toBe('none');
+    });
+
+    it('activates the link type-btn and shows the url field wrap', () => {
+      // Start from the folder state set by a previous call, to confirm the toggle reverses.
+      app.setActiveType('folder');
+
+      app.setActiveType('link');
+
+      expect(document.querySelector('.type-btn[data-type="link"]').classList.contains('type-btn-active')).toBe(true);
+      expect(document.querySelector('.type-btn[data-type="folder"]').classList.contains('type-btn-active')).toBe(false);
+      expect(document.getElementById('url-field-wrap').style.display).toBe('');
+    });
+  });
+
+  describe('updateIconPreview', () => {
+    it('renders an <img> and unhides #icon-clear-btn when given a dataUrl', () => {
+      const dataUrl = 'data:image/png;base64,AAA';
+
+      app.updateIconPreview(dataUrl);
+
+      const preview = document.getElementById('icon-preview');
+      expect(preview.innerHTML).toContain('<img src="' + dataUrl + '"');
+      expect(document.getElementById('icon-clear-btn').classList.contains('hidden')).toBe(false);
+    });
+
+    it('renders the placeholder and hides #icon-clear-btn when given no dataUrl', () => {
+      // Start from the "has an image" state to confirm the clear branch reverses it.
+      app.updateIconPreview('data:image/png;base64,AAA');
+
+      app.updateIconPreview('');
+
+      const preview = document.getElementById('icon-preview');
+      expect(preview.innerHTML).toContain('class="icon-preview-placeholder"');
+      expect(preview.textContent).toBe('dialog.edit.iconNone'); // t() mock returns the key
+      expect(document.getElementById('icon-clear-btn').classList.contains('hidden')).toBe(true);
+    });
+  });
+
+  describe('showEditModal', () => {
+    it('opens in "add" mode for a new top-level item: cleared fields, title=add, type-toggle visible, defaults to "link"', () => {
+      document.getElementById('edit-name').value = 'stale';
+      document.getElementById('edit-url').value = 'stale-url';
+
+      app.showEditModal(null, false);
+
+      expect(document.getElementById('edit-title').textContent).toBe('dialog.edit.add');
+      expect(document.getElementById('edit-name').value).toBe('');
+      expect(document.getElementById('edit-url').value).toBe('');
+      expect(document.getElementById('type-toggle').style.display).toBe('flex');
+      // Real setActiveType('link') call underneath the "add" branch's default:
+      expect(document.querySelector('.type-btn[data-type="link"]').classList.contains('type-btn-active')).toBe(true);
+      expect(document.getElementById('url-field-wrap').style.display).toBe('');
+      expect(document.getElementById('icon-upload-btn').textContent).toBe('dialog.edit.iconUpload');
+      expect(document.activeElement).toBe(document.getElementById('edit-name'));
+      expect(document.getElementById('edit-overlay').classList.contains('hidden')).toBe(false);
+    });
+
+    it('opens in "edit" mode for an existing link item: fields populated, title=edit, type-toggle hidden, url field visible', () => {
+      const item = { id: '1', type: 'link', name: 'X', url: 'https://x', icon: '' };
+
+      app.showEditModal(item, false);
+
+      expect(document.getElementById('edit-title').textContent).toBe('dialog.edit.edit');
+      expect(document.getElementById('edit-name').value).toBe('X');
+      expect(document.getElementById('edit-url').value).toBe('https://x');
+      expect(document.getElementById('type-toggle').style.display).toBe('none');
+      expect(document.getElementById('url-field-wrap').style.display).toBe(''); // setUrlFieldVisible(true): item.type !== 'folder'
+    });
+
+    it('opens for a new item inside a folder: type-toggle hidden, url field visible (item?.type!=="folder" is true for null item)', () => {
+      app.showEditModal(null, true);
+
+      expect(document.getElementById('type-toggle').style.display).toBe('none');
+      expect(document.getElementById('url-field-wrap').style.display).toBe('');
+    });
+
+    it('sets pendingIcon (observed via the upload button label) when the item already has an icon', () => {
+      const item = { id: '2', type: 'link', name: 'Y', url: 'https://y', icon: 'data:image/png;base64,AAA' };
+
+      app.showEditModal(item, false);
+
+      expect(document.getElementById('icon-upload-btn').textContent).toBe('dialog.edit.iconUploadDone');
+      expect(document.getElementById('icon-preview').innerHTML).toContain('<img src="data:image/png;base64,AAA"');
+    });
+  });
+
+  describe('hideEditModal', () => {
+    it('hides #edit-overlay and resets the type toggle (real resetTypeToggle call)', () => {
+      const typeToggle = document.getElementById('type-toggle');
+      app.showEditModal(null, true); // enters edit state with type-toggle hidden (display: 'none')
+      expect(typeToggle.style.display).toBe('none');
+
+      app.hideEditModal();
+
+      expect(document.getElementById('edit-overlay').classList.contains('hidden')).toBe(true);
+      expect(typeToggle.style.display).toBe(''); // resetTypeToggle() ran for real
+    });
+  });
 });
