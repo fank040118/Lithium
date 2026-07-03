@@ -918,4 +918,362 @@ describe('app.js render/dom-light layer', () => {
       expect(typeToggle.style.display).toBe(''); // resetTypeToggle() ran for real
     });
   });
+
+  // Batch 3, Task 4: icon/grid render family — 7 functions with a real
+  // dependency chain (renderFolderNormalSlot/renderFolderMiniSlot are leaves
+  // called by renderIcon; renderIcon is called by createGridItemHTML; that is
+  // called by renderGrid; renderGrid is called ×2 by render(); render() is
+  // called by closeFolderWithAnimation()). Tests below call the real
+  // downstream function wherever the brief calls for it, and only stub
+  // window.iconCache to steer the icon/cached/favicon/letter branches.
+  describe('renderFolderNormalSlot', () => {
+    it('renders an empty slot for a null child', () => {
+      expect(app.renderFolderNormalSlot(null)).toBe('<div class="folder-slot-normal folder-slot-empty"></div>');
+    });
+
+    it('renders a folder-icon slot when child.type is "folder"', () => {
+      const html = app.renderFolderNormalSlot({ id: 'f1', type: 'folder', name: 'Sub', children: [] });
+      expect(html).toBe('<div class="folder-slot-normal folder-slot-folder"><svg class="folder-slot-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></div>');
+    });
+
+    it('uses child.icon via buildManagedImageTag when present (link child), with data-preview-child-id', () => {
+      const child = { id: 'c1', type: 'link', name: 'Ex', url: 'https://ex.com', icon: 'data:image/png;base64,AAA' };
+      const html = app.renderFolderNormalSlot(child);
+      expect(html).toContain('data-preview-child-id="c1"');
+      expect(html).toContain('src="data:image/png;base64,AAA"');
+      expect(html).toContain('data-managed-img="true"');
+      expect(html).toContain('data-error-mode="show-sibling"');
+      expect(html).toContain('folder-slot-letter" style="display:none">E</span>');
+    });
+
+    it('falls back to window.iconCache.getCachedIcon(url) when no child.icon', () => {
+      window.iconCache = { getCachedIcon: (url) => `cached:${url}` };
+      const child = { id: 'c2', type: 'link', name: 'No Icon', url: 'https://noicon.com' };
+      const html = app.renderFolderNormalSlot(child);
+      expect(html).toContain('src="cached:https://noicon.com"');
+    });
+
+    it('falls back to getFavicon(url) when no icon and no cached hit', () => {
+      window.iconCache = { getRemoteFaviconUrl: (host) => `fav://${host}`, getRemoteFallbackFaviconUrl: (host) => `favfallback://${host}` };
+      const child = { id: 'c3', type: 'link', name: 'Fav', url: 'https://favtest.com' };
+      const html = app.renderFolderNormalSlot(child);
+      expect(html).toContain('src="fav://favtest.com"');
+      expect(html).toContain('data-fallback-src="favfallback://favtest.com"');
+    });
+
+    it('falls back to the first-letter span when icon/cache/favicon all miss', () => {
+      const child = { id: 'c4', type: 'link', name: 'Zeta', url: 'https://zeta.com' };
+      const html = app.renderFolderNormalSlot(child);
+      expect(html).toBe('<div class="folder-slot-normal" data-preview-child-id="c4"><span class="folder-slot-letter">Z</span></div>');
+    });
+  });
+
+  describe('renderFolderMiniSlot', () => {
+    it('renders null/folder/icon/cached-icon branches together inside one folder-slot-mini-group', () => {
+      window.iconCache = { getCachedIcon: (url) => `cached:${url}` };
+      const miniChildren = [
+        null,
+        { id: 'm1', type: 'folder', name: 'Sub', children: [] },
+        { id: 'm2', type: 'link', name: 'Icon', url: 'https://icon.com', icon: 'data:image/png;base64,BBB' },
+        { id: 'm3', type: 'link', name: 'Cached', url: 'https://cached.com' },
+      ];
+      const html = app.renderFolderMiniSlot(miniChildren);
+      expect(html.startsWith('<div class="folder-slot-mini-group">')).toBe(true);
+      expect(html).toContain('<div class="folder-mini-icon folder-mini-icon-empty"></div>');
+      expect(html).toContain('folder-mini-icon folder-mini-folder-slot');
+      expect(html).toContain('folder-mini-folder-icon');
+      expect(html).toContain('src="data:image/png;base64,BBB"');
+      expect(html).toContain('folder-mini-letter" style="display:none">I</span>');
+      expect(html).toContain('src="cached:https://cached.com"');
+      expect(html).toContain('folder-mini-letter" style="display:none">C</span>');
+    });
+
+    it('falls back to getFavicon(url) for a no-icon/no-cache child', () => {
+      window.iconCache = { getRemoteFaviconUrl: (host) => `fav://${host}` };
+      const html = app.renderFolderMiniSlot([{ id: 'm4', type: 'link', name: 'Fav', url: 'https://favmini.com' }]);
+      expect(html).toContain('src="fav://favmini.com"');
+    });
+
+    it('falls back to the first-letter span when icon/cache/favicon all miss', () => {
+      const html = app.renderFolderMiniSlot([{ id: 'm5', type: 'link', name: 'Zed', url: 'https://zed.com' }]);
+      expect(html).toBe('<div class="folder-slot-mini-group"><div class="folder-mini-icon"><span class="folder-mini-letter">Z</span></div></div>');
+    });
+  });
+
+  describe('renderIcon', () => {
+    describe('type: link', () => {
+      it('icon present, 1x1 (default) size -> unwrapped managed image + fallback letter span, no grid-item-link-preview wrapper', () => {
+        const item = { id: 'l1', type: 'link', name: 'Ex', url: 'https://ex.com', icon: 'data:image/png;base64,CCC', size: '1x1' };
+        const html = app.renderIcon(item);
+        expect(html).not.toContain('grid-item-link-preview');
+        expect(html).toContain('src="data:image/png;base64,CCC"');
+        expect(html).toContain('style="width:100%;height:100%;display:block;object-fit:cover;pointer-events:none"');
+        expect(html).toContain('style="display:none;font-size:1.875rem;font-weight:600;color:#cbd5e1;pointer-events:none">E</span>');
+      });
+
+      it('icon present, non-1x1 size -> wrapped in grid-item-link-preview (isExpandedLink)', () => {
+        const item = { id: 'l2', type: 'link', name: 'Ex', url: 'https://ex.com', icon: 'data:image/png;base64,CCC', size: '1x2' };
+        const html = app.renderIcon(item);
+        expect(html.startsWith('<div class="grid-item-link-preview">')).toBe(true);
+        expect(html.endsWith('</div>')).toBe(true);
+        expect(html).toContain('src="data:image/png;base64,CCC"');
+      });
+
+      it('no icon, cached hit -> uses cached src', () => {
+        window.iconCache = { getCachedIcon: () => 'cached-src' };
+        const item = { id: 'l3', type: 'link', name: 'Ex', url: 'https://ex.com' };
+        const html = app.renderIcon(item);
+        expect(html).toContain('src="cached-src"');
+      });
+
+      it('no icon, no cache, favicon hit -> uses favicon src + fallback favicon src', () => {
+        window.iconCache = { getRemoteFaviconUrl: () => 'fav-src', getRemoteFallbackFaviconUrl: () => 'fav-fallback' };
+        const item = { id: 'l4', type: 'link', name: 'Ex', url: 'https://ex.com' };
+        const html = app.renderIcon(item);
+        expect(html).toContain('src="fav-src"');
+        expect(html).toContain('data-fallback-src="fav-fallback"');
+      });
+
+      it('no icon, no cache, no favicon -> letter fallback span only, non-expanded (1x1)', () => {
+        const item = { id: 'l5', type: 'link', name: 'Zeta', url: 'https://zeta.com', size: '1x1' };
+        const html = app.renderIcon(item);
+        expect(html).toBe('<span style="font-size:1.875rem;font-weight:600;color:#cbd5e1;pointer-events:none">Z</span>');
+      });
+    });
+
+    describe('type: folder', () => {
+      it('icon present -> managed image tag regardless of children', () => {
+        const item = { id: 'f1', type: 'folder', name: 'F', icon: 'data:image/png;base64,DDD', children: [{ id: 'c1' }] };
+        const html = app.renderIcon(item);
+        expect(html).toContain('src="data:image/png;base64,DDD"');
+      });
+
+      it('no icon, empty children -> grid-folder-icon svg', () => {
+        const item = { id: 'f2', type: 'folder', name: 'F', children: [] };
+        const html = app.renderIcon(item);
+        expect(html).toContain('grid-folder-icon');
+      });
+
+      it('no icon, children present, size 1x1 (no matching layout) -> 2x2 mini-grid preview with empty padding', () => {
+        const item = {
+          id: 'f3', type: 'folder', name: 'F', size: '1x1',
+          children: [
+            { id: 'c1', type: 'link', name: 'A', url: 'https://a.com', icon: 'data:image/png;base64,EEE' },
+            { id: 'c2', type: 'link', name: 'B', url: 'https://b.com' },
+          ],
+        };
+        const html = app.renderIcon(item);
+        const wrap = document.createElement('div');
+        wrap.innerHTML = html;
+        expect(wrap.firstElementChild.className).toBe('folder-preview-grid');
+        expect(wrap.querySelectorAll('.folder-preview-cell').length).toBe(4); // 2 previews + 2 empty pads
+        expect(wrap.querySelectorAll('.folder-preview-cell.empty').length).toBe(2);
+        expect(html).toContain('src="data:image/png;base64,EEE"');
+      });
+
+      it('no icon, children.length <= normalCount+1 for a slot-layout size (2x2) -> last slot rendered via real renderFolderNormalSlot, no mini-group', () => {
+        const item = {
+          id: 'f4', type: 'folder', name: 'F', size: '2x2',
+          children: [
+            { id: 'c1', type: 'link', name: 'A', url: 'https://a.com', icon: 'data:image/png;base64,111' },
+            { id: 'c2', type: 'link', name: 'B', url: 'https://b.com', icon: 'data:image/png;base64,222' },
+          ],
+        };
+        // 2x2 layout: cols=2, rows=2 -> normalCount=3; children.length(2) <= normalCount+1(4).
+        const html = app.renderIcon(item);
+        expect(html).toContain('folder-slot-grid');
+        expect(html).toContain('grid-template-columns:repeat(2,var(--base-card-size))');
+        expect(html).toContain('grid-template-rows:repeat(2,var(--base-card-size))');
+        const wrap = document.createElement('div');
+        wrap.innerHTML = html;
+        const grid = wrap.querySelector('.folder-slot-grid');
+        const normalSlots = Array.from(grid.children).filter((c) => c.classList.contains('folder-slot-normal'));
+        expect(normalSlots.length).toBe(4); // 3 normal slots + the last slot rendered as a normal slot too
+        expect(grid.querySelector('.folder-slot-mini-group')).toBeNull();
+      });
+
+      it('no icon, children.length > normalCount+1 for a slot-layout size (2x2) -> last slot rendered via real renderFolderMiniSlot', () => {
+        const item = {
+          id: 'f5', type: 'folder', name: 'F', size: '2x2',
+          children: Array.from({ length: 6 }, (_, i) => ({ id: `c${i}`, type: 'link', name: `L${i}`, url: `https://l${i}.com`, icon: `data:img${i}` })),
+        };
+        // normalCount=3; children.length(6) > normalCount+1(4) -> mini-group branch.
+        const html = app.renderIcon(item);
+        const wrap = document.createElement('div');
+        wrap.innerHTML = html;
+        const grid = wrap.querySelector('.folder-slot-grid');
+        const normalSlots = Array.from(grid.children).filter((c) => c.classList.contains('folder-slot-normal'));
+        expect(normalSlots.length).toBe(3);
+        const miniGroup = grid.querySelector('.folder-slot-mini-group');
+        expect(miniGroup).not.toBeNull();
+        expect(miniGroup.querySelectorAll('.folder-mini-icon').length).toBe(4);
+      });
+    });
+  });
+
+  describe('createGridItemHTML', () => {
+    it('wraps the real renderIcon(item) output with grid-item-wrap markup, using item.id/size and escaped item.name', () => {
+      const item = { id: 'gi1', type: 'link', name: '<b>A&B</b>', url: 'https://ab.com', icon: 'data:image/png;base64,ABC', size: '2x1' };
+      const html = app.createGridItemHTML(item);
+      expect(html).toContain('data-id="gi1"');
+      expect(html).toContain('data-size="2x1"');
+      expect(html).toContain('data-item-type="link"');
+      expect(html).toContain('grid-item-name');
+      expect(html).toContain(app.escapeHtml('<b>A&B</b>'));
+      // real renderIcon() call embedded verbatim (icon + non-1x1 size -> grid-item-link-preview wrapper)
+      expect(html).toContain(app.renderIcon(item));
+    });
+  });
+
+  describe('renderGrid', () => {
+    const item1 = { id: 'g1', type: 'link', name: 'One', url: 'https://one.com', size: '1x1' };
+    const item2 = { id: 'g2', type: 'link', name: 'Two', url: 'https://two.com', size: '1x1' };
+
+    it('renders each item via the real createGridItemHTML plus a trailing add-card by default', () => {
+      const container = document.createElement('div'); // not attached to body — renderGrid only needs .innerHTML
+      app.renderGrid(container, [item1, item2]);
+      expect(container.querySelectorAll('.grid-item-wrap').length).toBe(3); // 2 items + add-wrap
+      expect(container.querySelector('.add-card')).not.toBeNull();
+      expect(container.innerHTML).toContain(app.createGridItemHTML(item1));
+      expect(container.innerHTML).toContain(app.createGridItemHTML(item2));
+    });
+
+    it('omits the add-card when options.showAddCard is false', () => {
+      const container = document.createElement('div');
+      app.renderGrid(container, [item1], { showAddCard: false });
+      expect(container.querySelector('.add-card')).toBeNull();
+      expect(container.querySelectorAll('.grid-item-wrap').length).toBe(1);
+    });
+
+    it('renders only the add-card for an empty items list (default options)', () => {
+      const container = document.createElement('div');
+      app.renderGrid(container, []);
+      expect(container.querySelectorAll('.grid-item-wrap').length).toBe(1);
+      expect(container.querySelector('.add-card')).not.toBeNull();
+    });
+
+    it('renders nothing at all for an empty items list with showAddCard:false', () => {
+      const container = document.createElement('div');
+      app.renderGrid(container, [], { showAddCard: false });
+      expect(container.innerHTML).toBe('<div></div>');
+    });
+  });
+
+  describe('render', () => {
+    // Known limitation (batch-3 plan Global Constraint 10 / task-4 brief):
+    // currentFolderId only becomes non-null inside setupEventListeners' grid
+    // click handler, which is out of scope for this task (batch 6). So only
+    // the currentFolderId===null path (folder overlay staying/becoming
+    // hidden) is reachable here; the folder-open branch (app.js render(),
+    // ~lines 1337-1366) is left for the setupEventListeners task to cover
+    // via a real click.
+    it('renders #grid-container via a real renderGrid call (default empty items -> add-card only) and keeps #folder-overlay hidden', () => {
+      app.render();
+      const gridContainer = document.getElementById('grid-container');
+      expect(gridContainer.querySelectorAll('.grid-item-wrap').length).toBe(1); // add-wrap only
+      expect(gridContainer.querySelector('.add-card')).not.toBeNull();
+      expect(document.getElementById('folder-overlay').classList.contains('hidden')).toBe(true);
+    });
+
+    it('re-adds the hidden class to #folder-overlay even if it had been removed (currentFolderId===null else-branch is real code)', () => {
+      document.getElementById('folder-overlay').classList.remove('hidden');
+      app.render();
+      expect(document.getElementById('folder-overlay').classList.contains('hidden')).toBe(true);
+    });
+
+    it('does not throw calling the real updateGridItemSizes() (fixture grid-container has no .grid-item-wrap[data-size] children)', () => {
+      expect(() => app.render()).not.toThrow();
+    });
+
+    it('renders real items loaded via loadAll() as grid-item-wrap entries in #grid-container', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [
+          { id: 'r1', type: 'link', name: 'One', url: 'https://one.com', icon: '', size: '1x1' },
+          { id: 'r2', type: 'link', name: 'Two', url: 'https://two.com', icon: '', size: '1x1' },
+        ],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule(); // fresh closure so `items`/`render` bind to this chrome mock
+      await localApp.loadAll();
+
+      localApp.render();
+
+      const gridContainer = document.getElementById('grid-container');
+      const nonAddWraps = Array.from(gridContainer.querySelectorAll('.grid-item-wrap')).filter((el) => !el.classList.contains('add-wrap'));
+      expect(nonAddWraps.length).toBe(2);
+      expect(nonAddWraps.map((el) => el.dataset.id)).toEqual(['r1', 'r2']);
+    });
+  });
+
+  describe('closeFolderWithAnimation', () => {
+    // Known limitation: currentFolderId is always null in this batch (see
+    // the `render` describe above), so both branches below are selected
+    // purely by #folder-overlay's hidden state — which matches the actual
+    // early-exit condition `!modal || overlay.classList.contains('hidden')`
+    // and is independent of currentFolderId.
+    afterEach(() => {
+      vi.useRealTimers();
+      delete globalThis.render;
+    });
+
+    it('early-exits straight to a real render() call when #folder-overlay is already hidden (fixture default)', async () => {
+      const cs = createMockChromeStorage({
+        startpage_items: [{ id: 'x1', type: 'link', name: 'X', url: 'https://x.com', size: '1x1' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      expect(document.getElementById('folder-overlay').classList.contains('hidden')).toBe(true);
+
+      localApp.closeFolderWithAnimation();
+
+      const gridContainer = document.getElementById('grid-container');
+      expect(gridContainer.querySelector('.grid-item-wrap[data-id="x1"]')).not.toBeNull();
+    });
+
+    it('animation branch: sets folder-closing/overlay-closing classes, then the setTimeout(320) fallback finishes and calls render() exactly once', () => {
+      vi.useFakeTimers();
+      const overlay = document.getElementById('folder-overlay');
+      const modal = document.getElementById('folder-modal');
+      overlay.classList.remove('hidden'); // simulate an open folder overlay
+      const renderSpy = vi.fn();
+      globalThis.render = renderSpy; // intercept the closure's unqualified render() call
+
+      app.closeFolderWithAnimation();
+
+      expect(modal.classList.contains('folder-closing')).toBe(true);
+      expect(overlay.classList.contains('overlay-closing')).toBe(true);
+      expect(renderSpy).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(320);
+
+      expect(modal.classList.contains('folder-closing')).toBe(false);
+      expect(overlay.classList.contains('overlay-closing')).toBe(false);
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+
+      // done-guard: a late animationend must not re-trigger finish()/render()
+      overlay.dispatchEvent(new Event('animationend'));
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('animation branch: an animationend event finishes immediately (racing ahead of the 320ms timeout), calling render() exactly once', () => {
+      vi.useFakeTimers();
+      const overlay = document.getElementById('folder-overlay');
+      const modal = document.getElementById('folder-modal');
+      overlay.classList.remove('hidden');
+      const renderSpy = vi.fn();
+      globalThis.render = renderSpy;
+
+      app.closeFolderWithAnimation();
+      overlay.dispatchEvent(new Event('animationend'));
+
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+      expect(modal.classList.contains('folder-closing')).toBe(false);
+      expect(overlay.classList.contains('overlay-closing')).toBe(false);
+
+      // the setTimeout fallback firing afterward must be a no-op (done-guard)
+      vi.advanceTimersByTime(320);
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
