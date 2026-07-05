@@ -704,4 +704,139 @@ describe('app.js drag/dom-heavy layer', () => {
       expect(container.querySelectorAll('.grid-item-combine')).toHaveLength(0);
     });
   });
+
+  // ── Task 3: handleDragOverFolderBg ──────────────────────────────────────
+  // Known limitation (Global Constraint 11): `currentFolderId` is a
+  // closure-private `let` with no public setter, and the batch-4 test
+  // harness never drives the folder-open flow, so it stays `null` for
+  // every test in this batch. The `if (dragState && currentFolderId)`
+  // branch inside handleDragOverFolderBg is therefore unreachable —
+  // `dragState` can be set (via handleDragStart) but the AND condition
+  // still fails on the `currentFolderId` operand. The "move-to-main"
+  // visual feedback (setting `drag-over-folder-bg` on #folder-overlay
+  // + flipping dragState.action to 'move-to-main' + applyDragVisuals)
+  // is left for batch 6 to cover, where setupEventListeners drives the
+  // real folder-open flow. This batch only asserts the always-taken
+  // early path: `e.preventDefault()` runs unconditionally, and the
+  // overlay never receives the `drag-over-folder-bg` class regardless
+  // of whether dragState is null or set.
+  describe('handleDragOverFolderBg', () => {
+    // Drop handleDragStart's RAF callback for case 2 — we only need
+    // dragState set, not the applyDragVisuals side effects.
+    beforeEach(() => {
+      globalThis.requestAnimationFrame = vi.fn(() => 1);
+    });
+
+    it('case 1: no dragState → still calls e.preventDefault once, #folder-overlay never gets .drag-over-folder-bg', () => {
+      const e = { preventDefault: vi.fn() };
+      app.handleDragOverFolderBg(e);
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      const overlay = document.getElementById('folder-overlay');
+      expect(overlay.classList.contains('drag-over-folder-bg')).toBe(false);
+    });
+
+    it('case 2: dragState set via handleDragStart → still calls e.preventDefault once, #folder-overlay stays clean (currentFolderId===null blocks the visual branch)', () => {
+      // Seed a grid item so handleDragStart has a target id; the DOM is
+      // not strictly required (handleDragStart only writes dragState +
+      // dataTransfer + queues RAF), but kept consistent with Task 1 style.
+      const container = document.getElementById('grid-container');
+      container.innerHTML = `<div>
+        <div class="grid-item-wrap" data-id="a1"><div class="grid-item-action-area"></div></div>
+      </div>`;
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'a1');
+
+      const e = { preventDefault: vi.fn() };
+      app.handleDragOverFolderBg(e);
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      const overlay = document.getElementById('folder-overlay');
+      // currentFolderId is null → the `if (dragState && currentFolderId)`
+      // branch is skipped → no class added, even though dragState is set.
+      expect(overlay.classList.contains('drag-over-folder-bg')).toBe(false);
+    });
+  });
+
+  // ── Task 3: handleDropFolderBg ──────────────────────────────────────────
+  // Known limitation (Global Constraint 11): the only way dragState.action
+  // becomes 'move-to-main' is via handleDragOverFolderBg's reachable-only-
+  // when-currentFolderId-is-truthy branch (see previous describe). Since
+  // currentFolderId stays null this batch, dragState.action can only ever
+  // be null (fresh from handleDragStart) or one of 'combine'/'before'/
+  // 'after' (set by updateDragStateForTarget) — never 'move-to-main'.
+  // Therefore `if (!dragState || dragState.action !== 'move-to-main') return;`
+  // always early-returns, and the "move item out of folder to main grid"
+  // body (deepClone + removeItem + push + saveItems + captureGridPositions
+  // + render + animateGridFlip) is unreachable. Full move-out-to-main
+  // coverage is left for batch 6. This batch asserts the three early-return
+  // shapes: all call e.preventDefault() once, none throw, none touch
+  // storage or trigger render() side effects.
+  describe('handleDropFolderBg', () => {
+    beforeEach(() => {
+      // Drop RAF so handleDragStart (used by cases 2 & 3) doesn't fire
+      // applyDragVisuals visuals; we only need dragState set.
+      globalThis.requestAnimationFrame = vi.fn(() => 1);
+    });
+
+    it('case 1: no dragState → e.preventDefault called once, no throw, no storage/render side effects', () => {
+      const e = { preventDefault: vi.fn() };
+      expect(() => app.handleDropFolderBg(e)).not.toThrow();
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    });
+
+    it('case 2: dragState set but action===null (fresh handleDragStart, no updateDragStateForTarget) → same early-return behavior', () => {
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'a1');
+      const e = { preventDefault: vi.fn() };
+      expect(() => app.handleDropFolderBg(e)).not.toThrow();
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    });
+
+    it('case 3: dragState.action set to "combine" via updateDragStateForTarget (≠ "move-to-main") → same early-return behavior', () => {
+      // Intercept the internal applyDragVisuals call so updateDragStateForTarget
+      // does not try to read the DOM for visuals (keeps the test pure).
+      globalThis.applyDragVisuals = vi.fn();
+      const container = document.getElementById('grid-container');
+      container.innerHTML = `<div>
+        <div class="grid-item-wrap" data-id="a1"><div class="grid-item-action-area"></div></div>
+        <div class="grid-item-wrap" data-id="b1"><div class="grid-item-action-area"></div></div>
+      </div>`;
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'a1');
+      // ratio 0.5 in [0.3,0.7) → action='combine'.
+      app.updateDragStateForTarget('b1', { left: 0, top: 0, right: 100, bottom: 50, width: 100 }, 50, 25);
+
+      const e = { preventDefault: vi.fn() };
+      expect(() => app.handleDropFolderBg(e)).not.toThrow();
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── Task 3: enterFolderRenameMode ───────────────────────────────────────
+  // Known limitation (Global Constraint 11): `if (!currentFolderId) return;`
+  // is the first statement and currentFolderId has no public setter, so
+  // the entire rename interaction body is unreachable this batch. The
+  // full rename flow (input replace + FOLDER_NAME_MAX_LEN truncation +
+  // commit/cancel/restoreFocus + keydown(Enter/Escape)/blur handlers +
+  // isConnected double-fire guard) is left for batch 6's
+  // setupEventListeners tests, where the real folder-open click drives
+  // currentFolderId to a non-null value. This batch only asserts the
+  // early-return: calling enterFolderRenameMode() does not throw, the
+  // .folder-name-display span present in #folder-title is NOT replaced
+  // with an <input>, and no .folder-name-input element appears anywhere.
+  describe('enterFolderRenameMode', () => {
+    it('early-returns when currentFolderId is null: no throw, .folder-name-display span untouched, no .folder-name-input in DOM', () => {
+      // Seed the title with the same shape render() would produce for an
+      // open folder: a <span class="folder-name-display">. The fixture's
+      // #folder-title starts empty, so we plant the span here to make the
+      // "still a span, not replaced with input" assertion meaningful.
+      const title = document.getElementById('folder-title');
+      title.innerHTML = '<span class="folder-name-display">F</span>';
+
+      expect(() => app.enterFolderRenameMode()).not.toThrow();
+
+      // The display span is still a span (not swapped for an <input>).
+      const display = title.querySelector('.folder-name-display');
+      expect(display).not.toBeNull();
+      expect(display.tagName).toBe('SPAN');
+      // No rename input was inserted anywhere in the document.
+      expect(document.querySelector('.folder-name-input')).toBeNull();
+    });
+  });
 });
