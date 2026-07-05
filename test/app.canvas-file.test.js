@@ -356,4 +356,82 @@ describe('app.js canvas/file layer', () => {
       await expect(p).resolves.toBeNull();
     });
   });
+
+  describe('handleWallpaperUpload', () => {
+    // handleWallpaperUpload is an integration function: it calls
+    // processWallpaper / saveWallpaper / applyWallpaper / showToast via
+    // bare-identifier resolution against globalThis. We intercept those
+    // bindings per-test and delete them at the end (the top-level afterEach
+    // only cleans t/FileReader/Image/openIconCropper, not these stubs).
+    //
+    // `wallpaper` is a closure-private `let` with no public setter, so we
+    // cannot directly assert its value. Instead, on the success path we
+    // intercept applyWallpaper and assert it was called once — that
+    // indirectly proves wallpaper was assigned and the pipeline advanced
+    // past `await processWallpaper(file)`. Same limitation pattern as the
+    // batch 2 customEngines/selectedEngineId closure tests.
+
+    it('① 无 file: early-return before e.target.value reset, value preserved', async () => {
+      const e = { target: { files: [], value: 'keepme' } };
+
+      await app.handleWallpaperUpload(e);
+
+      // No internal stubs installed — processWallpaper etc. are the real
+      // app exports, but the early `if (!file) return` runs before any of
+      // them and before the trailing `e.target.value = ''`.
+      expect(e.target.value).toBe('keepme');
+    });
+
+    it('② 成功: processWallpaper → saveWallpaper → applyWallpaper chain runs, value reset', async () => {
+      globalThis.processWallpaper = vi.fn().mockResolvedValue('WALLPAPER_DATA');
+      globalThis.saveWallpaper = vi.fn().mockResolvedValue();
+      globalThis.applyWallpaper = vi.fn();
+
+      const e = { target: { files: [{ name: 'w.jpg' }], value: 'keepme' } };
+
+      await app.handleWallpaperUpload(e);
+
+      // processWallpaper(file) — file is e.target.files[0], a single object.
+      expect(globalThis.processWallpaper).toHaveBeenCalledTimes(1);
+      expect(globalThis.processWallpaper).toHaveBeenCalledWith({ name: 'w.jpg' });
+      expect(globalThis.saveWallpaper).toHaveBeenCalledTimes(1);
+      // applyWallpaper called once ⇒ wallpaper closure was assigned and the
+      // pipeline advanced. We do not assert wallpaper's value directly
+      // (closure-private `let`, no public setter — see note above).
+      expect(globalThis.applyWallpaper).toHaveBeenCalledTimes(1);
+      expect(e.target.value).toBe('');
+
+      delete globalThis.processWallpaper;
+      delete globalThis.saveWallpaper;
+      delete globalThis.applyWallpaper;
+    });
+
+    it('③ processWallpaper reject: showToast("…", "error"), save/apply skipped, value reset', async () => {
+      globalThis.processWallpaper = vi.fn().mockRejectedValue(new Error('boom'));
+      globalThis.showToast = vi.fn();
+      globalThis.saveWallpaper = vi.fn();
+      globalThis.applyWallpaper = vi.fn();
+      // getWallpaperUploadErrorMessage is exported on the app object — let
+      // it run for real; it maps the Error to a human-readable string.
+
+      const e = { target: { files: [{ name: 'bad.png' }], value: 'keepme' } };
+
+      // catch swallows the rejection; the call itself should not throw.
+      await app.handleWallpaperUpload(e);
+
+      expect(globalThis.showToast).toHaveBeenCalledTimes(1);
+      // 2nd arg is the toast type 'error'; 1st arg is the mapped message
+      // (a string from getWallpaperUploadErrorMessage(err)).
+      expect(globalThis.showToast.mock.calls[0][1]).toBe('error');
+      expect(typeof globalThis.showToast.mock.calls[0][0]).toBe('string');
+      expect(globalThis.saveWallpaper).not.toHaveBeenCalled();
+      expect(globalThis.applyWallpaper).not.toHaveBeenCalled();
+      expect(e.target.value).toBe('');
+
+      delete globalThis.processWallpaper;
+      delete globalThis.showToast;
+      delete globalThis.saveWallpaper;
+      delete globalThis.applyWallpaper;
+    });
+  });
 });
