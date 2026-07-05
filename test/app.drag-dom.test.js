@@ -183,7 +183,8 @@ describe('app.js drag/dom-heavy layer', () => {
     it('marks only the active item with .grid-item-dragging when overId is still null', () => {
       buildGrid('a1', 'b1');
       // handleDragStart has already synchronously set dragState in the same
-      // closure; the RAF callback is not needed here, so we don't stub RAF.
+      // closure; the outer beforeEach stubs RAF to drop the queued callback,
+      // so we drive applyDragVisuals explicitly here.
       app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'a1');
       // overId stays null — applyDragVisuals should not look at any target.
       app.applyDragVisuals();
