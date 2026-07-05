@@ -372,14 +372,19 @@ describe('app.js canvas/file layer', () => {
     // batch 2 customEngines/selectedEngineId closure tests.
 
     it('① 无 file: early-return before e.target.value reset, value preserved', async () => {
+      // Install a stub so we can prove processWallpaper is never reached —
+      // the early `if (!file) return` runs before it and before the
+      // trailing `e.target.value = ''`.
+      globalThis.processWallpaper = vi.fn();
+
       const e = { target: { files: [], value: 'keepme' } };
 
       await app.handleWallpaperUpload(e);
 
-      // No internal stubs installed — processWallpaper etc. are the real
-      // app exports, but the early `if (!file) return` runs before any of
-      // them and before the trailing `e.target.value = ''`.
+      expect(globalThis.processWallpaper).not.toHaveBeenCalled();
       expect(e.target.value).toBe('keepme');
+
+      delete globalThis.processWallpaper;
     });
 
     it('② 成功: processWallpaper → saveWallpaper → applyWallpaper chain runs, value reset', async () => {
