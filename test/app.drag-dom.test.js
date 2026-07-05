@@ -627,24 +627,47 @@ describe('app.js drag/dom-heavy layer', () => {
   // children. The dragState reset is verified indirectly: calling
   // applyDragVisuals() afterwards must hit the `!dragState` early return
   // (clearDragVisuals + return) and NOT re-add .grid-item-dragging.
+  //
+  // Per Global Constraint 10: the `.grid-item-wrap[data-id]` DOM is built
+  // by `app.render()` + `await app.loadAll()` from real storage items —
+  // not handcrafted innerHTML. This mirrors the handleDrop describe's
+  // `bootstrap()` pattern: install chrome storage BEFORE loadAppModule
+  // (the closure `storage` const captures extensionStorageArea at eval
+  // time), re-run loadAppModule in this describe's beforeEach (the public
+  // beforeEach already ran it without chrome), then loadAll + render.
   describe('handleDragEnd', () => {
+    let cs;
+
     beforeEach(() => {
+      cs = createMockChromeStorage({
+        startpage_items: [
+          { id: 'a1', type: 'link', name: 'A', url: 'https://a.com', size: '1x1' },
+          { id: 'b1', type: 'link', name: 'B', url: 'https://b.com', size: '1x1' },
+        ],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
       // Fire RAF synchronously so handleDragStart's queued applyDragVisuals
       // runs and seeds .grid-item-dragging for us to assert got cleared.
       globalThis.requestAnimationFrame = vi.fn((cb) => {
         cb();
         return 1;
       });
+      app = loadAppModule();
     });
 
-    it('resets dragState, clears every drag visual, strips folder-overlay drag-over class + .move-to-main-hint, and leaves dragState null (applyDragVisuals cannot re-add visuals)', () => {
-      const container = document.getElementById('grid-container');
-      container.innerHTML = `<div>
-        <div class="grid-item-wrap" data-id="a1"><div class="grid-item-action-area"></div></div>
-        <div class="grid-item-wrap" data-id="b1"><div class="grid-item-action-area"></div></div>
-      </div>`;
+    // Real-DOM setup: load items from storage then render the grid so the
+    // .grid-item-wrap[data-id] elements exist for the drag flow.
+    async function bootstrap() {
+      await app.loadAll();
+      app.render();
+    }
 
-      // Build a live dragState with activeId='a1', overId='b1', action='combine'.
+    it('resets dragState, clears every drag visual, strips folder-overlay drag-over class + .move-to-main-hint, and leaves dragState null (applyDragVisuals cannot re-add visuals)', async () => {
+      await bootstrap();
+      const container = document.getElementById('grid-container');
+
+      // Build a live dragState with activeId='a1', overId='b1', action='combine'
+      // by driving the real public drag flow on the rendered DOM.
       app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'a1');
       // ratio 0.5 in [0.3,0.7) → action="combine".
       app.updateDragStateForTarget('b1', { left: 0, top: 0, right: 100, bottom: 50, width: 100 }, 50, 25);
@@ -654,6 +677,8 @@ describe('app.js drag/dom-heavy layer', () => {
       expect(container.querySelector('[data-id="b1"] .grid-item-action-area').classList.contains('grid-item-combine')).toBe(true);
 
       // Seed the folder-overlay markers handleDragEnd is responsible for.
+      // These aren't produced by the drag flow on the main grid —
+      // handleDragEnd's job is to clean them up.
       const overlay = document.getElementById('folder-overlay');
       overlay.classList.add('drag-over-folder-bg');
       const hint = document.createElement('div');
