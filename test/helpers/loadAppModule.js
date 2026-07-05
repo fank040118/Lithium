@@ -64,6 +64,12 @@ const EXPORTED_NAMES = [
   'handleDragOver', 'getGridDropTargetAtPoint', 'handleDrop',
   'handleDragEnd', 'handleDragOverFolderBg', 'handleDropFolderBg',
   'enterFolderRenameMode',
+  // Batch 5: canvas/file layer (4). Task 1 tests the first 2
+  // (processWallpaper, processIconFile); Task 2/3 use openIconCropper and
+  // handleWallpaperUpload — listed up front so neither task needs to modify
+  // this helper.
+  'processWallpaper', 'processIconFile', 'openIconCropper',
+  'handleWallpaperUpload',
 ];
 
 // app.js is a classic (non-module) script: its top-level `function`
