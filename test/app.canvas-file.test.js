@@ -105,6 +105,7 @@ describe('app.js canvas/file layer', () => {
       expect(ctxStub.drawImage).toHaveBeenCalledTimes(1);
       // 9 args: (img, cropX, cropY, cropW, cropH, 0, 0, canvasW, canvasH)
       expect(ctxStub.drawImage.mock.calls[0]).toHaveLength(9);
+      expect(ctxStub.drawImage.mock.calls[0][0]).toBeInstanceOf(globalThis.Image);
       expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledTimes(1);
       expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith('image/png');
       expect(result).toBe('data:image/png;base64,FAKE');
@@ -121,6 +122,7 @@ describe('app.js canvas/file layer', () => {
 
       expect(ctxStub.drawImage).toHaveBeenCalledTimes(1);
       expect(ctxStub.drawImage.mock.calls[0]).toHaveLength(9);
+      expect(ctxStub.drawImage.mock.calls[0][0]).toBeInstanceOf(globalThis.Image);
       expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledTimes(1);
       expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith('image/png');
       expect(result).toBe('data:image/png;base64,FAKE');
