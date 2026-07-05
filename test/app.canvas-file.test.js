@@ -206,4 +206,154 @@ describe('app.js canvas/file layer', () => {
       expect(HTMLCanvasElement.prototype.toDataURL).not.toHaveBeenCalled();
     });
   });
+
+  describe('openIconCropper', () => {
+    // Shared image stub — openIconCropper only reads naturalWidth/
+    // naturalHeight/src, so a plain object is enough (Global Constraint 7).
+    // imgW=200, imgH=100 → minSize=min(32,200,100)=32; resetCrop:
+    // cropSize=max(32,floor(100*0.8))=80, cropX=floor((200-80)/2)=60,
+    // cropY=floor((100-80)/2)=10.
+    const fakeImg = { naturalWidth: 200, naturalHeight: 100, src: 'data:fake' };
+
+    // Default RAF stub drops the callback → relayout never runs, layout=null,
+    // applyBox early-returns (boxEl.style stays empty) — but cropX/Y/Size are
+    // set synchronously by resetCrop(), so onConfirm/onCancel/onReset logic
+    // is still testable. vi.stubGlobal is auto-restored by the top-level
+    // afterEach's vi.unstubAllGlobals.
+    beforeEach(() => {
+      vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    });
+
+    it('① 初始状态: shows overlay, sets imgEl.src, leaves boxEl.style empty (layout=null)', () => {
+      app.openIconCropper(fakeImg);
+
+      const overlay = document.getElementById('icon-crop-overlay');
+      const imgEl = document.getElementById('icon-crop-image');
+      const boxEl = document.getElementById('icon-crop-box');
+
+      expect(overlay.classList.contains('hidden')).toBe(false);
+      expect(imgEl.getAttribute('src')).toBe('data:fake');
+      // layout=null → applyBox early-returns without touching boxEl.style.
+      expect(boxEl.style.left).toBe('');
+      expect(boxEl.style.top).toBe('');
+      expect(boxEl.style.width).toBe('');
+      expect(boxEl.style.height).toBe('');
+    });
+
+    it('② confirm: resolves {sx,sy,ss} rounded, overlay hidden, imgEl src removed', async () => {
+      const p = app.openIconCropper(fakeImg);
+      const confirmBtn = document.getElementById('icon-crop-confirm');
+      const overlay = document.getElementById('icon-crop-overlay');
+      const imgEl = document.getElementById('icon-crop-image');
+
+      confirmBtn.click();
+      const result = await p;
+
+      // cropX=60, cropY=10, cropSize=80 → rounded unchanged.
+      expect(result).toEqual({ sx: 60, sy: 10, ss: 80 });
+      expect(overlay.classList.contains('hidden')).toBe(true);
+      expect(imgEl.getAttribute('src')).toBe(null);
+    });
+
+    it('③ cancel: resolves null, overlay hidden, imgEl src removed', async () => {
+      const p = app.openIconCropper(fakeImg);
+      const cancelBtn = document.getElementById('icon-crop-cancel');
+      const overlay = document.getElementById('icon-crop-overlay');
+      const imgEl = document.getElementById('icon-crop-image');
+
+      cancelBtn.click();
+      const result = await p;
+
+      expect(result).toBeNull();
+      expect(overlay.classList.contains('hidden')).toBe(true);
+      expect(imgEl.getAttribute('src')).toBe(null);
+    });
+
+    it('④ reset: after a click on reset, confirm yields the original centered crop', async () => {
+      const p = app.openIconCropper(fakeImg);
+      const resetBtn = document.getElementById('icon-crop-reset');
+      const confirmBtn = document.getElementById('icon-crop-confirm');
+
+      // resetCrop is idempotent; resetBtn re-runs it. Even without mutating
+      // cropX/Y/Size in between, this exercises onReset → resetCrop and
+      // proves the values stay at 60/10/80.
+      resetBtn.click();
+      confirmBtn.click();
+      const result = await p;
+
+      expect(result).toEqual({ sx: 60, sy: 10, ss: 80 });
+    });
+
+    it('⑤ pointerdown on box (button=0): does not throw; non-zero button is ignored', () => {
+      app.openIconCropper(fakeImg);
+      const stage = document.getElementById('icon-crop-stage');
+      const boxEl = document.getElementById('icon-crop-box');
+
+      // layout=null → onPointerDown early-returns before drag is set, so no
+      // pointermove/up listeners are registered. We assert only that the
+      // dispatch doesn't throw and that a follow-up non-zero-button pointerdown
+      // is similarly safe.
+      expect(() => boxEl.dispatchEvent(new PointerEvent('pointerdown', { clientX: 60, clientY: 10, button: 0 }))).not.toThrow();
+      expect(() => stage.dispatchEvent(new PointerEvent('pointerdown', { clientX: 60, clientY: 10, button: 2 }))).not.toThrow();
+    });
+
+    it('⑥ pointerdown on handle[data-handle="se"]: does not throw (drag stays null because layout=null)', () => {
+      app.openIconCropper(fakeImg);
+      const seHandle = document.querySelector('#icon-crop-box [data-handle="se"]');
+
+      expect(seHandle).not.toBeNull();
+      expect(() => seHandle.dispatchEvent(new PointerEvent('pointerdown', { clientX: 100, clientY: 50, button: 0 }))).not.toThrow();
+    });
+
+    it('⑦ non-zero button pointerdown: ignored (no throw, no drag)', () => {
+      app.openIconCropper(fakeImg);
+      const stage = document.getElementById('icon-crop-stage');
+
+      // button=2 → onPointerDown returns immediately. A subsequent pointerup
+      // dispatch on window (which would only have a listener if drag was set)
+      // must not throw either.
+      expect(() => stage.dispatchEvent(new PointerEvent('pointerdown', { clientX: 0, clientY: 0, button: 2 }))).not.toThrow();
+      expect(() => window.dispatchEvent(new PointerEvent('pointerup'))).not.toThrow();
+    });
+
+    it('⑧ window resize: does not throw (relayout early-returns when clientWidth=0)', () => {
+      app.openIconCropper(fakeImg);
+
+      // jsdom stage.clientWidth=0 → relayout's `if (!sw || !sh) return` fires.
+      expect(() => window.dispatchEvent(new Event('resize'))).not.toThrow();
+    });
+
+    it('⑨ relayout 真实路径: sync RAF + clientWidth/Height stub → imgEl and boxEl styled', async () => {
+      // Override the default RAF stub to fire the callback synchronously, so
+      // relayout runs immediately after openIconCropper's resetCrop().
+      vi.stubGlobal('requestAnimationFrame', vi.fn((cb) => { cb(); return 1; }));
+
+      const stage = document.getElementById('icon-crop-stage');
+      // jsdom leaves clientWidth/Height at 0; stub them so relayout proceeds.
+      // imgR = 200/100 = 2 > stageR = 500/300 ≈ 1.67 → dispW=500, dispH=250,
+      // left=(500-500)/2=0, top=(300-250)/2=25, scale=500/200=2.5.
+      Object.defineProperty(stage, 'clientWidth', { value: 500, configurable: true });
+      Object.defineProperty(stage, 'clientHeight', { value: 300, configurable: true });
+
+      const p = app.openIconCropper(fakeImg);
+      const imgEl = document.getElementById('icon-crop-image');
+      const boxEl = document.getElementById('icon-crop-box');
+
+      // imgEl positioned to display the image with object-fit:contain math.
+      expect(imgEl.style.left).toBe('0px');
+      expect(imgEl.style.top).toBe('25px');
+      expect(imgEl.style.width).toBe('500px');
+      expect(imgEl.style.height).toBe('250px');
+      // boxEl: left=layout.left + cropX*scale = 0+60*2.5=150;
+      // top=layout.top + cropY*scale = 25+10*2.5=50; size=80*2.5=200.
+      expect(boxEl.style.left).toBe('150px');
+      expect(boxEl.style.top).toBe('50px');
+      expect(boxEl.style.width).toBe('200px');
+      expect(boxEl.style.height).toBe('200px');
+
+      // Cleanup via cancel so the Promise resolves.
+      document.getElementById('icon-crop-cancel').click();
+      await expect(p).resolves.toBeNull();
+    });
+  });
 });
