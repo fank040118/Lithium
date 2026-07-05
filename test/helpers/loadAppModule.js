@@ -54,6 +54,16 @@ const EXPORTED_NAMES = [
   'createGridItemHTML', 'renderGrid', 'render', 'closeFolderWithAnimation',
   // Task 5 (4): delete confirm + form save + context menu
   'confirmDelete', 'handleSaveItem', 'showContextMenu', 'handleContextAction',
+  // Batch 4: drag/dom-heavy layer (13). Task 1 tests the first 7
+  // (captureGridPositions, animateGridFlip, clearDragVisuals,
+  // applyDragVisuals, handleDragStart, updateDragStateForTarget,
+  // handleDragOver); Task 2/3 use the rest — listed up front so neither
+  // task needs to modify this helper.
+  'captureGridPositions', 'animateGridFlip', 'clearDragVisuals',
+  'applyDragVisuals', 'handleDragStart', 'updateDragStateForTarget',
+  'handleDragOver', 'getGridDropTargetAtPoint', 'handleDrop',
+  'handleDragEnd', 'handleDragOverFolderBg', 'handleDropFolderBg',
+  'enterFolderRenameMode',
 ];
 
 // app.js is a classic (non-module) script: its top-level `function`
