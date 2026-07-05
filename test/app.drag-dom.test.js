@@ -410,4 +410,273 @@ describe('app.js drag/dom-heavy layer', () => {
       expect(indicator.classList.contains('left')).toBe(true);
     });
   });
+
+  // ── Task 2: getGridDropTargetAtPoint ────────────────────────────────────
+  // dragState is closure-private; cases 2-6 drive it via handleDragStart
+  // (RAF stubbed to drop the applyDragVisuals callback — we only need
+  // dragState.activeId set). getBoundingClientRect is stubbed per-candidate
+  // because jsdom defaults every rect to all-zeros, which would make every
+  // candidate tie at distance 0.
+  describe('getGridDropTargetAtPoint', () => {
+    beforeEach(() => {
+      // Drop the RAF callback handleDragStart schedules; these tests only
+      // need dragState.activeId, not the visual side effects.
+      globalThis.requestAnimationFrame = vi.fn(() => 1);
+    });
+
+    function startDrag(id) {
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, id);
+    }
+
+    it('case 1: returns null when dragState is null (handleDragStart never called)', () => {
+      expect(app.getGridDropTargetAtPoint(document.body, 50, 50)).toBeNull();
+    });
+
+    it('case 2: returns null when target is not inside .grid-area or .modal-body', () => {
+      startDrag('a1');
+      // document.body is outside both .grid-area and .modal-body.
+      expect(app.getGridDropTargetAtPoint(document.body, 50, 50)).toBeNull();
+    });
+
+    it('case 3: returns null when gridHost has no firstElementChild (empty #grid-container)', () => {
+      startDrag('a1');
+      const container = document.getElementById('grid-container');
+      container.innerHTML = '';
+      // container itself carries .grid-area, so closest() resolves to it,
+      // but firstElementChild is null → null.
+      expect(app.getGridDropTargetAtPoint(container, 50, 50)).toBeNull();
+    });
+
+    it('case 4: returns null when the only candidate is the active item itself (candidates empty after filter)', () => {
+      startDrag('active');
+      const container = document.getElementById('grid-container');
+      container.innerHTML = `<div>
+        <div class="grid-item-wrap" data-id="active"></div>
+      </div>`;
+      expect(app.getGridDropTargetAtPoint(container, 50, 50)).toBeNull();
+    });
+
+    it('case 5: among non-active candidates, returns the {wrap, rect} with the smallest euclidean distance to (clientX, clientY)', () => {
+      startDrag('active');
+      const container = document.getElementById('grid-container');
+      container.innerHTML = `<div>
+        <div class="grid-item-wrap" data-id="active"></div>
+        <div class="grid-item-wrap" data-id="b1"></div>
+        <div class="grid-item-wrap" data-id="b2"></div>
+      </div>`;
+      const b1 = container.querySelector('[data-id="b1"]');
+      const b2 = container.querySelector('[data-id="b2"]');
+      // b1 rect [100,0,200,50], b2 rect [300,0,400,50]. Point (50,10):
+      // b1: dx=100-50=50, dy=0 → distance 50. b2: dx=300-50=250 → 250.
+      vi.spyOn(b1, 'getBoundingClientRect').mockReturnValue({
+        left: 100, top: 0, right: 200, bottom: 50, width: 100,
+      });
+      vi.spyOn(b2, 'getBoundingClientRect').mockReturnValue({
+        left: 300, top: 0, right: 400, bottom: 50, width: 100,
+      });
+
+      const result = app.getGridDropTargetAtPoint(container, 50, 10);
+      expect(result).not.toBeNull();
+      expect(result.wrap.dataset.id).toBe('b1');
+      expect(result.rect).toEqual({ left: 100, top: 0, right: 200, bottom: 50, width: 100 });
+    });
+
+    it('case 6: a candidate whose rect contains (clientX, clientY) has distance 0 and always wins, even if another candidate is nearer by center', () => {
+      startDrag('active');
+      const container = document.getElementById('grid-container');
+      container.innerHTML = `<div>
+        <div class="grid-item-wrap" data-id="active"></div>
+        <div class="grid-item-wrap" data-id="b1"></div>
+        <div class="grid-item-wrap" data-id="b2"></div>
+      </div>`;
+      const b1 = container.querySelector('[data-id="b1"]');
+      const b2 = container.querySelector('[data-id="b2"]');
+      // b1 rect [0,0,100,50], b2 rect [200,0,300,50]. Point (250,10):
+      // b1: dx=250-100=150, dy=0 → 150. b2: 250∈[200,300] → dx=0, dy=0 → 0.
+      // b2 wins despite b1 being "closer by center" — proves the
+      // "inside rect → distance 0" rule.
+      vi.spyOn(b1, 'getBoundingClientRect').mockReturnValue({
+        left: 0, top: 0, right: 100, bottom: 50, width: 100,
+      });
+      vi.spyOn(b2, 'getBoundingClientRect').mockReturnValue({
+        left: 200, top: 0, right: 300, bottom: 50, width: 100,
+      });
+
+      const result = app.getGridDropTargetAtPoint(container, 250, 10);
+      expect(result).not.toBeNull();
+      expect(result.wrap.dataset.id).toBe('b2');
+    });
+  });
+
+  // ── Task 2: handleDrop ──────────────────────────────────────────────────
+  // handleDrop persists items via saveItems() → storage.set, which requires
+  // createMockChromeStorage attached to globalThis.chrome BEFORE loadAppModule
+  // (the closure `storage` const captures extensionStorageArea at eval time).
+  // The outer beforeEach already ran loadAppModule without chrome, so this
+  // describe re-runs loadAppModule in its own beforeEach after installing the
+  // chrome mock — giving each test a fresh closure wired to the mock storage.
+  describe('handleDrop', () => {
+    let cs;
+
+    beforeEach(() => {
+      cs = createMockChromeStorage({
+        startpage_items: [
+          { id: 'x1', type: 'link', name: 'X', url: 'https://x.com', size: '1x1' },
+          { id: 'x2', type: 'link', name: 'Y', url: 'https://y.com', size: '1x1' },
+        ],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      // Drop handleDragStart's RAF callback; handleDrop calls render() which
+      // rebuilds the DOM, so applyDragVisuals' visuals are irrelevant here.
+      globalThis.requestAnimationFrame = vi.fn(() => 1);
+      app = loadAppModule();
+    });
+
+    // Flush the async saveItems() chain (handleDrop does not await it).
+    const flushAsync = () => new Promise((r) => setTimeout(r, 0));
+
+    // Real-DOM setup: load items from storage then render the grid so the
+    // .grid-item-wrap[data-id] elements exist for updateDragStateForTarget.
+    async function bootstrap() {
+      await app.loadAll();
+      app.render();
+    }
+
+    it('case 1: when dragState is null, still calls preventDefault/stopPropagation once and does not throw', async () => {
+      await bootstrap();
+      const e = {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        dataTransfer: { setData: vi.fn() },
+        clientX: 0,
+        clientY: 0,
+      };
+      expect(() => app.handleDrop(e)).not.toThrow();
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      expect(e.stopPropagation).toHaveBeenCalledTimes(1);
+      await flushAsync();
+      // storage untouched: still the original two items in original order.
+      expect(cs._data.startpage_items.map((i) => i.id)).toEqual(['x1', 'x2']);
+    });
+
+    it('case 2: dragging onto itself (activeId === resolvedTargetId) clears dragState and leaves items unchanged', async () => {
+      await bootstrap();
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'x1');
+      const e = {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        dataTransfer: { setData: vi.fn() },
+        clientX: 0,
+        clientY: 0,
+      };
+      app.handleDrop(e, 'x1'); // targetId === activeId
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      expect(e.stopPropagation).toHaveBeenCalledTimes(1);
+      await flushAsync();
+      expect(cs._data.startpage_items.map((i) => i.id)).toEqual(['x1', 'x2']);
+    });
+
+    it('case 3: real drop — x1 dragged after x2 (action="after") reorders items to [x2, x1] in storage and in the rendered DOM', async () => {
+      await bootstrap();
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'x1');
+      // ratio = (90 - 0) / 100 = 0.9 ≥ 0.7 → action="after".
+      app.updateDragStateForTarget('x2', { left: 0, top: 0, right: 100, bottom: 50, width: 100 }, 90, 25);
+      const e = {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        dataTransfer: { setData: vi.fn() },
+        clientX: 90,
+        clientY: 25,
+      };
+      app.handleDrop(e); // no targetId → falls back to dragState.overId ('x2')
+      await flushAsync();
+
+      // storage persisted the new order.
+      expect(cs._data.startpage_items.map((i) => i.id)).toEqual(['x2', 'x1']);
+      // The rendered DOM reflects the same order (add-wrap has no data-id,
+      // so it is naturally excluded by the [data-id] selector).
+      const container = document.getElementById('grid-container');
+      const ids = Array.from(container.querySelectorAll('.grid-item-wrap[data-id]')).map((w) => w.dataset.id);
+      expect(ids).toEqual(['x2', 'x1']);
+    });
+
+    it('case 4: activeItem not found in items (removeItem returns falsy) triggers the render()-only branch; storage unchanged, no throw', async () => {
+      await bootstrap();
+      // 'ghost' is not in items but handleDragStart only needs an id string.
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'ghost');
+      // Point at x1 so overId='x1' resolves; activeId='ghost' !== 'x1'.
+      app.updateDragStateForTarget('x1', { left: 0, top: 0, right: 100, bottom: 50, width: 100 }, 90, 25);
+      const e = {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        dataTransfer: { setData: vi.fn() },
+        clientX: 90,
+        clientY: 25,
+      };
+      expect(() => app.handleDrop(e)).not.toThrow();
+      await flushAsync();
+      // removeItem returned null → handleDrop did `render(); return;` before
+      // touching items or saveItems.
+      expect(cs._data.startpage_items.map((i) => i.id)).toEqual(['x1', 'x2']);
+    });
+  });
+
+  // ── Task 2: handleDragEnd ───────────────────────────────────────────────
+  // handleDragEnd resets dragState to null, clears all drag visuals, and
+  // strips the folder-overlay's drag-over class plus .move-to-main-hint
+  // children. The dragState reset is verified indirectly: calling
+  // applyDragVisuals() afterwards must hit the `!dragState` early return
+  // (clearDragVisuals + return) and NOT re-add .grid-item-dragging.
+  describe('handleDragEnd', () => {
+    beforeEach(() => {
+      // Fire RAF synchronously so handleDragStart's queued applyDragVisuals
+      // runs and seeds .grid-item-dragging for us to assert got cleared.
+      globalThis.requestAnimationFrame = vi.fn((cb) => {
+        cb();
+        return 1;
+      });
+    });
+
+    it('resets dragState, clears every drag visual, strips folder-overlay drag-over class + .move-to-main-hint, and leaves dragState null (applyDragVisuals cannot re-add visuals)', () => {
+      const container = document.getElementById('grid-container');
+      container.innerHTML = `<div>
+        <div class="grid-item-wrap" data-id="a1"><div class="grid-item-action-area"></div></div>
+        <div class="grid-item-wrap" data-id="b1"><div class="grid-item-action-area"></div></div>
+      </div>`;
+
+      // Build a live dragState with activeId='a1', overId='b1', action='combine'.
+      app.handleDragStart({ dataTransfer: { setData: vi.fn() } }, 'a1');
+      // ratio 0.5 in [0.3,0.7) → action="combine".
+      app.updateDragStateForTarget('b1', { left: 0, top: 0, right: 100, bottom: 50, width: 100 }, 50, 25);
+
+      // Sanity: the dragging + combine visuals exist before handleDragEnd.
+      expect(container.querySelector('[data-id="a1"] .grid-item-action-area').classList.contains('grid-item-dragging')).toBe(true);
+      expect(container.querySelector('[data-id="b1"] .grid-item-action-area').classList.contains('grid-item-combine')).toBe(true);
+
+      // Seed the folder-overlay markers handleDragEnd is responsible for.
+      const overlay = document.getElementById('folder-overlay');
+      overlay.classList.add('drag-over-folder-bg');
+      const hint = document.createElement('div');
+      hint.className = 'move-to-main-hint';
+      overlay.appendChild(hint);
+      expect(overlay.classList.contains('drag-over-folder-bg')).toBe(true);
+      expect(overlay.querySelectorAll('.move-to-main-hint')).toHaveLength(1);
+
+      app.handleDragEnd();
+
+      // Every drag marker is gone from the document.
+      expect(container.querySelectorAll('.grid-item-dragging')).toHaveLength(0);
+      expect(container.querySelectorAll('.grid-item-combine')).toHaveLength(0);
+      expect(container.querySelectorAll('.drag-indicator')).toHaveLength(0);
+      expect(document.querySelectorAll('.move-to-main-hint')).toHaveLength(0);
+      expect(overlay.classList.contains('drag-over-folder-bg')).toBe(false);
+
+      // Indirect proof dragState is null: applyDragVisuals() on a null
+      // dragState only calls clearDragVisuals() then returns, so it must
+      // NOT re-add .grid-item-dragging to the active item.
+      app.applyDragVisuals();
+      expect(container.querySelectorAll('.grid-item-dragging')).toHaveLength(0);
+      expect(container.querySelectorAll('.grid-item-combine')).toHaveLength(0);
+    });
+  });
 });
