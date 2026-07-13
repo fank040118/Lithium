@@ -9,6 +9,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-12
+
+### Fixed
+- Cloud sync race condition where an in-flight upload and a pull could interleave and clobber each other's data
+- Startup data normalization/migration was incorrectly marked as a user edit, triggering spurious re-syncs
+- Sync status display could get stuck on "syncing..." after a no-op sync on fresh page load
+
+### Changed
+- Sync now uses the server-provided `updateTime` instead of the client clock, and persists the cloud sync timestamp across service-worker restarts
+- Hardened token refresh handling and disabled HTTP caching on sync requests to avoid stale reads
+- Added localized sync status and error toast messages (`CloudSyncError`)
+
 ## [1.0.1] - 2026-06-26
 
 ### Added
