@@ -177,4 +177,75 @@ describe('_doSyncToCloud / syncToCloud', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps the persisted switch baseline intact when an upload response lands after sign-out', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const b64url = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const verifiedToken = `h.${b64url({ email_verified: true })}.s`;
+      const patches = [];
+      let releaseFirstPatch;
+      const firstPatchGate = new Promise((resolve) => { releaseFirstPatch = resolve; });
+
+      const { storage, uid } = await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          {
+            match: (url) => url.includes('accounts:signInWithPassword'),
+            respond: async () => jsonResponse(200, {
+              idToken: verifiedToken, expiresIn: '3600', refreshToken: 'b-refresh', localId: 'account-b',
+            }),
+          },
+          {
+            match: (url, options = {}) =>
+              url.includes('/documents/users/') && (!options.method || options.method === 'GET'),
+            respond: async () => jsonResponse(200, firestoreDoc(fb, {
+              items: [{ id: 'B-cloud-data' }], updateTime: '2024-06-02T00:00:00.000000000Z',
+            })),
+          },
+          {
+            match: (url, options = {}) => url.includes('/documents/users/') && options.method === 'PATCH',
+            respond: async (url, options) => {
+              const body = JSON.parse(options.body);
+              patches.push({ url, items: JSON.parse(body.fields.items.stringValue) });
+              if (patches.length === 1) await firstPatchGate;
+              // U1 的服务端时间刻意晚于 B 的云端文档，若落定后仍在册则会让 B 的拉取被跳过
+              return jsonResponse(200, { updateTime: '2024-06-05T00:00:00.000000000Z' });
+            },
+          },
+        ],
+      });
+
+      // 本机当前状态基于已登录的 A 账号
+      storage._data._fb_sync_baseline_uid = uid;
+      await fb._loadAuth();
+
+      globalThis.items = [{ id: 'A-secret-leftover' }];
+      await fb.markLocalCloudDataChanged();          // 编辑 1 → U1
+      await vi.advanceTimersByTimeAsync(2000);       // U1 开始并挂起在网关上
+      await fb.markLocalCloudDataChanged();          // 编辑 2 → 续跑排在 U1 之后
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patches.length).toBe(1);
+
+      // U1 落定前登出：响应将在未登录状态下落地
+      await fb.fbSignOut();
+      releaseFirstPatch();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // 迟到的响应不得覆写切换信号与云端时间戳
+      expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+      expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+
+      // 下一次登录仍能识别账号切换并强制拉取 B 的云端快照
+      await fb.fbSignIn('b@example.com', 'password123');
+      expect(fb._needsSwitchPull()).toBe(true);
+      await fb._pullAfterSignIn();
+      await vi.advanceTimersByTimeAsync(2600);       // 错误的自动上传会在此期间发出
+
+      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      expect(patches.filter((p) => p.url.includes('account-b'))).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

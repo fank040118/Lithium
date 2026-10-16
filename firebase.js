@@ -544,7 +544,11 @@ async function _doSyncToCloud(options = {}) {
   // Re-check right before the request: if the identity changed after this call
   // was accepted (e.g. the queued continuation raced with a sign-out), do not
   // PATCH the new account's document.
-  if (epoch !== _authEpoch) return { ok: true, skipped: true };
+  if (epoch !== _authEpoch) {
+    _syncState = 'idle';
+    _updateSyncUI();
+    return { ok: true, skipped: true };
+  }
   const cloudUpdateTime = await _fsSet({
     items: JSON.stringify(items),
     engines: JSON.stringify(customEngines),
@@ -553,6 +557,13 @@ async function _doSyncToCloud(options = {}) {
     grid_columns: mainGridColumns,
     updated_at: now, // 兼容旧客户端/UI 显示，不作为冲突判断依据
   });
+
+  // The response landed after the identity changed (sign-out/sign-in while the
+  // request was in flight). This upload belongs to the previous session: drop
+  // it with zero bookkeeping writes — persisting its server time or syncing
+  // the baseline against a null/other uid would destroy the persisted switch
+  // signal and let the old account's local items be uploaded to the new one.
+  if (epoch !== _authEpoch) return { ok: true, skipped: true };
 
   if (!cloudUpdateTime) throw new CloudSyncError('firestore', 0, new Error('No updateTime in response'));
 
