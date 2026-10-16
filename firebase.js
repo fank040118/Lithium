@@ -582,6 +582,112 @@ async function _saveBaselineUid(uid) {
   await s.set({ [FB_BASELINE_UID_KEY]: _baselineUid });
 }
 
+// Build a plain snapshot of the current in-memory sync state. Tasks 3–5 use
+// this together with _compareSnapshots for conflict detection and resolution.
+function _buildSyncSnapshot() {
+  return {
+    items,
+    engines: customEngines,
+    selected_engine: selectedEngineId,
+    clocks,
+    grid_columns: mainGridColumns,
+  };
+}
+
+// Convert a Firestore `fields` map into the same snapshot shape, leaving a
+// missing field undefined so callers can tell "absent" from "explicit null".
+function _cloudSnapshotFromFields(fields) {
+  const f = fields || {};
+  return {
+    items: _fromFV(f.items),
+    engines: _fromFV(f.engines),
+    selected_engine: _fromFV(f.selected_engine),
+    clocks: _fromFV(f.clocks),
+    grid_columns: _fromFV(f.grid_columns),
+  };
+}
+
+// Deterministic JSON for structural comparison: sort keys of plain objects
+// recursively, keep array order, then stringify.
+function _canonicalJson(v) {
+  const canon = (x) => {
+    if (Array.isArray(x)) return x.map(canon);
+    if (x !== null && typeof x === 'object') {
+      const out = {};
+      for (const key of Object.keys(x).sort()) out[key] = canon(x[key]);
+      return out;
+    }
+    return x;
+  };
+  return JSON.stringify(canon(v));
+}
+
+// Compare a local snapshot against a cloud snapshot. A field the cloud side has
+// "no opinion" on (missing, or of the wrong type) is skipped rather than
+// counted as a difference. Returns { equal, skippedFields }.
+function _compareSnapshots(local, cloud) {
+  const skippedFields = [];
+  const sameJson = (a, b) => _canonicalJson(a) === _canonicalJson(b);
+
+  // items: must be an array; normalized through the same chain as the apply
+  // path (sanitizeItemsShape ?? normalizeFolderChildItemSizes ?? identity).
+  let itemsEqual = true;
+  if (!Array.isArray(cloud.items)) {
+    skippedFields.push('items');
+  } else {
+    const normalize = typeof globalThis.sanitizeItemsShape === 'function'
+      ? globalThis.sanitizeItemsShape
+      : (typeof globalThis.normalizeFolderChildItemSizes === 'function'
+          ? globalThis.normalizeFolderChildItemSizes
+          : null);
+    const localItems = normalize ? normalize(local.items).items : local.items;
+    const cloudItems = normalize ? normalize(cloud.items).items : cloud.items;
+    // Note: sanitizeItemsShape assigns a fresh id to any item missing one, so
+    // a cloud item without an id compares unequal — the safe direction.
+    itemsEqual = sameJson(localItems, cloudItems);
+  }
+
+  // engines: compared raw, deliberately never sanitized.
+  let enginesEqual = true;
+  if (!Array.isArray(cloud.engines)) {
+    skippedFields.push('engines');
+  } else {
+    enginesEqual = sameJson(local.engines, cloud.engines);
+  }
+
+  // selected_engine: must be a non-empty string.
+  let engineEqual = true;
+  if (typeof cloud.selected_engine !== 'string' || cloud.selected_engine === '') {
+    skippedFields.push('selected_engine');
+  } else {
+    engineEqual = local.selected_engine === cloud.selected_engine;
+  }
+
+  // clocks: must be an array (an empty array is a real opinion).
+  let clocksEqual = true;
+  if (!Array.isArray(cloud.clocks)) {
+    skippedFields.push('clocks');
+  } else {
+    clocksEqual = sameJson(local.clocks, cloud.clocks);
+  }
+
+  // grid_columns: must be a finite number; compared after clamping.
+  let columnsEqual = true;
+  if (typeof cloud.grid_columns !== 'number' || !Number.isFinite(cloud.grid_columns)) {
+    skippedFields.push('grid_columns');
+  } else {
+    const clamp = typeof globalThis.clampMainGridColumns === 'function'
+      ? globalThis.clampMainGridColumns
+      : (v) => v;
+    columnsEqual = clamp(local.grid_columns) === clamp(cloud.grid_columns);
+  }
+
+  return {
+    equal: itemsEqual && enginesEqual && engineEqual && clocksEqual && columnsEqual,
+    skippedFields,
+  };
+}
+
 async function _doSyncToCloud(options = {}) {
   const { force = false } = options;
   const epoch = _authEpoch;
@@ -623,12 +729,13 @@ async function _doSyncToCloud(options = {}) {
     _updateSyncUI();
     return { ok: true, skipped: true };
   }
+  const snap = _buildSyncSnapshot();
   const cloudUpdateTime = await _fsSet({
-    items: JSON.stringify(items),
-    engines: JSON.stringify(customEngines),
-    selected_engine: selectedEngineId,
-    clocks: JSON.stringify(clocks),
-    grid_columns: mainGridColumns,
+    items: JSON.stringify(snap.items),
+    engines: JSON.stringify(snap.engines),
+    selected_engine: snap.selected_engine,
+    clocks: JSON.stringify(snap.clocks),
+    grid_columns: snap.grid_columns,
     updated_at: now, // 兼容旧客户端/UI 显示，不作为冲突判断依据
   });
 
