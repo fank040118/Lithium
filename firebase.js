@@ -58,6 +58,14 @@ async function _loadAuth() {
   _emailVerified = !!d._fb_email_verified;
   _email = d._fb_email || null;
   _baselineUid = d[FB_BASELINE_UID_KEY] || null;
+  // Upgrade seeding: installs from before the baseline key existed have a
+  // persisted uid but no baseline. Without a baseline, an account switch made
+  // before this version's first successful sync is invisible to
+  // _needsSwitchPull(), so the previous account's leftovers would win the
+  // conflict branch and be uploaded to the new account. Seed the persisted uid
+  // as the baseline; an existing baseline is never overwritten because the
+  // switch detection depends on it.
+  if (_uid && !_baselineUid) await _saveBaselineUid(_uid);
 }
 
 async function _saveAuth() {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
-import { jsonResponse } from './helpers/mockFetch.js';
+import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
+import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
 import { setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
 
 afterEach(() => {
@@ -18,6 +19,13 @@ afterEach(() => {
   delete globalThis.normalizeFolderChildItemSizes;
   document.body.innerHTML = '';
 });
+
+function base64urlEncode(payload) {
+  return btoa(JSON.stringify(payload))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
 
 function firestoreDoc(fb, { items, engines, selectedEngine, clocks, gridColumns, updateTime }) {
   return {
@@ -269,6 +277,81 @@ describe('_pullAfterSignIn', () => {
 
     expect(globalThis.items).toEqual(cloudItems);
     expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+  });
+
+  it('seeds the upgrade baseline so a switch before the first sync still forces the pull', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const patches = [];
+      // 1.0.2 upgrade: signed in as A with dirty leftovers and no baseline key yet.
+      const storage = createMockChromeStorage({
+        _fb_refresh: 'a-refresh',
+        _fb_uid: 'account-a',
+        _fb_email_verified: true,
+        _fb_email: 'a@example.com',
+        _fb_edit_rev: 2,
+        _fb_synced_rev: 1,
+        _fb_cloud_sync_ts: new Date('2024-06-01T00:00:00.000Z').getTime(),
+      });
+      globalThis.chrome = storage;
+      globalThis.fetch = createRoutedFetch([
+        {
+          match: (url) => url.includes('accounts:signInWithPassword'),
+          respond: async () => jsonResponse(200, {
+            idToken: `h.${base64urlEncode({ email_verified: true })}.s`,
+            expiresIn: '3600',
+            refreshToken: 'b-refresh',
+            localId: 'account-b',
+          }),
+        },
+        {
+          match: (url, options = {}) =>
+            url.includes('/documents/users/') && (!options.method || options.method === 'GET'),
+          respond: async () => jsonResponse(200, {
+            updateTime: '2024-06-02T00:00:00.000000000Z',
+            fields: { items: fb._toFV(JSON.stringify([{ id: 'B-cloud-data' }])) },
+          }),
+        },
+        {
+          match: (url, options = {}) => url.includes('/documents/users/') && options.method === 'PATCH',
+          respond: async (url, options) => {
+            patches.push({ url, items: JSON.parse(JSON.parse(options.body).fields.items.stringValue) });
+            return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000000Z' });
+          },
+        },
+      ]);
+      globalThis.items = [{ id: 'A-secret-leftover' }];
+      globalThis.customEngines = [];
+      globalThis.selectedEngineId = 'google';
+      globalThis.clocks = [];
+      globalThis.mainGridColumns = 4;
+      globalThis.applyWallpaper = () => {};
+      globalThis.applyMainGridColumns = () => {};
+      globalThis.render = () => {};
+      globalThis.getSelectedEngine = () => ({ name: 'Google' });
+      document.body.innerHTML = '<div id="engine-name"></div>';
+
+      await fb._loadAuth();
+      await fb._loadCloudSyncTs();
+      await fb._loadRevState();
+      // The upgrade seeds A as the baseline; that is what makes the switch below detectable.
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-a');
+      expect(fb._isDirty()).toBe(true);
+
+      // Switch A -> B, then run the verification flow's pull (_handleCheckVerified).
+      await fb.fbSignOut();
+      await fb.fbSignIn('b@example.com', 'pw');
+      await fb._pullAfterSignIn(false);
+      await vi.advanceTimersByTimeAsync(2500);   // give any wrongly queued upload time to fire
+
+      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      expect(patches).toEqual([]);
+      expect(fb._isDirty()).toBe(false);
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the non-forced pull semantics on a first sign-in without a baseline', async () => {

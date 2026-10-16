@@ -64,6 +64,8 @@ describe('fbRefreshEmailVerifiedStatus', () => {
       _fb_uid: 'uid-1',
       _fb_email_verified: true,
       _fb_email: 'user@example.com',
+      // Pre-existing baseline: _loadAuth() must not seed another write here.
+      _fb_sync_baseline_uid: 'uid-1',
     });
     globalThis.chrome = storage;
     const setSpy = vi.spyOn(storage.storage.local, 'set');
@@ -132,6 +134,8 @@ describe('fbRefreshEmailVerifiedStatus', () => {
       _fb_uid: 'uid-1',
       _fb_email_verified: false,
       _fb_email: 'user@example.com',
+      // Pre-existing baseline: _loadAuth() must not seed another write here.
+      _fb_sync_baseline_uid: 'uid-1',
     });
     globalThis.chrome = storage;
     const setSpy = vi.spyOn(storage.storage.local, 'set');

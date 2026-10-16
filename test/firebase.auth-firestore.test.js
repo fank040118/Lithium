@@ -169,6 +169,47 @@ describe('_loadAuth', () => {
     expect(fb.fbIsEmailVerified()).toBe(false);
     expect(fb.fbGetEmail()).toBeNull();
   });
+
+  it('seeds the sync baseline from the persisted uid when the baseline is missing (upgrade)', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'account-a',
+      _fb_email_verified: true,
+    });
+    globalThis.chrome = storage;
+
+    await fb._loadAuth();
+
+    expect(storage._data._fb_sync_baseline_uid).toBe('account-a');
+    expect(fb._needsSwitchPull()).toBe(false);
+  });
+
+  it('keeps an existing sync baseline untouched when loading auth', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'account-a',
+      _fb_email_verified: true,
+      _fb_sync_baseline_uid: 'account-x',
+    });
+    globalThis.chrome = storage;
+
+    await fb._loadAuth();
+
+    expect(storage._data._fb_sync_baseline_uid).toBe('account-x');
+    expect(fb._needsSwitchPull()).toBe(true);
+  });
+
+  it('does not write a baseline when no uid is persisted (first sign-in keeps local precedence)', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'refresh-token' });
+    globalThis.chrome = storage;
+
+    await fb._loadAuth();
+
+    expect(storage._data).not.toHaveProperty('_fb_sync_baseline_uid');
+  });
 });
 
 describe('_saveAuth', () => {
@@ -179,6 +220,9 @@ describe('_saveAuth', () => {
       _fb_uid: 'user-uid',
       _fb_email_verified: true,
       _fb_email: 'user@example.com',
+      // Pre-existing baseline so _loadAuth() does not seed one; the spy count
+      // below stays focused on _saveAuth()'s own write.
+      _fb_sync_baseline_uid: 'user-uid',
     });
     globalThis.chrome = mock;
     const setSpy = vi.spyOn(mock.storage.local, 'set');
