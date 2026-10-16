@@ -16,6 +16,9 @@ const FB_EDIT_REV_KEY = '_fb_edit_rev';
 const FB_SYNCED_REV_KEY = '_fb_synced_rev';
 const FB_LEGACY_LOCAL_TS_KEY = '_fb_local_sync_ts';
 const FB_CLOUD_SYNC_TS_KEY = '_fb_cloud_sync_ts';
+// Last account whose auth state was persisted. Kept across sign-out so the
+// next sign-in can tell whether a different account took over.
+const FB_LAST_UID_KEY = '_fb_last_uid';
 
 const _fbStore = () =>
   globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local || null;
@@ -28,6 +31,7 @@ let _refreshToken = null;
 let _uid = null;
 let _emailVerified = false;
 let _email = null;
+let _lastAuthUid = null; // uid stored by the previous _saveAuth (account-switch detection)
 
 // Categorized sync error so callers can show different feedback per error type.
 class CloudSyncError extends Error {
@@ -43,14 +47,18 @@ class CloudSyncError extends Error {
 async function _loadAuth() {
   const s = _fbStore();
   if (!s) return;
-  const d = await s.get(['_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email']);
+  const d = await s.get(['_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email', FB_LAST_UID_KEY]);
   _refreshToken = d._fb_refresh || null;
   _uid = d._fb_uid || null;
   _emailVerified = !!d._fb_email_verified;
   _email = d._fb_email || null;
+  _lastAuthUid = d[FB_LAST_UID_KEY] || null;
 }
 
 async function _saveAuth() {
+  // Mirror the persisted marker in memory too, so switch detection works even
+  // when storage is unavailable.
+  _lastAuthUid = _uid;
   const s = _fbStore();
   if (!s) return;
   await s.set({
@@ -58,6 +66,7 @@ async function _saveAuth() {
     _fb_uid: _uid,
     _fb_email_verified: _emailVerified,
     _fb_email: _email,
+    [FB_LAST_UID_KEY]: _uid,
   });
 }
 
@@ -68,6 +77,14 @@ async function _clearAuth() {
   _uid = null;
   _emailVerified = false;
   _email = null;
+  // Drop the sync baseline along with the account: it belongs to the user who
+  // just signed out, and keeping it would make later pulls skip the next
+  // account's cloud data. FB_LAST_UID_KEY is intentionally kept for switch
+  // detection; the rev keys are machine-local counters and also stay.
+  _lastCloudTs = 0;
+  _lastSyncDisplayTs = 0;
+  clearTimeout(_syncTimer);
+  _syncTimer = null;
   const s = _fbStore();
   if (s) await s.remove([
     '_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email',
@@ -662,6 +679,22 @@ async function markLocalCloudDataChanged(options = {}) {
   scheduleSyncToCloud();
 }
 
+// Shared "pull after sign-in" entry point for interactive login, email
+// verification and startup restore: pull the cloud snapshot and, when there is
+// nothing to pull, queue an upload of the local state instead.
+// `forcePull` is used right after an account switch so the new account's cloud
+// document always wins over whatever the previous account left on this device.
+async function _pullAfterSignIn(forcePull = false) {
+  if (!fbIsSignedIn() || !_uid) return;
+  let hadCloudData = false;
+  try {
+    hadCloudData = await syncFromCloud(forcePull ? { force: true } : {});
+  } catch (err) {
+    console.error('[firebase] initial pull failed', err);
+  }
+  if (!hadCloudData) scheduleSyncToCloud();
+}
+
 // ── UI ──────────────────────────────────────────────────────
 
 async function _handleSyncBtn(direction) {
@@ -849,6 +882,9 @@ async function _handleLogin() {
   errEl.textContent = '';
 
   try {
+    // Capture before fbSignIn: _saveAuth() refreshes _lastAuthUid on success,
+    // and we need the account that was signed in before this attempt.
+    const previousUid = _lastAuthUid;
     await fbSignIn(email, password);
     if (!fbIsEmailVerified()) {
       _updateVerifyEmailDisplay(email);
@@ -858,13 +894,10 @@ async function _handleLogin() {
     }
     _hideLoginOverlay();
     _updateSyncUI();
-    let hadCloudData = false;
-    try {
-      hadCloudData = await syncFromCloud();
-    } catch (err) {
-      console.error('[firebase] initial pull failed', err);
-    }
-    if (!hadCloudData) scheduleSyncToCloud();
+    // A different account than the last one seen here: its cloud document is
+    // authoritative, so force the pull instead of trusting the previous
+    // account's local sync timestamp.
+    await _pullAfterSignIn(!!previousUid && previousUid !== _uid);
   } catch (e) {
     errEl.textContent = _friendlyAuthError(e.message);
   } finally {
@@ -1083,13 +1116,7 @@ async function _handleCheckVerified() {
       if (statusEl) statusEl.textContent = '';
       _hideLoginOverlay();
       _updateSyncUI();
-      let hadCloudData = false;
-      try {
-        hadCloudData = await syncFromCloud();
-      } catch (err) {
-        console.error('[firebase] initial pull failed', err);
-      }
-      if (!hadCloudData) scheduleSyncToCloud();
+      await _pullAfterSignIn();
     } else {
       if (statusEl) statusEl.textContent = t('auth.verifyNotYet');
     }
@@ -1215,9 +1242,5 @@ async function fbInit() {
     return;
   }
 
-  syncFromCloud().then(hadCloudData => {
-    if (!hadCloudData) scheduleSyncToCloud();
-  }).catch((err) => {
-    console.warn('[firebase] startup pull failed', err);
-  });
+  await _pullAfterSignIn();
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
-import { TEST_UID, setupSignedInFirebase } from './helpers/setupSignedInFirebase.js';
+import { TEST_UID, setupSignedInFirebase, firestoreGetRoute } from './helpers/setupSignedInFirebase.js';
 
 // Re-derived locally: setupSignedInFirebase.js keeps this as a private const,
 // not exported. Same shape as the Firestore doc URL fragment _docUrl() builds
@@ -191,6 +191,77 @@ describe('fbSignOut', () => {
     expect(storage._data).not.toHaveProperty('_fb_email_verified');
     expect(storage._data).not.toHaveProperty('_fb_email');
     expect(storage._data).not.toHaveProperty('_fb_cloud_sync_ts');
+    // 内存同步时间戳必须随登出清零，否则切号后会跳过新账号的云端数据
+    expect(fb._isDirty()).toBe(false);      // 无编辑时不该被登出污染
+  });
+
+  it('cancels a pending sync timer on sign out', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      globalThis.chrome = createMockChromeStorage({
+        _fb_refresh: 'refresh-token',
+        _fb_uid: 'user-uid',
+        _fb_email_verified: true,
+        _fb_email: 'user@example.com',
+      });
+      await fb._loadAuth();
+
+      fb.scheduleSyncToCloud();
+      expect(vi.getTimerCount()).toBe(1);
+
+      await fb.fbSignOut();
+
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps _fb_last_uid after sign out so the next sign-in can detect an account switch', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({
+      _fb_refresh: 'refresh-token',
+      _fb_uid: 'user-uid',
+      _fb_last_uid: 'user-uid',
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+    });
+    globalThis.chrome = storage;
+    await fb._loadAuth();
+
+    await fb.fbSignOut();
+
+    expect(storage._data._fb_last_uid).toBe('user-uid');
+  });
+
+  it('resets the in-memory cloud ts on sign out so a later pull is not skipped', async () => {
+    const fb = loadFirebaseModule();
+    const cloudItems = [{ id: 'account-b-cloud' }];
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, {
+        updateTime: '2024-06-02T00:00:00.000000000Z',
+        fields: { items: fb._toFV(JSON.stringify(cloudItems)) },
+      }))],
+    });
+    // 登出前的内存基线比云端文档还新；不随登出清零的话下面的拉取会被跳过
+    storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
+    await fb._loadCloudSyncTs();
+
+    await fb.fbSignOut();
+
+    // 同一页面重新登录（storage 里的 auth 键由登录流程重新写入）
+    storage._data._fb_refresh = 'next-refresh-token';
+    storage._data._fb_uid = TEST_UID;
+    storage._data._fb_email_verified = true;
+    storage._data._fb_email = 'user@example.com';
+    globalThis.items = [{ id: 'leftover-from-account-a' }];
+    await fb._loadAuth();
+
+    const pulled = await fb.syncFromCloud();
+
+    expect(pulled).toBe(true);
+    expect(globalThis.items).toEqual(cloudItems);
   });
 
   it('does not throw when no chrome storage is available', async () => {

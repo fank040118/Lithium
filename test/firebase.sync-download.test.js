@@ -232,3 +232,68 @@ describe('syncFromCloud', () => {
     await expect(fb.syncFromCloud()).rejects.toThrow();
   });
 });
+
+describe('_pullAfterSignIn', () => {
+  it('forces a pull after an account switch even when the stored cloud ts is newer', async () => {
+    const fb = loadFirebaseModule();
+    const cloudItems = [{ id: 'account-b-cloud' }];
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+        items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+        updateTime: '2024-06-02T00:00:00.000000000Z',
+      })))],
+    });
+    // 场景：上一次同步时间戳比新账号云文档还新（旧账号残留）
+    storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
+    await fb._loadCloudSyncTs();
+    globalThis.items = [{ id: 'leftover-from-account-a' }];
+
+    await fb._pullAfterSignIn(true);
+
+    expect(globalThis.items).toEqual(cloudItems);
+  });
+
+  it('keeps the non-forced pull semantics when pull is not forced', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const cloudItems = [{ id: 'account-b-cloud' }];
+      const { storage } = await setupSignedInFirebase(fb, {
+        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+          items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+          updateTime: '2024-06-02T00:00:00.000000000Z',
+        })))],
+      });
+      // 同一场景，_pullAfterSignIn(false)：旧 _lastCloudTs 使 syncFromCloud 跳过，
+      // items 保持 leftover，且（无脏标记时）不排上传
+      const leftoverItems = [{ id: 'leftover-from-account-a' }];
+      storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
+      await fb._loadCloudSyncTs();
+      globalThis.items = leftoverItems;
+
+      await fb._pullAfterSignIn(false);
+
+      expect(globalThis.items).toBe(leftoverItems);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('schedules an upload after sign-in when the cloud document does not exist yet', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestoreGetRoute(async () => jsonResponse(404, {}))],
+      });
+      globalThis.items = [{ id: 'local' }];
+
+      await fb._pullAfterSignIn();
+
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

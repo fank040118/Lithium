@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
+import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { mountAuthDom } from './helpers/authDomFixture.js';
 import { installUiMocks } from './helpers/uiMocks.js';
 
@@ -12,8 +13,10 @@ afterEach(() => {
   delete globalThis.fbIsEmailVerified;
   delete globalThis.syncToCloud;
   delete globalThis.syncFromCloud;
+  delete globalThis._pullAfterSignIn;
   delete globalThis._updateSyncUI;
   delete globalThis._handleSyncBtn;
+  delete globalThis.chrome;
   vi.useRealTimers();
 });
 
@@ -322,6 +325,7 @@ function cleanupAuthIntercepts() {
   delete globalThis.fbSignUp;
   delete globalThis.fbIsEmailVerified;
   delete globalThis.syncFromCloud;
+  delete globalThis._pullAfterSignIn;
   delete globalThis.scheduleSyncToCloud;
   delete globalThis._updateSyncUI;
   delete globalThis._showAuthMode;
@@ -427,7 +431,7 @@ describe('_handleLogin', () => {
     expect(globalThis.fbSignIn).not.toHaveBeenCalled();
   });
 
-  it('hides overlay and does not schedule sync when cloud data exists', async () => {
+  it('hides the overlay and delegates the post-login pull without scheduling a duplicate upload', async () => {
     installUiMocks();
     const fb = loadFirebaseModule();
     mountAuthDom();
@@ -435,7 +439,8 @@ describe('_handleLogin', () => {
     document.getElementById('login-password').value = 'password123';
     globalThis.fbSignIn = vi.fn(async () => {});
     globalThis.fbIsEmailVerified = vi.fn(() => true);
-    globalThis.syncFromCloud = vi.fn(async () => true);
+    globalThis._pullAfterSignIn = vi.fn(async () => {});
+    globalThis.syncFromCloud = vi.fn();
     globalThis.scheduleSyncToCloud = vi.fn();
     globalThis._hideLoginOverlay = vi.fn();
     globalThis._updateSyncUI = vi.fn();
@@ -446,33 +451,50 @@ describe('_handleLogin', () => {
     expect(globalThis.fbSignIn).toHaveBeenCalledWith('user@example.com', 'password123');
     expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
-    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
+    // No previous uid in a fresh module → not an account switch → non-forced pull.
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith(false);
+    expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
     expect(globalThis.scheduleSyncToCloud).not.toHaveBeenCalled();
     const btn = document.getElementById('login-submit-btn');
     expect(btn.disabled).toBe(false);
     expect(btn.textContent).toBe('dialog.login.submitLogin');
   });
 
-  it('schedules sync to cloud when no cloud data exists', async () => {
+  it('forces the pull when a different account signs in', async () => {
     installUiMocks();
     const fb = loadFirebaseModule();
     mountAuthDom();
-    document.getElementById('login-email').value = 'user@example.com';
+    document.getElementById('login-email').value = 'other@example.com';
     document.getElementById('login-password').value = 'password123';
-    globalThis.fbSignIn = vi.fn(async () => {});
+    const storage = createMockChromeStorage({
+      _fb_refresh: 'seed-refresh',
+      _fb_uid: 'account-a',
+      _fb_last_uid: 'account-a',
+      _fb_email_verified: true,
+      _fb_email: 'a@example.com',
+    });
+    globalThis.chrome = storage;
+    await fb._loadAuth();
+    // Emulate the real fbSignIn(): the signed-in uid and the persisted switch
+    // marker both become the new account before _handleLogin resumes.
+    globalThis.fbSignIn = vi.fn(async () => {
+      storage._data._fb_uid = 'account-b';
+      storage._data._fb_last_uid = 'account-b';
+      await fb._loadAuth();
+    });
     globalThis.fbIsEmailVerified = vi.fn(() => true);
-    globalThis.syncFromCloud = vi.fn(async () => false);
+    globalThis._pullAfterSignIn = vi.fn(async () => {});
+    globalThis.syncFromCloud = vi.fn();
     globalThis.scheduleSyncToCloud = vi.fn();
     globalThis._hideLoginOverlay = vi.fn();
     globalThis._updateSyncUI = vi.fn();
 
     await fb._handleLogin();
 
-    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
-    expect(globalThis.scheduleSyncToCloud).toHaveBeenCalledTimes(1);
-    const btn = document.getElementById('login-submit-btn');
-    expect(btn.disabled).toBe(false);
-    expect(btn.textContent).toBe('dialog.login.submitLogin');
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith(true);
+    expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
   });
 
   it('switches to verify pane when signed in but email is not verified', async () => {
@@ -695,6 +717,7 @@ function cleanupVerifyIntercepts() {
   delete globalThis.fbSendPasswordReset;
   delete globalThis.fbRefreshEmailVerifiedStatus;
   delete globalThis.syncFromCloud;
+  delete globalThis._pullAfterSignIn;
   delete globalThis.scheduleSyncToCloud;
   delete globalThis._hideLoginOverlay;
   delete globalThis._updateSyncUI;
@@ -827,13 +850,14 @@ describe('_handleCheckVerified', () => {
     cleanupVerifyIntercepts();
   });
 
-  it('hides overlay and does not schedule sync when cloud data exists', async () => {
+  it('hides overlay and delegates the post-verification pull without scheduling a duplicate upload', async () => {
     installUiMocks();
     const fb = loadFirebaseModule();
     mountAuthDom();
     const { promise, resolve } = deferred();
     globalThis.fbRefreshEmailVerifiedStatus = vi.fn(() => promise);
-    globalThis.syncFromCloud = vi.fn(async () => true);
+    globalThis._pullAfterSignIn = vi.fn(async () => {});
+    globalThis.syncFromCloud = vi.fn();
     globalThis.scheduleSyncToCloud = vi.fn();
     globalThis._hideLoginOverlay = vi.fn();
     globalThis._updateSyncUI = vi.fn();
@@ -849,17 +873,19 @@ describe('_handleCheckVerified', () => {
     expect(statusEl.textContent).toBe('');
     expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
-    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
+    expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
     expect(globalThis.scheduleSyncToCloud).not.toHaveBeenCalled();
     expect(btn.disabled).toBe(false);
   });
 
-  it('hides overlay and schedules sync when no cloud data exists', async () => {
+  it('requests a non-forced pull after verification (same account, not a switch)', async () => {
     installUiMocks();
     const fb = loadFirebaseModule();
     mountAuthDom();
     globalThis.fbRefreshEmailVerifiedStatus = vi.fn(async () => true);
-    globalThis.syncFromCloud = vi.fn(async () => false);
+    globalThis._pullAfterSignIn = vi.fn(async () => {});
+    globalThis.syncFromCloud = vi.fn();
     globalThis.scheduleSyncToCloud = vi.fn();
     globalThis._hideLoginOverlay = vi.fn();
     globalThis._updateSyncUI = vi.fn();
@@ -869,8 +895,9 @@ describe('_handleCheckVerified', () => {
     expect(document.getElementById('verify-status').textContent).toBe('');
     expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
-    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
-    expect(globalThis.scheduleSyncToCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith();
+    expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
     expect(document.getElementById('verify-check-btn').disabled).toBe(false);
   });
 
@@ -1177,6 +1204,7 @@ function cleanupFbInitIntercepts() {
   delete globalThis.fbGetEmail;
   delete globalThis.fbRefreshEmailVerifiedStatus;
   delete globalThis.syncFromCloud;
+  delete globalThis._pullAfterSignIn;
   delete globalThis.scheduleSyncToCloud;
   delete globalThis.fbSignOut;
   delete globalThis.showSigninNotice;
@@ -1216,6 +1244,7 @@ describe('fbInit', () => {
     const fbGetEmail = vi.fn(() => 'user@example.com');
     const fbRefreshEmailVerifiedStatus = vi.fn(async () => false);
     const syncFromCloud = vi.fn(async () => false);
+    const _pullAfterSignIn = vi.fn(async () => {});
     const scheduleSyncToCloud = vi.fn();
     const fbSignOut = vi.fn(async () => {});
     const fbIsSignedIn = vi.fn(() => false);
@@ -1236,28 +1265,29 @@ describe('fbInit', () => {
     globalThis.fbGetEmail = fbGetEmail;
     globalThis.fbRefreshEmailVerifiedStatus = fbRefreshEmailVerifiedStatus;
     globalThis.syncFromCloud = syncFromCloud;
+    globalThis._pullAfterSignIn = _pullAfterSignIn;
     globalThis.scheduleSyncToCloud = scheduleSyncToCloud;
     globalThis.fbSignOut = fbSignOut;
     globalThis.fbIsSignedIn = fbIsSignedIn;
     globalThis.fbIsEmailVerified = fbIsEmailVerified;
     window.showSigninNotice = showSigninNotice;
 
-    return { fb, _loadAuth, _loadRevState, _loadCloudSyncTs, _updateSyncUI, _bindSyncActionButtons, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, scheduleSyncToCloud, fbSignOut, fbIsSignedIn, fbIsEmailVerified, showSigninNotice };
+    return { fb, _loadAuth, _loadRevState, _loadCloudSyncTs, _updateSyncUI, _bindSyncActionButtons, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, _pullAfterSignIn, scheduleSyncToCloud, fbSignOut, fbIsSignedIn, fbIsEmailVerified, showSigninNotice };
   }
 
   it('shows signin notice and binds sync action buttons when not signed in', async () => {
-    const { fb, _updateSyncUI, _bindSyncActionButtons, syncFromCloud, showSigninNotice } = setupFbInit();
+    const { fb, _updateSyncUI, _bindSyncActionButtons, _pullAfterSignIn, showSigninNotice } = setupFbInit();
 
     await fb.fbInit();
 
     expect(showSigninNotice).toHaveBeenCalledTimes(1);
     expect(_updateSyncUI).toHaveBeenCalled();
     expect(_bindSyncActionButtons).toHaveBeenCalledTimes(1);
-    expect(syncFromCloud).not.toHaveBeenCalled();
+    expect(_pullAfterSignIn).not.toHaveBeenCalled();
   });
 
   it('switches to verify overlay when signed in but email is still not verified', async () => {
-    const { fb, _updateSyncUI, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, showSigninNotice, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
+    const { fb, _updateSyncUI, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, fbGetEmail, fbRefreshEmailVerifiedStatus, _pullAfterSignIn, showSigninNotice, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
     fbIsSignedIn.mockReturnValue(true);
     fbIsEmailVerified.mockReturnValue(false);
 
@@ -1270,34 +1300,33 @@ describe('fbInit', () => {
     expect(_showAuthMode).toHaveBeenCalledTimes(1);
     expect(_showAuthMode).toHaveBeenCalledWith('verify');
     expect(_showLoginOverlay).toHaveBeenCalledTimes(1);
-    expect(syncFromCloud).not.toHaveBeenCalled();
+    expect(_pullAfterSignIn).not.toHaveBeenCalled();
     expect(showSigninNotice).not.toHaveBeenCalled();
   });
 
-  it('pulls from cloud and does not schedule upload when cloud data exists', async () => {
-    const { fb, syncFromCloud, scheduleSyncToCloud, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
+  it('delegates the startup pull to _pullAfterSignIn and does not schedule an upload itself', async () => {
+    const { fb, _pullAfterSignIn, syncFromCloud, scheduleSyncToCloud, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
     fbIsSignedIn.mockReturnValue(true);
     fbIsEmailVerified.mockReturnValue(true);
-    syncFromCloud.mockResolvedValue(true);
 
     await fb.fbInit();
-    await new Promise(r => setTimeout(r, 0));
 
-    expect(syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(_pullAfterSignIn).toHaveBeenCalledTimes(1);
+    // fbInit must not talk to the sync layer directly anymore; the pull and
+    // the "no cloud data → upload" fallback both live inside _pullAfterSignIn.
+    expect(syncFromCloud).not.toHaveBeenCalled();
     expect(scheduleSyncToCloud).not.toHaveBeenCalled();
   });
 
-  it('pulls from cloud and schedules upload when no cloud data exists', async () => {
-    const { fb, syncFromCloud, scheduleSyncToCloud, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
+  it('starts a non-forced startup pull (never forces cloud over local data)', async () => {
+    const { fb, _pullAfterSignIn, fbIsSignedIn, fbIsEmailVerified } = setupFbInit();
     fbIsSignedIn.mockReturnValue(true);
     fbIsEmailVerified.mockReturnValue(true);
-    syncFromCloud.mockResolvedValue(false);
 
     await fb.fbInit();
-    await new Promise(r => setTimeout(r, 0));
 
-    expect(syncFromCloud).toHaveBeenCalledTimes(1);
-    expect(scheduleSyncToCloud).toHaveBeenCalledTimes(1);
+    expect(_pullAfterSignIn).toHaveBeenCalledTimes(1);
+    expect(_pullAfterSignIn).toHaveBeenCalledWith();
   });
 
   it('wires representative auth button event listeners', async () => {
@@ -1349,6 +1378,7 @@ describe('fbInit', () => {
     globalThis._closeDeleteAccountModal = vi.fn();
     globalThis.fbRefreshEmailVerifiedStatus = vi.fn(async () => false);
     globalThis.syncFromCloud = vi.fn(async () => true);
+    globalThis._pullAfterSignIn = vi.fn(async () => {});
     globalThis.scheduleSyncToCloud = vi.fn();
     globalThis.fbSignOut = vi.fn(async () => {});
     globalThis.fbIsSignedIn = vi.fn(() => true);
