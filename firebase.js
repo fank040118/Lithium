@@ -556,6 +556,11 @@ let _lastSyncError = null;
 // Code of the last failed automatic upload, used to suppress a repeated
 // payload-too-large toast while the user keeps editing. Reset on success.
 let _lastAutoUploadErrorCode = null;
+// Conflict state: set when a pull detects that the local (dirty) state differs
+// from the signed-in account's cloud snapshot. While set, automatic uploads are
+// paused so the stale local state is never PATCHed over the cloud until the
+// user resolves the conflict (Tasks 4/5).
+let _conflictPending = null;
 
 function _isDirty() { return _editRev !== _syncedRev; }
 
@@ -690,6 +695,35 @@ function _compareSnapshots(local, cloud) {
   };
 }
 
+function _setConflictPending(info) {
+  _conflictPending = info;
+}
+
+function _clearConflictPending() {
+  _conflictPending = null;
+}
+
+// Shallow copy so callers can read the pending conflict without mutating it.
+// Returns null when no conflict is pending.
+function fbGetSyncConflict() {
+  return _conflictPending ? { ..._conflictPending } : null;
+}
+
+// Surface a detected conflict to the host page. The hook is optional; without
+// it we log once and move on. A throwing hook must never interrupt the sync
+// flow — the conflict is already recorded in _conflictPending regardless.
+function _notifySyncConflict(info) {
+  try {
+    if (typeof globalThis.onSyncConflict === 'function') {
+      globalThis.onSyncConflict(info);
+    } else {
+      console.warn('[firebase] sync conflict detected', info);
+    }
+  } catch {
+    // ignore hook errors; the pending conflict is already set
+  }
+}
+
 async function _doSyncToCloud(options = {}) {
   const { force = false } = options;
   const epoch = _authEpoch;
@@ -711,6 +745,12 @@ async function _doSyncToCloud(options = {}) {
   // calls this with force: true and is an explicit user action, so it bypasses
   // this guard on purpose.
   if (!force && _needsSwitchPull()) return { ok: true, skipped: true };
+
+  // While a sync conflict is pending, automatic uploads must not run: the
+  // local state is known to disagree with the cloud and would overwrite it
+  // before the user resolves the conflict (Tasks 4/5). Forced manual uploads
+  // bypass this guard on purpose.
+  if (!force && _conflictPending) return { ok: true, skipped: true };
 
   // Skip when the local state is clean and not forced.
   if (!force && !_isDirty()) return { ok: true, skipped: true };
@@ -764,6 +804,9 @@ async function _doSyncToCloud(options = {}) {
   await _saveRevState();
   // The cloud now holds this local state, so it becomes the sync baseline.
   await _saveBaselineUid(uidForBaseline);
+  // A successful upload resolves any prior conflict: the cloud now mirrors
+  // the local state this upload carried.
+  _clearConflictPending();
 
   _syncState = 'idle';
   _updateSyncUI(serverMs);
@@ -794,9 +837,14 @@ function syncToCloud(options = {}) {
   return _syncInFlight;
 }
 
-// Returns true if cloud data was found and applied
+// Returns true if cloud data was found and applied.
+// mode: 'auto' (default) | 'forced' | 'resolve-cloud'
+//   - 'auto': skip when the cloud has not changed; detect conflicts when dirty.
+//   - 'forced': bypass the "cloud unchanged" skip, but still detect conflicts.
+//   - 'resolve-cloud': apply cloud data unconditionally (no conflict detection).
+// trigger: provenance label carried into the conflict info object.
 async function syncFromCloud(options = {}) {
-  const { force = false } = options;
+  const { mode = 'auto', trigger = 'auto' } = options;
   if (!fbIsSignedIn() || !fbIsEmailVerified()) return false;
 
   // Wait for any in-flight upload first: the GET result must not race with
@@ -809,14 +857,29 @@ async function syncFromCloud(options = {}) {
   _lastSyncError = null;
   _updateSyncUI();
 
+  // Capture the identity this pull belongs to. A response that lands after a
+  // sign-out/sign-in must be dropped with zero writes (see the epoch check
+  // below), so it cannot revive the signed-out account's timestamp or baseline.
+  const epoch = _authEpoch;
+
   try {
     const doc = await _fsGet();
+
+    // The GET response landed after the identity changed (sign-out/sign-in
+    // while it was in flight). Drop it with zero bookkeeping writes.
+    if (epoch !== _authEpoch) {
+      _syncState = 'idle';
+      _updateSyncUI();
+      return false;
+    }
+
     if (!doc?.fields) {
       _syncState = 'idle';
       _updateSyncUI();
       // Nothing to pull: the signed-in account's state is now considered the
       // baseline, so subsequent automatic uploads are allowed again.
       await _saveBaselineUid(_uid);
+      _clearConflictPending();
       return false;
     }
 
@@ -824,8 +887,8 @@ async function syncFromCloud(options = {}) {
     const cloudTsMs = _rfc3339ToMs(cloudUpdateTime);
     const hasCloudTimestamp = cloudTsMs > 0;
 
-    // 非强制模式下，若云端没有变化则跳过
-    if (!force && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
+    // 非强制模式下，若云端没有变化则跳过（P0-3：脏数据需补排上传）
+    if (mode === 'auto' && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
       _syncState = 'idle';
       _updateSyncUI();
       await _saveBaselineUid(_uid);
@@ -839,16 +902,33 @@ async function syncFromCloud(options = {}) {
     // 兼容：旧数据仍用 updated_at 字段显示
     const legacyCloudTs = _fromFV(f.updated_at) || 0;
 
-    // Last-writer-on-this-device-wins: arriving here already means the cloud
-    // has changed; if the local state is dirty, prefer local edits and requeue
-    // an upload. This is an intentional design choice. Deliberately no
-    // baseline write here: treating the local state as "synced" could unblock
-    // automatic uploads of a previous account's leftovers.
-    if (!force && _isDirty() && hasCloudTimestamp) {
-      _syncState = 'idle';
-      _updateSyncUI();
-      scheduleSyncToCloud();
-      return false;
+    // Conflict detection: when the local state is dirty and differs from the
+    // cloud snapshot, do not silently pick a winner — record the conflict and
+    // pause automatic uploads until the user resolves it. resolve-cloud skips
+    // detection entirely (it applies the cloud side by explicit user choice).
+    let skippedFields = [];
+    if (mode !== 'resolve-cloud' && _isDirty()) {
+      const localSnap = _buildSyncSnapshot();
+      const cloudSnap = _cloudSnapshotFromFields(f);
+      const { equal, skippedFields: skipped } = _compareSnapshots(localSnap, cloudSnap);
+      if (!equal) {
+        // Cancel any queued automatic upload: the local state must not be
+        // PATCHed over the cloud before the conflict is resolved.
+        clearTimeout(_syncTimer);
+        _syncTimer = null;
+        _setConflictPending({
+          isAccountSwitch: _needsSwitchPull(),
+          localItemCount: Array.isArray(localSnap.items) ? localSnap.items.length : 0,
+          cloudItemCount: Array.isArray(cloudSnap.items) ? cloudSnap.items.length : 0,
+          cloudUpdateTime: cloudTsMs,
+          trigger,
+        });
+        _notifySyncConflict(_conflictPending);
+        _syncState = 'idle';
+        _updateSyncUI();
+        return false;
+      }
+      skippedFields = skipped;
     }
 
     // 真正要应用云端数据时，取消尚未执行的自动上传，防止本地过期状态覆盖刚拉取的数据
@@ -907,6 +987,7 @@ async function syncFromCloud(options = {}) {
     await _saveRevState();
     // The local state now mirrors this account's cloud document.
     await _saveBaselineUid(_uid);
+    _clearConflictPending();
 
     applyWallpaper();
     applyMainGridColumns();
@@ -914,6 +995,11 @@ async function syncFromCloud(options = {}) {
     document.getElementById('engine-name').textContent = getSelectedEngine().name;
     _syncState = 'idle';
     _updateSyncUI(cloudTsMs || legacyCloudTs);
+    // A cloud snapshot that skipped a field (the cloud has no opinion on it)
+    // left the local value in place; re-upload it so other devices converge on
+    // the local value (I8). Reuse the resync mechanism so a normalization
+    // triggered resync is not double-counted.
+    if (skippedFields.length > 0) shouldResyncCloud = true;
     if (shouldResyncCloud) {
       // Cloud data was normalized on apply; bump the edit rev so the canonical
       // form is re-uploaded for other devices.
@@ -941,6 +1027,10 @@ async function syncFromCloud(options = {}) {
 
 function scheduleSyncToCloud() {
   if (!fbIsSignedIn() || !fbIsEmailVerified()) return;
+  // While a conflict is pending, do not queue an automatic upload: the local
+  // state is known to disagree with the cloud and must not overwrite it before
+  // the user resolves the conflict (Tasks 4/5).
+  if (_conflictPending) return;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(() => {
     _syncTimer = null;
@@ -977,14 +1067,16 @@ async function markLocalCloudDataChanged(options = {}) {
 // cloud explicitly has no data, queue an upload of the local state instead.
 // The pull is forced whenever the persisted sync baseline belongs to another
 // account (see _needsSwitchPull), so the signed-in account's document always
-// wins over whatever a previous account left on this device. `forcePull`
-// remains as an explicit override for tests/tools.
-async function _pullAfterSignIn(forcePull = false) {
+// wins over whatever a previous account left on this device.
+// options: { trigger = 'sign-in', force = false }
+//   - trigger: provenance label carried into the conflict info object.
+//   - force: explicit override for tests/tools.
+async function _pullAfterSignIn({ trigger = 'sign-in', force = false } = {}) {
   if (!fbIsSignedIn() || !_uid) return;
-  const effectiveForce = forcePull || _needsSwitchPull();
+  const forced = force || _needsSwitchPull();
   let hadCloudData = false;
   try {
-    hadCloudData = await syncFromCloud(effectiveForce ? { force: true } : {});
+    hadCloudData = await syncFromCloud(forced ? { mode: 'forced', trigger } : { trigger });
   } catch (err) {
     // Fail-safe: a failed pull says nothing about the cloud state, so it must
     // not be treated as "no cloud data". Never queue an upload here — after an
@@ -994,7 +1086,7 @@ async function _pullAfterSignIn(forcePull = false) {
     console.error('[firebase] initial pull failed', err);
     return;
   }
-  if (!hadCloudData) scheduleSyncToCloud();
+  if (!hadCloudData && !_conflictPending) scheduleSyncToCloud();
 }
 
 // ── UI ──────────────────────────────────────────────────────
@@ -1025,7 +1117,10 @@ async function _handleSyncBtn(direction) {
       _syncTimer = null;
       if (_syncInFlight) await _syncInFlight;
 
-      const pulled = await syncFromCloud({ force: true });
+      const pulled = await syncFromCloud({ mode: 'forced', trigger: 'manual-pull' });
+      // A detected conflict leaves the local/cloud states unresolved; do not
+      // toast "no cloud data" (or "downloaded") while it is pending.
+      if (fbGetSyncConflict()) return;
       showToast(pulled ? t('toast.syncDownloaded') : t('toast.syncNoCloudData'), 'default');
     }
   } catch (e) {
@@ -1203,7 +1298,7 @@ async function _handleLogin() {
     _updateSyncUI();
     // Whether this is an account switch is decided inside _pullAfterSignIn
     // from the persisted sync baseline, so no uid needs to be captured here.
-    await _pullAfterSignIn();
+    await _pullAfterSignIn({ trigger: 'sign-in' });
   } catch (e) {
     errEl.textContent = _friendlyAuthError(e.message);
   } finally {
@@ -1422,7 +1517,7 @@ async function _handleCheckVerified() {
       if (statusEl) statusEl.textContent = '';
       _hideLoginOverlay();
       _updateSyncUI();
-      await _pullAfterSignIn();
+      await _pullAfterSignIn({ trigger: 'sign-in' });
     } else {
       if (statusEl) statusEl.textContent = t('auth.verifyNotYet');
     }
@@ -1548,5 +1643,5 @@ async function fbInit() {
     return;
   }
 
-  await _pullAfterSignIn();
+  await _pullAfterSignIn({ trigger: 'startup' });
 }

@@ -164,15 +164,17 @@ describe('_doSyncToCloud / syncToCloud', () => {
       await fb.fbSignOut();
       await fb.fbSignIn('b@example.com', 'password123');
 
-      const pullPromise = fb._pullAfterSignIn(true); // 等待在途 U1
+      const pullPromise = fb._pullAfterSignIn({ force: true }); // 等待在途 U1
       releaseFirstPatch();
       await pullPromise;
 
       // 只有旧账号那一次 PATCH；排队续跑不得把旧账号遗留数据写入新账号
       expect(patches.map((p) => p.url.match(/users\/([^/]+)\//)[1])).toEqual([uid]);
       expect(JSON.stringify(patches[0].items)).toContain('A-secret-leftover');
-      // 切换后的强制拉取仍应把新账号的云端快照应用下来
-      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      // 切换后 B 云端与 A 遗留本地冲突：items 保持 A 遗留，不得 PATCH 进 B
+      expect(globalThis.items).toEqual([{ id: 'A-secret-leftover' }]);
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(patches.filter((p) => p.url.includes('account-b'))).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
@@ -242,8 +244,13 @@ describe('_doSyncToCloud / syncToCloud', () => {
       await fb._pullAfterSignIn();
       await vi.advanceTimersByTimeAsync(2600);       // 错误的自动上传会在此期间发出
 
-      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      // B 云端与 A 遗留本地冲突：items 保持 A 遗留，不得 PATCH 进 B
+      expect(globalThis.items).toEqual([{ id: 'A-secret-leftover' }]);
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
       expect(patches.filter((p) => p.url.includes('account-b'))).toEqual([]);
+      // 迟到的 U1 簿记未落：切号基线仍指向 A，云端时间戳仍缺席
+      expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+      expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

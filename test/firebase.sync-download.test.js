@@ -19,6 +19,7 @@ afterEach(() => {
   delete globalThis.normalizeFolderChildItemSizes;
   delete globalThis.sanitizeItemsShape;
   delete globalThis.clampMainGridColumns;
+  delete globalThis.onSyncConflict;
   document.body.innerHTML = '';
 });
 
@@ -118,27 +119,42 @@ describe('syncFromCloud', () => {
     }
   });
 
-  it('keeps local edits and reschedules an upload when both local and cloud changed', async () => {
+  it('detects a conflict when both local and cloud changed, without PATCHing', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
       const sentinelItems = [{ id: 'local-only' }];
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      let patchCalls = 0;
       await setupSignedInFirebase(fb, {
-        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
-          items: [{ id: 'cloud' }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
-          updateTime: '2024-06-02T00:00:00.000000000Z',
-        })))],
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+            items: [{ id: 'cloud' }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+            updateTime: '2024-06-02T00:00:00.000000000Z',
+          }))),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000000Z' });
+          }),
+        ],
       });
       globalThis.items = sentinelItems;
       await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
       await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();   // 只观察 syncFromCloud 自己是否排上传
 
       const result = await fb.syncFromCloud();
 
       expect(result).toBe(false);
       expect(globalThis.items).toBe(sentinelItems);
-      expect(vi.getTimerCount()).toBe(1);
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(vi.getTimerCount()).toBe(0);   // 未决期间不得排自动上传
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(patchCalls).toBe(0);           // 不得把本地脏数据 PATCH 进云端
     } finally {
+      delete globalThis.onSyncConflict;
       vi.useRealTimers();
     }
   });
@@ -183,25 +199,6 @@ describe('syncFromCloud', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it('applies cloud data unconditionally when forced, even mid-conflict', async () => {
-    const fb = loadFirebaseModule();
-    const cloudItems = [{ id: 'cloud' }];
-    await setupSignedInFirebase(fb, {
-      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
-        items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
-        updateTime: '2024-06-02T00:00:00.000000000Z',
-      })))],
-    });
-    globalThis.items = [{ id: 'local-only' }];
-    await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
-    await fb.markLocalCloudDataChanged();
-
-    const result = await fb.syncFromCloud({ force: true });
-
-    expect(result).toBe(true);
-    expect(globalThis.items).toEqual(cloudItems);
   });
 
   it('does not treat a schema migration as a user edit when re-queuing the upload', async () => {
@@ -252,7 +249,7 @@ describe('syncFromCloud', () => {
       });
       globalThis.mainGridColumns = 8;
 
-      await fb.syncFromCloud({ force: true });
+      await fb.syncFromCloud({ mode: 'forced' });
 
       expect(seen).toHaveLength(1);
       expect(globalThis.items).toEqual([{ id: 'ok' }]);
@@ -283,7 +280,7 @@ describe('syncFromCloud', () => {
       })))],
     });
 
-    await fb.syncFromCloud({ force: true });
+    await fb.syncFromCloud({ mode: 'forced' });
 
     expect(storage._data._fb_sync_baseline_uid).toBe(uid);
   });
@@ -302,7 +299,7 @@ describe('syncFromCloud', () => {
         })))],
       });
 
-      const result = await fb.syncFromCloud({ force: true });
+      const result = await fb.syncFromCloud({ mode: 'forced' });
 
       expect(result).toBe(true);
       expect(recovered).toHaveBeenCalledTimes(1);
@@ -323,7 +320,7 @@ describe('syncFromCloud', () => {
     // state, not "no opinion", so it must replace the stale local clocks.
     globalThis.clocks = [{ id: 'stale-clock-a' }, { id: 'stale-clock-b' }];
 
-    const result = await fb.syncFromCloud({ force: true });
+    const result = await fb.syncFromCloud({ mode: 'forced' });
 
     expect(result).toBe(true);
     expect(globalThis.clocks).toEqual([]);
@@ -346,7 +343,7 @@ describe('syncFromCloud', () => {
     });
     globalThis.clocks = localClocks;
 
-    const result = await fb.syncFromCloud({ force: true });
+    const result = await fb.syncFromCloud({ mode: 'forced' });
 
     expect(result).toBe(true);
     expect(globalThis.clocks).toBe(localClocks);
@@ -371,7 +368,7 @@ describe('syncFromCloud', () => {
     });
     globalThis.clocks = localClocks;
 
-    const result = await fb.syncFromCloud({ force: true });
+    const result = await fb.syncFromCloud({ mode: 'forced' });
 
     expect(result).toBe(true);
     expect(globalThis.clocks).toBe(localClocks);
@@ -466,13 +463,14 @@ describe('_pullAfterSignIn', () => {
       // Switch A -> B, then run the verification flow's pull (_handleCheckVerified).
       await fb.fbSignOut();
       await fb.fbSignIn('b@example.com', 'pw');
-      await fb._pullAfterSignIn(false);
+      await fb._pullAfterSignIn();
       await vi.advanceTimersByTimeAsync(2500);   // give any wrongly queued upload time to fire
 
-      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      // B 云端与 A 遗留本地冲突：items 保持 A 遗留，不得落地也不得 PATCH，切号未解决
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(globalThis.items).toEqual([{ id: 'A-secret-leftover' }]);
       expect(patches).toEqual([]);
-      expect(fb._isDirty()).toBe(false);
-      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+      expect(fb._needsSwitchPull()).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -541,7 +539,7 @@ describe('_pullAfterSignIn', () => {
       await fb.markLocalCloudDataChanged();   // 本地脏数据（上一账号残留）
       vi.clearAllTimers();                    // 只观察 _pullAfterSignIn 是否自己排上传
 
-      await fb._pullAfterSignIn(true);        // 切换后的强制拉取，GET 抛网络错误
+      await fb._pullAfterSignIn({ force: true });        // 切换后的强制拉取，GET 抛网络错误
 
       // fail-safe：拉取失败不代表“云端无数据”，不得把本地脏数据 PATCH 到新账号文档
       expect(vi.getTimerCount()).toBe(0);
@@ -559,7 +557,7 @@ describe('_pullAfterSignIn', () => {
       let getFails = true;
       let patchCalls = 0;
       const cloudItems = [{ id: 'account-b-cloud' }];
-      const { storage, uid } = await setupSignedInFirebase(fb, {
+      const { storage } = await setupSignedInFirebase(fb, {
         extraRoutes: [
           firestoreGetRoute(async () => {
             if (getFails) throw new TypeError('network down');
@@ -593,16 +591,19 @@ describe('_pullAfterSignIn', () => {
       expect(patchCalls).toBe(0);
       expect(vi.getTimerCount()).toBe(0);
 
-      // 网络恢复后再次拉取：云端为准，脏被清，基线跟进
+      // 网络恢复后再次拉取：本地脏 + 云端不同 → 冲突未决，不得落地也不得 PATCH
       getFails = false;
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
       await fb._pullAfterSignIn();
 
-      expect(globalThis.items).toEqual(cloudItems);
-      expect(fb._isDirty()).toBe(false);
-      expect(storage._data._fb_sync_baseline_uid).toBe(uid);
-      expect(fb._needsSwitchPull()).toBe(false);
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(globalThis.items).toEqual([{ id: 'leftover-from-account-a' }]);
+      expect(fb._needsSwitchPull()).toBe(true);
       expect(patchCalls).toBe(0);
     } finally {
+      delete globalThis.onSyncConflict;
       vi.useRealTimers();
     }
   });

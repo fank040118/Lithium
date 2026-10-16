@@ -547,7 +547,7 @@ describe('_handleLogin', () => {
     // First login ever: no persisted baseline → _pullAfterSignIn decides on
     // its own; _handleLogin must not force or pass any uid.
     expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
-    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith();
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith({ trigger: 'sign-in' });
     expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
     expect(globalThis.scheduleSyncToCloud).not.toHaveBeenCalled();
     const btn = document.getElementById('login-submit-btn');
@@ -586,8 +586,8 @@ describe('_handleLogin', () => {
     await fb._handleLogin();
 
     expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
-    // 切号强制拉取的判定在 _pullAfterSignIn 内部（基线≠uid），调用点不再传参
-    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith();
+    // 切号强制拉取的判定在 _pullAfterSignIn 内部（基线≠uid），调用点只传 trigger
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith({ trigger: 'sign-in' });
     expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
   });
 
@@ -990,7 +990,7 @@ describe('_handleCheckVerified', () => {
     expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
     expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
-    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith();
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith({ trigger: 'sign-in' });
     expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
     expect(document.getElementById('verify-check-btn').disabled).toBe(false);
   });
@@ -1133,9 +1133,10 @@ describe('账号切换验证邮箱路径（C1 回归）', () => {
       await fb._handleCheckVerified();
 
       expect(fb.fbIsEmailVerified()).toBe(true);
-      // B 的云端文档必须是权威版本：A 的遗留 items 不得保留，更不得 PATCH 进 B
-      expect(globalThis.items).toEqual(cloudItems);
-      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+      // B 云端与 A 遗留本地冲突：items 保持 A 遗留，不得 PATCH 进 B，未决等待用户解决
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(globalThis.items).toEqual([{ id: 'A-secret-leftover' }]);
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-a');
       await vi.advanceTimersByTimeAsync(2500);   // 让任何被误排的上传跑完
       expect(patches).toEqual([]);
     } finally {
@@ -1538,7 +1539,7 @@ describe('fbInit', () => {
     await fb.fbInit();
 
     expect(_pullAfterSignIn).toHaveBeenCalledTimes(1);
-    expect(_pullAfterSignIn).toHaveBeenCalledWith();
+    expect(_pullAfterSignIn).toHaveBeenCalledWith({ trigger: 'startup' });
   });
 
   it('wires representative auth button event listeners', async () => {
