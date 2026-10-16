@@ -615,9 +615,9 @@ function renderEngineDropdown() {
   const engines = getAllEngines();
   const list = $('#engine-list');
   list.innerHTML = engines.map(e => `
-    <div class="engine-item ${e.id === selectedEngineId ? 'selected' : ''}" data-engine-id="${escapeHtml(e.id)}">
+    <div class="engine-item ${e.id === selectedEngineId ? 'selected' : ''}" data-engine-id="${escapeAttr(e.id)}">
       <span>${escapeHtml(e.name)}</span>
-      ${!DEFAULT_ENGINES.some(d => d.id === e.id) ? `<button class="engine-delete-btn" data-action="delete-engine" data-engine-id="${escapeHtml(e.id)}" title="${escapeAttr(t('search.engine.deleteTitle'))}">
+      ${!DEFAULT_ENGINES.some(d => d.id === e.id) ? `<button class="engine-delete-btn" data-action="delete-engine" data-engine-id="${escapeAttr(e.id)}" title="${escapeAttr(t('search.engine.deleteTitle'))}">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>` : ''}
     </div>
@@ -1257,7 +1257,7 @@ function createGridItemHTML(item) {
   return `
     <div class="grid-item-wrap" data-id="${escapeAttr(item.id)}" data-size="${sz}">
       <div class="grid-item-action-area">
-        <div class="grid-item-card" data-action="click-item" data-item-type="${item.type}" draggable="true">
+        <div class="grid-item-card" data-action="click-item" data-item-type="${escapeAttr(item.type)}" draggable="true">
           ${renderIcon(item)}
         </div>
       </div>
