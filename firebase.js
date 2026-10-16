@@ -573,6 +573,11 @@ async function _doSyncToCloud(options = {}) {
   // signal and let the old account's local items be uploaded to the new one.
   if (epoch !== _authEpoch) return { ok: true, skipped: true };
 
+  // The bookkeeping writes below are awaited, and a sign-out could null _uid
+  // while they run. Capture the uid this upload belongs to right here so the
+  // baseline keeps pointing at that session instead of being cleared to null.
+  const uidForBaseline = _uid;
+
   if (!cloudUpdateTime) throw new CloudSyncError('firestore', 0, new Error('No updateTime in response'));
 
   const serverMs = _rfc3339ToMs(cloudUpdateTime);
@@ -583,7 +588,7 @@ async function _doSyncToCloud(options = {}) {
   _syncedRev = revAtStart;
   await _saveRevState();
   // The cloud now holds this local state, so it becomes the sync baseline.
-  await _saveBaselineUid(_uid);
+  await _saveBaselineUid(uidForBaseline);
 
   _syncState = 'idle';
   _updateSyncUI(serverMs);

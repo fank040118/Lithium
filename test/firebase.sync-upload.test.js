@@ -248,4 +248,50 @@ describe('_doSyncToCloud / syncToCloud', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not clear the persisted baseline when a sign-out lands during the post-upload bookkeeping', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const { storage, uid } = await setupSignedInFirebase(fb, {
+        extraRoutes: [firestorePatchRoute(async () =>
+          jsonResponse(200, { updateTime: '2024-06-01T12:00:00.000000000Z' }))],
+      });
+
+      // Hold the cloud-ts write so the sign-out lands exactly between the
+      // post-response epoch re-check and the baseline write that follows the
+      // awaited bookkeeping.
+      const originalSet = storage.storage.local.set;
+      let releaseTsWrite;
+      const tsWriteGate = new Promise((resolve) => { releaseTsWrite = resolve; });
+      let markTsWriteStarted;
+      const tsWriteStarted = new Promise((resolve) => { markTsWriteStarted = resolve; });
+      let gatedOnce = false;
+      storage.storage.local.set = async (values) => {
+        if (!gatedOnce && '_fb_cloud_sync_ts' in values) {
+          gatedOnce = true;
+          markTsWriteStarted();
+          await tsWriteGate;
+        }
+        return originalSet(values);
+      };
+
+      globalThis.items = [{ id: 'local-edit' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+      const uploadPromise = fb._doSyncToCloud();
+
+      await tsWriteStarted;      // PATCH response handled; stuck in the bookkeeping write
+      await fb.fbSignOut();      // _uid is nulled while that write is pending
+      releaseTsWrite();
+      await uploadPromise;
+
+      // The upload belongs to the session captured before the sign-out: its uid
+      // must stay the persisted baseline instead of being cleared to null.
+      expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+      expect(fb.fbIsSignedIn()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
