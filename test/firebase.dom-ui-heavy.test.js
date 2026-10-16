@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
+import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
 import { mountAuthDom } from './helpers/authDomFixture.js';
 import { installUiMocks } from './helpers/uiMocks.js';
 
@@ -440,12 +441,11 @@ describe('_handleLogin', () => {
     const storage = createMockChromeStorage({});
     globalThis.chrome = storage;
     await fb._loadAuth();
-    // Emulate the real fbSignIn(): the new uid and the persisted switch marker
-    // appear before _handleLogin resumes, while _lastAuthUid was still null
-    // when _handleLogin captured previousUid before calling fbSignIn.
+    // Emulate the real fbSignIn(): the new uid appears before _handleLogin
+    // resumes. Switch detection (baseline vs. uid) now lives inside
+    // _pullAfterSignIn, so the caller no longer captures a previous uid.
     globalThis.fbSignIn = vi.fn(async () => {
       storage._data._fb_uid = 'user-uid';
-      storage._data._fb_last_uid = 'user-uid';
       await fb._loadAuth();
     });
     globalThis.fbIsEmailVerified = vi.fn(() => true);
@@ -461,10 +461,10 @@ describe('_handleLogin', () => {
     expect(globalThis.fbSignIn).toHaveBeenCalledWith('user@example.com', 'password123');
     expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
-    // First login ever: no uid was stored before this attempt → not an account
-    // switch → non-forced pull, even though the signed-in uid now exists.
+    // First login ever: no persisted baseline → _pullAfterSignIn decides on
+    // its own; _handleLogin must not force or pass any uid.
     expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
-    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith(false);
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith();
     expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
     expect(globalThis.scheduleSyncToCloud).not.toHaveBeenCalled();
     const btn = document.getElementById('login-submit-btn');
@@ -472,7 +472,7 @@ describe('_handleLogin', () => {
     expect(btn.textContent).toBe('dialog.login.submitLogin');
   });
 
-  it('forces the pull when a different account signs in', async () => {
+  it('delegates the switch decision to _pullAfterSignIn even for a different account', async () => {
     installUiMocks();
     const fb = loadFirebaseModule();
     mountAuthDom();
@@ -481,17 +481,16 @@ describe('_handleLogin', () => {
     const storage = createMockChromeStorage({
       _fb_refresh: 'seed-refresh',
       _fb_uid: 'account-a',
-      _fb_last_uid: 'account-a',
+      _fb_sync_baseline_uid: 'account-a',
       _fb_email_verified: true,
       _fb_email: 'a@example.com',
     });
     globalThis.chrome = storage;
     await fb._loadAuth();
-    // Emulate the real fbSignIn(): the signed-in uid and the persisted switch
-    // marker both become the new account before _handleLogin resumes.
+    // Emulate the real fbSignIn(): the signed-in uid becomes the new account,
+    // while the persisted baseline still points at the old one.
     globalThis.fbSignIn = vi.fn(async () => {
       storage._data._fb_uid = 'account-b';
-      storage._data._fb_last_uid = 'account-b';
       await fb._loadAuth();
     });
     globalThis.fbIsEmailVerified = vi.fn(() => true);
@@ -504,7 +503,8 @@ describe('_handleLogin', () => {
     await fb._handleLogin();
 
     expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
-    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith(true);
+    // 切号强制拉取的判定在 _pullAfterSignIn 内部（基线≠uid），调用点不再传参
+    expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith();
     expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
   });
 
@@ -940,6 +940,124 @@ describe('_handleCheckVerified', () => {
 
     expect(document.getElementById('verify-status').textContent).toBe('auth.verifyCheckError');
     expect(document.getElementById('verify-check-btn').disabled).toBe(false);
+  });
+});
+
+// 账号切换端到端回归：复现 /tmp/opencode/repro-verify-path-cross-account.mjs
+// （A 脏遗留 + 持久化基线=A → 登录未验证 B → 验证完成 → 拉取必须强制生效）。
+describe('账号切换验证邮箱路径（C1 回归）', () => {
+  afterEach(() => {
+    delete globalThis.fetch;
+    delete globalThis.items;
+    delete globalThis.customEngines;
+    delete globalThis.selectedEngineId;
+    delete globalThis.clocks;
+    delete globalThis.mainGridColumns;
+    delete globalThis.applyWallpaper;
+    delete globalThis.applyMainGridColumns;
+    delete globalThis.render;
+    delete globalThis.getSelectedEngine;
+  });
+
+  function base64urlEncode(payload) {
+    return btoa(JSON.stringify(payload))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  }
+
+  it('applies the new account cloud data after verification instead of PATCHing the old leftovers', async () => {
+    vi.useFakeTimers();
+    try {
+      installUiMocks();
+      const fb = loadFirebaseModule();
+      mountAuthDom();
+      const engineName = document.createElement('div');
+      engineName.id = 'engine-name';
+      document.body.appendChild(engineName);
+
+      const unverifiedToken = `h.${base64urlEncode({ email_verified: false })}.s`;
+      const verifiedToken = `h.${base64urlEncode({ email_verified: true })}.s`;
+      const cloudItems = [{ id: 'B-cloud-data' }];
+      const patches = [];
+      globalThis.fetch = createRoutedFetch([
+        {
+          match: (url) => url.includes('accounts:signInWithPassword'),
+          respond: async () => jsonResponse(200, {
+            idToken: unverifiedToken, expiresIn: '3600', refreshToken: 'b-refresh', localId: 'account-b',
+          }),
+        },
+        {
+          match: (url) => url.includes('accounts:lookup'),
+          respond: async () => jsonResponse(200, { users: [{ emailVerified: true }] }),
+        },
+        {
+          match: (url) => url.includes('securetoken.googleapis.com'),
+          respond: async () => jsonResponse(200, {
+            id_token: verifiedToken, expires_in: '3600', refresh_token: 'b-refresh', user_id: 'account-b',
+          }),
+        },
+        {
+          match: (url, options = {}) =>
+            url.includes('/documents/users/') && (!options.method || options.method === 'GET'),
+          respond: async () => jsonResponse(200, {
+            updateTime: '2024-06-02T00:00:00.000000000Z',
+            fields: { items: { stringValue: JSON.stringify(cloudItems) } },
+          }),
+        },
+        {
+          match: (url, options = {}) => url.includes('/documents/users/') && options.method === 'PATCH',
+          respond: async (url, options) => {
+            patches.push({ url, items: JSON.parse(JSON.parse(options.body).fields.items.stringValue) });
+            return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000000Z' });
+          },
+        },
+      ]);
+
+      const storage = createMockChromeStorage({
+        _fb_refresh: 'a-refresh',
+        _fb_uid: 'account-a',
+        _fb_email_verified: true,
+        _fb_email: 'a@example.com',
+        _fb_edit_rev: 2,
+        _fb_synced_rev: 1,
+        _fb_cloud_sync_ts: new Date('2024-06-01T00:00:00.000Z').getTime(),
+        _fb_sync_baseline_uid: 'account-a',
+      });
+      globalThis.chrome = storage;
+      globalThis.items = [{ id: 'A-secret-leftover' }];
+      globalThis.customEngines = [];
+      globalThis.selectedEngineId = 'google';
+      globalThis.clocks = [];
+      globalThis.mainGridColumns = 4;
+      globalThis.applyWallpaper = () => {};
+      globalThis.applyMainGridColumns = () => {};
+      globalThis.render = () => {};
+      globalThis.getSelectedEngine = () => ({ name: 'Google' });
+
+      await fb._loadAuth();
+      await fb._loadCloudSyncTs();
+      await fb._loadRevState();
+
+      // 切出 A、登录未验证的 B，再从验证面板完成验证
+      await fb.fbSignOut();
+      document.getElementById('login-email').value = 'b@example.com';
+      document.getElementById('login-password').value = 'password123';
+      await fb._handleLogin();
+      expect(fb.fbIsSignedIn()).toBe(true);
+      expect(fb.fbIsEmailVerified()).toBe(false);
+
+      await fb._handleCheckVerified();
+
+      expect(fb.fbIsEmailVerified()).toBe(true);
+      // B 的云端文档必须是权威版本：A 的遗留 items 不得保留，更不得 PATCH 进 B
+      expect(globalThis.items).toEqual(cloudItems);
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+      await vi.advanceTimersByTimeAsync(2500);   // 让任何被误排的上传跑完
+      expect(patches).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -3,6 +3,13 @@ import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { jsonResponse } from './helpers/mockFetch.js';
 import { setupSignedInFirebase, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
 
+function firestoreDoc(fb, { items, updateTime }) {
+  return {
+    updateTime,
+    fields: { items: fb._toFV(JSON.stringify(items)) },
+  };
+}
+
 describe('_doSyncToCloud / syncToCloud', () => {
   it('throws not-signed-in when there is no authenticated user', async () => {
     const fb = loadFirebaseModule();
@@ -28,7 +35,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
 
   it('uploads and persists the server updateTime when forced', async () => {
     const fb = loadFirebaseModule();
-    await setupSignedInFirebase(fb, {
+    const { storage, uid } = await setupSignedInFirebase(fb, {
       extraRoutes: [firestorePatchRoute(async () =>
         jsonResponse(200, { updateTime: '2024-06-01T12:00:00.500000000Z' }))],
     });
@@ -39,6 +46,8 @@ describe('_doSyncToCloud / syncToCloud', () => {
     expect(result).toEqual({ ok: true, skipped: false, ts: expectedMs });
     expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
     expect(await fb._loadCloudSyncTs()).toBe(expectedMs);
+    // 成功上传后，本机同步基线跟进到当前账号
+    expect(storage._data._fb_sync_baseline_uid).toBe(uid);
   });
 
   it('throws a firestore error when the server response has no updateTime', async () => {
@@ -102,6 +111,68 @@ describe('_doSyncToCloud / syncToCloud', () => {
 
       expect(patchCalls).toBe(2);
       expect(await fb._loadRevState()).toEqual({ editRev: 2, syncedRev: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a queued upload continuation when the account changed while the first upload was in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const b64url = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const verifiedToken = `h.${b64url({ email_verified: true })}.s`;
+      const patches = [];
+      let releaseFirstPatch;
+      const firstPatchGate = new Promise((resolve) => { releaseFirstPatch = resolve; });
+
+      const { uid } = await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          {
+            match: (url) => url.includes('accounts:signInWithPassword'),
+            respond: async () => jsonResponse(200, {
+              idToken: verifiedToken, expiresIn: '3600', refreshToken: 'b-refresh', localId: 'account-b',
+            }),
+          },
+          {
+            match: (url, options = {}) =>
+              url.includes('/documents/users/') && (!options.method || options.method === 'GET'),
+            respond: async () => jsonResponse(200, firestoreDoc(fb, {
+              items: [{ id: 'B-cloud-data' }], updateTime: '2024-06-02T00:00:00.000000000Z',
+            })),
+          },
+          {
+            match: (url, options = {}) => url.includes('/documents/users/') && options.method === 'PATCH',
+            respond: async (url, options) => {
+              const body = JSON.parse(options.body);
+              patches.push({ url, items: JSON.parse(body.fields.items.stringValue) });
+              if (patches.length === 1) await firstPatchGate;
+              return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000000Z' });
+            },
+          },
+        ],
+      });
+
+      globalThis.items = [{ id: 'A-secret-leftover' }];
+      await fb.markLocalCloudDataChanged();          // 编辑 1 → U1
+      await vi.advanceTimersByTimeAsync(2000);       // U1 开始并挂起在网关上
+      await fb.markLocalCloudDataChanged();          // 编辑 2 → 续跑排在 U1 之后
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patches.length).toBe(1);
+
+      // U1 落定前登出旧账号、登录新账号
+      await fb.fbSignOut();
+      await fb.fbSignIn('b@example.com', 'password123');
+
+      const pullPromise = fb._pullAfterSignIn(true); // 等待在途 U1
+      releaseFirstPatch();
+      await pullPromise;
+
+      // 只有旧账号那一次 PATCH；排队续跑不得把旧账号遗留数据写入新账号
+      expect(patches.map((p) => p.url.match(/users\/([^/]+)\//)[1])).toEqual([uid]);
+      expect(JSON.stringify(patches[0].items)).toContain('A-secret-leftover');
+      // 切换后的强制拉取仍应把新账号的云端快照应用下来
+      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
     } finally {
       vi.useRealTimers();
     }

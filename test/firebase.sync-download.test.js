@@ -231,29 +231,47 @@ describe('syncFromCloud', () => {
 
     await expect(fb.syncFromCloud()).rejects.toThrow();
   });
+
+  it('records the signed-in uid as the sync baseline after applying cloud data', async () => {
+    const fb = loadFirebaseModule();
+    const { storage, uid } = await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+        items: [{ id: 'cloud' }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+        updateTime: '2024-06-02T00:00:00.000000000Z',
+      })))],
+    });
+
+    await fb.syncFromCloud({ force: true });
+
+    expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+  });
 });
 
 describe('_pullAfterSignIn', () => {
   it('forces a pull after an account switch even when the stored cloud ts is newer', async () => {
     const fb = loadFirebaseModule();
     const cloudItems = [{ id: 'account-b-cloud' }];
-    const { storage } = await setupSignedInFirebase(fb, {
+    const { storage, uid } = await setupSignedInFirebase(fb, {
       extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
         items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
         updateTime: '2024-06-02T00:00:00.000000000Z',
       })))],
     });
+    // 持久化基线仍指向上一次成功同步的账号 → 切号未解决
+    storage._data._fb_sync_baseline_uid = 'account-a';
+    await fb._loadAuth();
     // 场景：上一次同步时间戳比新账号云文档还新（旧账号残留）
     storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
     await fb._loadCloudSyncTs();
     globalThis.items = [{ id: 'leftover-from-account-a' }];
 
-    await fb._pullAfterSignIn(true);
+    await fb._pullAfterSignIn();
 
     expect(globalThis.items).toEqual(cloudItems);
+    expect(storage._data._fb_sync_baseline_uid).toBe(uid);
   });
 
-  it('keeps the non-forced pull semantics when pull is not forced', async () => {
+  it('keeps the non-forced pull semantics on a first sign-in without a baseline', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -264,14 +282,14 @@ describe('_pullAfterSignIn', () => {
           updateTime: '2024-06-02T00:00:00.000000000Z',
         })))],
       });
-      // 同一场景，_pullAfterSignIn(false)：旧 _lastCloudTs 使 syncFromCloud 跳过，
-      // items 保持 leftover，且（无脏标记时）不排上传
+      // 无基线（全新设备首次登录）：_pullAfterSignIn() 保持非强制语义，
+      // 旧 _lastCloudTs 使 syncFromCloud 跳过，items 保持 leftover，且不排上传
       const leftoverItems = [{ id: 'leftover-from-account-a' }];
       storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
       await fb._loadCloudSyncTs();
       globalThis.items = leftoverItems;
 
-      await fb._pullAfterSignIn(false);
+      await fb._pullAfterSignIn();
 
       expect(globalThis.items).toBe(leftoverItems);
       expect(vi.getTimerCount()).toBe(0);
@@ -320,6 +338,61 @@ describe('_pullAfterSignIn', () => {
       // fail-safe：拉取失败不代表“云端无数据”，不得把本地脏数据 PATCH 到新账号文档
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('blocks automatic uploads until a switched account has been pulled successfully', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      let getFails = true;
+      let patchCalls = 0;
+      const cloudItems = [{ id: 'account-b-cloud' }];
+      const { storage, uid } = await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => {
+            if (getFails) throw new TypeError('network down');
+            return jsonResponse(200, firestoreDoc(fb, {
+              items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+              updateTime: '2024-06-02T00:00:00.000000000Z',
+            }));
+          }),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000000Z' });
+          }),
+        ],
+      });
+      // 持久化基线仍指向上一账号 → 切号未解决
+      storage._data._fb_sync_baseline_uid = 'account-a';
+      await fb._loadAuth();
+
+      globalThis.items = [{ id: 'leftover-from-account-a' }];
+      await fb.markLocalCloudDataChanged();   // 本地脏数据（上一账号残留）
+      vi.clearAllTimers();                    // 只观察拉取/自动上传行为
+
+      await fb._pullAfterSignIn();            // 基线≠uid → 内部强制拉取，GET 抛错
+
+      // fail-safe：拉取失败不代表“云端无数据”，不得把本地脏数据 PATCH 到新账号文档
+      expect(vi.getTimerCount()).toBe(0);
+
+      // 拉取失败后的本地编辑：自动上传必须因切号未解决而跳过
+      await fb.markLocalCloudDataChanged();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+
+      // 网络恢复后再次拉取：云端为准，脏被清，基线跟进
+      getFails = false;
+      await fb._pullAfterSignIn();
+
+      expect(globalThis.items).toEqual(cloudItems);
+      expect(fb._isDirty()).toBe(false);
+      expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+      expect(fb._needsSwitchPull()).toBe(false);
       expect(patchCalls).toBe(0);
     } finally {
       vi.useRealTimers();

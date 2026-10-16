@@ -191,8 +191,6 @@ describe('fbSignOut', () => {
     expect(storage._data).not.toHaveProperty('_fb_email_verified');
     expect(storage._data).not.toHaveProperty('_fb_email');
     expect(storage._data).not.toHaveProperty('_fb_cloud_sync_ts');
-    // 内存同步时间戳必须随登出清零，否则切号后会跳过新账号的云端数据
-    expect(fb._isDirty()).toBe(false);      // 无编辑时不该被登出污染
   });
 
   it('cancels a pending sync timer on sign out', async () => {
@@ -218,12 +216,12 @@ describe('fbSignOut', () => {
     }
   });
 
-  it('keeps _fb_last_uid after sign out so the next sign-in can detect an account switch', async () => {
+  it('keeps _fb_sync_baseline_uid after sign out so the next sign-in can detect an account switch', async () => {
     const fb = loadFirebaseModule();
     const storage = createMockChromeStorage({
       _fb_refresh: 'refresh-token',
       _fb_uid: 'user-uid',
-      _fb_last_uid: 'user-uid',
+      _fb_sync_baseline_uid: 'user-uid',
       _fb_email_verified: true,
       _fb_email: 'user@example.com',
     });
@@ -232,7 +230,7 @@ describe('fbSignOut', () => {
 
     await fb.fbSignOut();
 
-    expect(storage._data._fb_last_uid).toBe('user-uid');
+    expect(storage._data._fb_sync_baseline_uid).toBe('user-uid');
   });
 
   it('resets the in-memory cloud ts on sign out so a later pull is not skipped', async () => {

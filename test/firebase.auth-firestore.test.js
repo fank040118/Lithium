@@ -195,7 +195,6 @@ describe('_saveAuth', () => {
     });
     expect(mock._data._fb_refresh).toBe('refresh-token');
     expect(mock._data._fb_uid).toBe('user-uid');
-    expect(mock._data._fb_last_uid).toBe('user-uid');
     expect(mock._data._fb_email_verified).toBe(true);
     expect(mock._data._fb_email).toBe('user@example.com');
   });
@@ -433,6 +432,38 @@ describe('_getToken', () => {
     expect(fb.fbIsSignedIn()).toBe(true);
     await expect(fb._getToken()).rejects.toMatchObject({ code: 'auth', status: 404 });
     expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('discards a refresh response that lands after sign-out instead of reviving the session', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    let releaseToken;
+    const tokenGate = new Promise((resolve) => { releaseToken = resolve; });
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => {
+        await tokenGate;
+        return jsonResponse(200, {
+          id_token: 'revived-token',
+          expires_in: '3600',
+          refresh_token: 'revived-refresh',
+          user_id: 'user-1',
+        });
+      },
+    }]);
+
+    await fb._loadAuth();
+    const tokenPromise = fb._getToken();   // 刷新请求挂起在网关上
+
+    await fb.fbSignOut();                  // 登出后刷新响应才落地
+    releaseToken();
+    const token = await tokenPromise;
+
+    expect(token).toBeNull();
+    expect(fb.fbIsSignedIn()).toBe(false);
+    expect(storage._data).not.toHaveProperty('_fb_refresh');
+    expect(storage._data).not.toHaveProperty('_fb_uid');
   });
 });
 

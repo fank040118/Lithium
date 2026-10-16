@@ -16,9 +16,10 @@ const FB_EDIT_REV_KEY = '_fb_edit_rev';
 const FB_SYNCED_REV_KEY = '_fb_synced_rev';
 const FB_LEGACY_LOCAL_TS_KEY = '_fb_local_sync_ts';
 const FB_CLOUD_SYNC_TS_KEY = '_fb_cloud_sync_ts';
-// Last account whose auth state was persisted. Kept across sign-out so the
-// next sign-in can tell whether a different account took over.
-const FB_LAST_UID_KEY = '_fb_last_uid';
+// Account whose cloud snapshot the local state is currently based on. Written
+// after every successful pull/upload and kept across sign-out so the next
+// sign-in can tell whether the local data belongs to a previous account.
+const FB_BASELINE_UID_KEY = '_fb_sync_baseline_uid';
 
 const _fbStore = () =>
   globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local || null;
@@ -31,7 +32,11 @@ let _refreshToken = null;
 let _uid = null;
 let _emailVerified = false;
 let _email = null;
-let _lastAuthUid = null; // uid stored by the previous _saveAuth (account-switch detection)
+let _baselineUid = null; // sync baseline, persisted as FB_BASELINE_UID_KEY
+// Monotonic identity counter. Bumped on every sign-out and sign-in so late
+// responses (token refresh, queued upload) from a previous session can be
+// detected and dropped instead of touching the new session's state.
+let _authEpoch = 0;
 
 // Categorized sync error so callers can show different feedback per error type.
 class CloudSyncError extends Error {
@@ -47,18 +52,15 @@ class CloudSyncError extends Error {
 async function _loadAuth() {
   const s = _fbStore();
   if (!s) return;
-  const d = await s.get(['_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email', FB_LAST_UID_KEY]);
+  const d = await s.get(['_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email', FB_BASELINE_UID_KEY]);
   _refreshToken = d._fb_refresh || null;
   _uid = d._fb_uid || null;
   _emailVerified = !!d._fb_email_verified;
   _email = d._fb_email || null;
-  _lastAuthUid = d[FB_LAST_UID_KEY] || null;
+  _baselineUid = d[FB_BASELINE_UID_KEY] || null;
 }
 
 async function _saveAuth() {
-  // Mirror the persisted marker in memory too, so switch detection works even
-  // when storage is unavailable.
-  _lastAuthUid = _uid;
   const s = _fbStore();
   if (!s) return;
   await s.set({
@@ -66,21 +68,23 @@ async function _saveAuth() {
     _fb_uid: _uid,
     _fb_email_verified: _emailVerified,
     _fb_email: _email,
-    [FB_LAST_UID_KEY]: _uid,
   });
 }
 
 async function _clearAuth() {
+  // Any in-flight token refresh or queued upload was started for the session
+  // being torn down; bumping the epoch makes their late responses no-ops.
+  _authEpoch += 1;
   _idToken = null;
   _tokenExpiry = 0;
   _refreshToken = null;
   _uid = null;
   _emailVerified = false;
   _email = null;
-  // Drop the sync baseline along with the account: it belongs to the user who
-  // just signed out, and keeping it would make later pulls skip the next
-  // account's cloud data. FB_LAST_UID_KEY is intentionally kept for switch
-  // detection; the rev keys are machine-local counters and also stay.
+  // The sync baseline is intentionally kept across sign-out: it belongs to the
+  // account that just signed out, and keeping it is what tells the next
+  // sign-in that the local state still contains that account's data (see
+  // _needsSwitchPull). The rev keys are machine-local counters and also stay.
   _lastCloudTs = 0;
   _lastSyncDisplayTs = 0;
   clearTimeout(_syncTimer);
@@ -97,6 +101,11 @@ async function _clearAuth() {
 async function _getToken() {
   if (_idToken && Date.now() < _tokenExpiry - 60000) return _idToken;
   if (!_refreshToken) return null;
+
+  // Capture the identity this refresh belongs to. A response that lands after
+  // a sign-out/sign-in must never touch the new session's state — otherwise a
+  // late refresh would revive the signed-out account (and its uid).
+  const epoch = _authEpoch;
 
   let res;
   try {
@@ -120,6 +129,9 @@ async function _getToken() {
     const msg = data.error?.message || '';
     const fatal = res.status === 400 && /INVALID_GRANT|USER_DISABLED|TOKEN_EXPIRED/.test(msg);
     if (fatal || res.status === 401 || res.status === 403) {
+      // The identity already changed: this failure belongs to the previous
+      // session, so leave the new session's auth state untouched.
+      if (epoch !== _authEpoch) return null;
       await _clearAuth();
       throw new CloudSyncError('auth', res.status, new Error(msg));
     }
@@ -131,6 +143,8 @@ async function _getToken() {
     }
     throw new CloudSyncError('auth', res.status, new Error(msg));
   }
+
+  if (epoch !== _authEpoch) return null;
 
   _idToken = data.id_token;
   _tokenExpiry = Date.now() + (Number(data.expires_in) || 3600) * 1000;
@@ -161,6 +175,8 @@ async function fbSignIn(email, password) {
   );
   const d = await res.json();
   if (!res.ok) throw new Error(d.error?.message || 'LOGIN_FAILED');
+  // A new identity invalidates in-flight work from the previous session.
+  _authEpoch += 1;
   _idToken = d.idToken;
   _tokenExpiry = Date.now() + Number(d.expiresIn) * 1000;
   _refreshToken = d.refreshToken;
@@ -181,6 +197,8 @@ async function fbSignUp(email, password) {
   );
   const d = await res.json();
   if (!res.ok) throw new Error(d.error?.message || 'SIGNUP_FAILED');
+  // A new identity invalidates in-flight work from the previous session.
+  _authEpoch += 1;
   _idToken = d.idToken;
   _tokenExpiry = Date.now() + Number(d.expiresIn) * 1000;
   _refreshToken = d.refreshToken;
@@ -475,11 +493,42 @@ let _lastSyncError = null;
 
 function _isDirty() { return _editRev !== _syncedRev; }
 
+// True while the local state is still based on a different account's cloud
+// snapshot, i.e. an account switch has not been fully resolved yet.
+//
+// Product semantics (intentionally kept from before this mechanism existed):
+// with no baseline at all — a fresh device, first ever sign-in — a dirty local
+// state still wins over an existing cloud document in syncFromCloud's conflict
+// branch. Only when a baseline exists AND points at another uid does the
+// signed-in account's cloud snapshot become authoritative.
+function _needsSwitchPull() {
+  return !!_baselineUid && _baselineUid !== _uid;
+}
+
+// Persist the account whose cloud snapshot the local state is currently based
+// on. Called after every successful pull and every successful upload; survives
+// sign-out so the next sign-in can detect an account switch. Mirrors the value
+// in memory even when storage is unavailable.
+async function _saveBaselineUid(uid) {
+  _baselineUid = uid || null;
+  const s = _fbStore();
+  if (!s) return;
+  await s.set({ [FB_BASELINE_UID_KEY]: _baselineUid });
+}
+
 async function _doSyncToCloud(options = {}) {
   const { force = false } = options;
+  const epoch = _authEpoch;
   if (!fbIsSignedIn() || !fbIsEmailVerified()) {
     throw new CloudSyncError('not-signed-in', 0);
   }
+
+  // While an account switch is unresolved, automatic uploads must not run: the
+  // local state still contains the previous account's data and would be
+  // PATCHed into the signed-in account's document. The manual "upload" button
+  // calls this with force: true and is an explicit user action, so it bypasses
+  // this guard on purpose.
+  if (!force && _needsSwitchPull()) return { ok: true, skipped: true };
 
   // Skip when the local state is clean and not forced.
   if (!force && !_isDirty()) return { ok: true, skipped: true };
@@ -492,6 +541,10 @@ async function _doSyncToCloud(options = {}) {
   // in flight stay dirty and get picked up by a follow-up upload.
   const revAtStart = _editRev;
   const now = Date.now();
+  // Re-check right before the request: if the identity changed after this call
+  // was accepted (e.g. the queued continuation raced with a sign-out), do not
+  // PATCH the new account's document.
+  if (epoch !== _authEpoch) return { ok: true, skipped: true };
   const cloudUpdateTime = await _fsSet({
     items: JSON.stringify(items),
     engines: JSON.stringify(customEngines),
@@ -510,6 +563,8 @@ async function _doSyncToCloud(options = {}) {
   await _saveCloudSyncTs(serverMs);
   _syncedRev = revAtStart;
   await _saveRevState();
+  // The cloud now holds this local state, so it becomes the sync baseline.
+  await _saveBaselineUid(_uid);
 
   _syncState = 'idle';
   _updateSyncUI(serverMs);
@@ -518,11 +573,14 @@ async function _doSyncToCloud(options = {}) {
 }
 
 function syncToCloud(options = {}) {
+  // A queued continuation belongs to the session that queued it: if the
+  // account changed while the previous upload was in flight, it must be
+  // dropped instead of uploading the old local state to the new account.
+  const epoch = _authEpoch;
   if (_syncInFlight) {
-    return _syncInFlight.then(
-      () => syncToCloud(options),
-      () => syncToCloud(options)
-    );
+    const continueIfSameSession = () =>
+      epoch === _authEpoch ? syncToCloud(options) : Promise.resolve({ ok: true, skipped: true });
+    return _syncInFlight.then(continueIfSameSession, continueIfSameSession);
   }
 
   _syncInFlight = _doSyncToCloud(options);
@@ -557,6 +615,9 @@ async function syncFromCloud(options = {}) {
     if (!doc?.fields) {
       _syncState = 'idle';
       _updateSyncUI();
+      // Nothing to pull: the signed-in account's state is now considered the
+      // baseline, so subsequent automatic uploads are allowed again.
+      await _saveBaselineUid(_uid);
       return false;
     }
 
@@ -568,6 +629,7 @@ async function syncFromCloud(options = {}) {
     if (!force && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
       _syncState = 'idle';
       _updateSyncUI();
+      await _saveBaselineUid(_uid);
       // A failed upload can leave local edits dirty with no timer pending, so
       // re-queue them here instead of waiting for the next user edit.
       if (_isDirty()) scheduleSyncToCloud();
@@ -580,7 +642,9 @@ async function syncFromCloud(options = {}) {
 
     // Last-writer-on-this-device-wins: arriving here already means the cloud
     // has changed; if the local state is dirty, prefer local edits and requeue
-    // an upload. This is an intentional design choice.
+    // an upload. This is an intentional design choice. Deliberately no
+    // baseline write here: treating the local state as "synced" could unblock
+    // automatic uploads of a previous account's leftovers.
     if (!force && _isDirty() && hasCloudTimestamp) {
       _syncState = 'idle';
       _updateSyncUI();
@@ -626,6 +690,8 @@ async function syncFromCloud(options = {}) {
     // The applied cloud snapshot is now the synced baseline: local state is clean.
     _syncedRev = _editRev;
     await _saveRevState();
+    // The local state now mirrors this account's cloud document.
+    await _saveBaselineUid(_uid);
 
     applyWallpaper();
     applyMainGridColumns();
@@ -682,13 +748,16 @@ async function markLocalCloudDataChanged(options = {}) {
 // Shared "pull after sign-in" entry point for interactive login, email
 // verification and startup restore: pull the cloud snapshot and, when the
 // cloud explicitly has no data, queue an upload of the local state instead.
-// `forcePull` is used right after an account switch so the new account's cloud
-// document always wins over whatever the previous account left on this device.
+// The pull is forced whenever the persisted sync baseline belongs to another
+// account (see _needsSwitchPull), so the signed-in account's document always
+// wins over whatever a previous account left on this device. `forcePull`
+// remains as an explicit override for tests/tools.
 async function _pullAfterSignIn(forcePull = false) {
   if (!fbIsSignedIn() || !_uid) return;
+  const effectiveForce = forcePull || _needsSwitchPull();
   let hadCloudData = false;
   try {
-    hadCloudData = await syncFromCloud(forcePull ? { force: true } : {});
+    hadCloudData = await syncFromCloud(effectiveForce ? { force: true } : {});
   } catch (err) {
     // Fail-safe: a failed pull says nothing about the cloud state, so it must
     // not be treated as "no cloud data". Never queue an upload here — after an
@@ -888,9 +957,6 @@ async function _handleLogin() {
   errEl.textContent = '';
 
   try {
-    // Capture before fbSignIn: _saveAuth() refreshes _lastAuthUid on success,
-    // and we need the account that was signed in before this attempt.
-    const previousUid = _lastAuthUid;
     await fbSignIn(email, password);
     if (!fbIsEmailVerified()) {
       _updateVerifyEmailDisplay(email);
@@ -900,10 +966,9 @@ async function _handleLogin() {
     }
     _hideLoginOverlay();
     _updateSyncUI();
-    // A different account than the last one seen here: its cloud document is
-    // authoritative, so force the pull instead of trusting the previous
-    // account's local sync timestamp.
-    await _pullAfterSignIn(!!previousUid && previousUid !== _uid);
+    // Whether this is an account switch is decided inside _pullAfterSignIn
+    // from the persisted sync baseline, so no uid needs to be captured here.
+    await _pullAfterSignIn();
   } catch (e) {
     errEl.textContent = _friendlyAuthError(e.message);
   } finally {

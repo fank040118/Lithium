@@ -22,6 +22,7 @@ const EXPORTED_NAMES = [
   'syncToCloud',
   'syncFromCloud',
   '_pullAfterSignIn',
+  '_needsSwitchPull',
   'scheduleSyncToCloud',
   '_toFV',
   '_fromFV',
