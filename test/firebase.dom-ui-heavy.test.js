@@ -1164,7 +1164,7 @@ function cleanupFbInitIntercepts() {
   }
 
   delete globalThis._loadAuth;
-  delete globalThis._loadLocalSyncTs;
+  delete globalThis._loadRevState;
   delete globalThis._loadCloudSyncTs;
   delete globalThis._updateSyncUI;
   delete globalThis._bindSyncActionButtons;
@@ -1203,7 +1203,7 @@ describe('fbInit', () => {
     installFbInitEventTracking();
 
     const _loadAuth = vi.fn(async () => {});
-    const _loadLocalSyncTs = vi.fn(async () => {});
+    const _loadRevState = vi.fn(async () => {});
     const _loadCloudSyncTs = vi.fn(async () => {});
     const _updateSyncUI = vi.fn();
     const _bindSyncActionButtons = vi.fn();
@@ -1223,7 +1223,7 @@ describe('fbInit', () => {
     const showSigninNotice = vi.fn();
 
     globalThis._loadAuth = _loadAuth;
-    globalThis._loadLocalSyncTs = _loadLocalSyncTs;
+    globalThis._loadRevState = _loadRevState;
     globalThis._loadCloudSyncTs = _loadCloudSyncTs;
     globalThis._updateSyncUI = _updateSyncUI;
     globalThis._bindSyncActionButtons = _bindSyncActionButtons;
@@ -1242,7 +1242,7 @@ describe('fbInit', () => {
     globalThis.fbIsEmailVerified = fbIsEmailVerified;
     window.showSigninNotice = showSigninNotice;
 
-    return { fb, _loadAuth, _loadLocalSyncTs, _loadCloudSyncTs, _updateSyncUI, _bindSyncActionButtons, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, scheduleSyncToCloud, fbSignOut, fbIsSignedIn, fbIsEmailVerified, showSigninNotice };
+    return { fb, _loadAuth, _loadRevState, _loadCloudSyncTs, _updateSyncUI, _bindSyncActionButtons, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, scheduleSyncToCloud, fbSignOut, fbIsSignedIn, fbIsEmailVerified, showSigninNotice };
   }
 
   it('shows signin notice and binds sync action buttons when not signed in', async () => {
@@ -1339,7 +1339,7 @@ describe('fbInit', () => {
     const _updateSyncUI = vi.fn();
     globalThis._updateSyncUI = _updateSyncUI;
     globalThis._loadAuth = vi.fn(async () => {});
-    globalThis._loadLocalSyncTs = vi.fn(async () => {});
+    globalThis._loadRevState = vi.fn(async () => {});
     globalThis._loadCloudSyncTs = vi.fn(async () => {});
     globalThis._bindSyncActionButtons = vi.fn();
     globalThis._showAuthMode = vi.fn();

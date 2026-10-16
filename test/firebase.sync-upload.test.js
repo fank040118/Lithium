@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { jsonResponse } from './helpers/mockFetch.js';
 import { setupSignedInFirebase, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
@@ -37,7 +37,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
 
     const expectedMs = new Date('2024-06-01T12:00:00.500Z').getTime();
     expect(result).toEqual({ ok: true, skipped: false, ts: expectedMs });
-    expect(await fb._loadLocalSyncTs()).toBe(expectedMs);
+    expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
     expect(await fb._loadCloudSyncTs()).toBe(expectedMs);
   });
 
@@ -77,5 +77,33 @@ describe('_doSyncToCloud / syncToCloud', () => {
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     expect(patchCalls).toBe(2);
+  });
+
+  it('does not lose an edit made while an upload is in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      let patchCalls = 0;
+      let releaseFirstPatch;
+      const firstPatchGate = new Promise((resolve) => { releaseFirstPatch = resolve; });
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestorePatchRoute(async () => {
+          patchCalls += 1;
+          if (patchCalls === 1) await firstPatchGate;
+          return jsonResponse(200, { updateTime: `2024-01-0${patchCalls}T00:00:00.000000000Z` });
+        })],
+      });
+
+      await fb.markLocalCloudDataChanged();          // 编辑 1
+      await vi.advanceTimersByTimeAsync(2000);       // 触发上传（挂起在网关上）
+      await fb.markLocalCloudDataChanged();          // 编辑 2（上传在途）
+      releaseFirstPatch();
+      await vi.advanceTimersByTimeAsync(4000);       // 第二次上传
+
+      expect(patchCalls).toBe(2);
+      expect(await fb._loadRevState()).toEqual({ editRev: 2, syncedRev: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

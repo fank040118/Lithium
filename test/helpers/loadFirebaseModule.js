@@ -8,8 +8,9 @@ const FIREBASE_SRC = readFileSync(path.join(__dirname, '../../firebase.js'), 'ut
 const EXPORTED_NAMES = [
   '_normalizeTs',
   '_rfc3339ToMs',
-  '_loadLocalSyncTs',
-  '_saveLocalSyncTs',
+  '_loadRevState',
+  '_saveRevState',
+  '_isDirty',
   '_loadCloudSyncTs',
   '_saveCloudSyncTs',
   '_loadAuth',

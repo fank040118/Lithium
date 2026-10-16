@@ -12,7 +12,9 @@
 
 const FB_API_KEY = 'AIzaSyBtwj6EF347eJQS6W1WBdnXOB3LellcT1A';
 const FB_PROJECT_ID = 'mainpage-ext';
-const FB_LOCAL_SYNC_TS_KEY = '_fb_local_sync_ts';
+const FB_EDIT_REV_KEY = '_fb_edit_rev';
+const FB_SYNCED_REV_KEY = '_fb_synced_rev';
+const FB_LEGACY_LOCAL_TS_KEY = '_fb_local_sync_ts';
 const FB_CLOUD_SYNC_TS_KEY = '_fb_cloud_sync_ts';
 
 const _fbStore = () =>
@@ -291,19 +293,34 @@ function _rfc3339ToMs(value) {
   return Number.isFinite(d.getTime()) ? d.getTime() : 0;
 }
 
-async function _loadLocalSyncTs() {
+// Local edit counter vs. the edit rev last known to be on the server.
+// `dirty` is derived state: _editRev !== _syncedRev. Both values persist so
+// pending edits survive page reloads and stay isolated from server clocks.
+//
+// One-time migration from the legacy local sync timestamp: a local ts newer
+// than the last known cloud ts means there were unsynced local edits.
+// Callers must run _loadCloudSyncTs() first so _lastCloudTs is populated.
+async function _loadRevState() {
   const s = _fbStore();
-  if (!s) return 0;
-  const d = await s.get([FB_LOCAL_SYNC_TS_KEY]);
-  _lastLocalTs = _normalizeTs(d[FB_LOCAL_SYNC_TS_KEY]);
-  return _lastLocalTs;
+  if (!s) return { editRev: _editRev, syncedRev: _syncedRev };
+  const d = await s.get([FB_EDIT_REV_KEY, FB_SYNCED_REV_KEY, FB_LEGACY_LOCAL_TS_KEY]);
+  if (d[FB_EDIT_REV_KEY] === undefined) {
+    const dirty = _normalizeTs(d[FB_LEGACY_LOCAL_TS_KEY]) > _lastCloudTs;
+    _editRev = dirty ? 1 : 0;
+    _syncedRev = 0;
+    await s.remove([FB_LEGACY_LOCAL_TS_KEY]);
+    await _saveRevState();
+  } else {
+    _editRev = _normalizeTs(d[FB_EDIT_REV_KEY]);
+    _syncedRev = _normalizeTs(d[FB_SYNCED_REV_KEY]);
+  }
+  return { editRev: _editRev, syncedRev: _syncedRev };
 }
 
-async function _saveLocalSyncTs(ts) {
-  _lastLocalTs = _normalizeTs(ts);
+async function _saveRevState() {
   const s = _fbStore();
   if (!s) return;
-  await s.set({ [FB_LOCAL_SYNC_TS_KEY]: _lastLocalTs });
+  await s.set({ [FB_EDIT_REV_KEY]: _editRev, [FB_SYNCED_REV_KEY]: _syncedRev });
 }
 
 async function _loadCloudSyncTs() {
@@ -433,11 +450,13 @@ async function _parseFirestoreError(res) {
 let _syncTimer = null;
 let _syncInFlight = null; // Promise | null
 let _lastCloudTs = 0;     // 来自 Firestore Document.updateTime（毫秒）
-let _lastLocalTs = 0;     // 本地用户编辑时间戳（毫秒）
-let _hasLocalChanges = false; // runtime dirty flag; persists via _lastLocalTs
+let _editRev = 0;         // local edit counter, persisted as _fb_edit_rev
+let _syncedRev = 0;       // edit rev last uploaded to the cloud, persisted as _fb_synced_rev
 // _syncState and _lastSyncError are consumed by _updateSyncUI in Task 3.
 let _syncState = 'idle';  // 'idle' | 'uploading' | 'downloading' | 'error'
 let _lastSyncError = null;
+
+function _isDirty() { return _editRev !== _syncedRev; }
 
 async function _doSyncToCloud(options = {}) {
   const { force = false } = options;
@@ -445,13 +464,16 @@ async function _doSyncToCloud(options = {}) {
     throw new CloudSyncError('not-signed-in', 0);
   }
 
-  // Skip when no local changes and not forced.
-  if (!force && !_hasLocalChanges) return { ok: true, skipped: true };
+  // Skip when the local state is clean and not forced.
+  if (!force && !_isDirty()) return { ok: true, skipped: true };
 
   _syncState = 'uploading';
   _lastSyncError = null;
   _updateSyncUI();
 
+  // Snapshot the edit rev at upload start so edits made while this request is
+  // in flight stay dirty and get picked up by a follow-up upload.
+  const revAtStart = _editRev;
   const now = Date.now();
   const cloudUpdateTime = await _fsSet({
     items: JSON.stringify(items),
@@ -469,11 +491,12 @@ async function _doSyncToCloud(options = {}) {
     throw new CloudSyncError('firestore', 0, new Error('Invalid updateTime from server'));
   }
   await _saveCloudSyncTs(serverMs);
-  await _saveLocalSyncTs(serverMs);
-  _hasLocalChanges = false;
+  _syncedRev = revAtStart;
+  await _saveRevState();
 
   _syncState = 'idle';
   _updateSyncUI(serverMs);
+  if (_isDirty()) scheduleSyncToCloud();
   return { ok: true, skipped: false, ts: serverMs };
 }
 
@@ -529,9 +552,10 @@ async function syncFromCloud(options = {}) {
     // 兼容：旧数据仍用 updated_at 字段显示
     const legacyCloudTs = _fromFV(f.updated_at) || 0;
 
-    // Last-writer-on-this-device-wins: when both local and cloud have changed,
-    // prefer local edits and requeue an upload. This is an intentional design choice.
-    if (!force && _lastLocalTs > _lastCloudTs && cloudTsMs > _lastCloudTs) {
+    // Last-writer-on-this-device-wins: arriving here already means the cloud
+    // has changed; if the local state is dirty, prefer local edits and requeue
+    // an upload. This is an intentional design choice.
+    if (!force && _isDirty() && hasCloudTimestamp) {
       _syncState = 'idle';
       _updateSyncUI();
       scheduleSyncToCloud();
@@ -573,8 +597,9 @@ async function syncFromCloud(options = {}) {
     }
 
     await _saveCloudSyncTs(cloudTsMs);
-    await _saveLocalSyncTs(cloudTsMs);
-    _hasLocalChanges = false;
+    // The applied cloud snapshot is now the synced baseline: local state is clean.
+    _syncedRev = _editRev;
+    await _saveRevState();
 
     applyWallpaper();
     applyMainGridColumns();
@@ -583,8 +608,10 @@ async function syncFromCloud(options = {}) {
     _syncState = 'idle';
     _updateSyncUI(cloudTsMs || legacyCloudTs);
     if (shouldResyncCloud) {
-      // Cloud data was normalized on apply; re-upload so other devices see the canonical form.
-      _hasLocalChanges = true;
+      // Cloud data was normalized on apply; bump the edit rev so the canonical
+      // form is re-uploaded for other devices.
+      _editRev += 1;
+      await _saveRevState();
       scheduleSyncToCloud();
     }
     if (typeof globalThis.scheduleIconCacheRefresh === 'function') {
@@ -620,9 +647,8 @@ function scheduleSyncToCloud() {
 async function markLocalCloudDataChanged(options = {}) {
   const { userEdit = true } = options;
   if (userEdit) {
-    const now = Date.now();
-    await _saveLocalSyncTs(now);
-    _hasLocalChanges = true;
+    _editRev += 1;
+    await _saveRevState();
   }
   scheduleSyncToCloud();
 }
@@ -1069,9 +1095,8 @@ async function _handleCheckVerified() {
 
 async function fbInit() {
   await _loadAuth();
-  await _loadLocalSyncTs();
   await _loadCloudSyncTs();
-  if (_lastLocalTs > _lastCloudTs) _hasLocalChanges = true;
+  await _loadRevState();
   // Seed the displayed sync time from the persisted cloud timestamp so a
   // fresh page load shows "synced at HH:MM" immediately instead of falling
   // through to the "syncing..." placeholder while nothing has actually

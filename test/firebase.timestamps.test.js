@@ -74,16 +74,6 @@ describe('_rfc3339ToMs', () => {
 });
 
 describe('sync timestamp persistence', () => {
-  it('_saveLocalSyncTs then _loadLocalSyncTs round-trips the value', async () => {
-    const fb = loadFirebaseModule();
-    globalThis.chrome = createMockChromeStorage();
-
-    await fb._saveLocalSyncTs(1700000000000);
-    const loaded = await fb._loadLocalSyncTs();
-
-    expect(loaded).toBe(1700000000000);
-  });
-
   it('_saveCloudSyncTs then _loadCloudSyncTs round-trips the value', async () => {
     const fb = loadFirebaseModule();
     globalThis.chrome = createMockChromeStorage();
@@ -93,30 +83,44 @@ describe('sync timestamp persistence', () => {
 
     expect(loaded).toBe(1700000000000);
   });
+});
 
-  it('normalizes an invalid value to 0 before persisting', async () => {
+describe('sync rev state persistence', () => {
+  it('_loadRevState returns {editRev:0, syncedRev:0} when storage is empty', async () => {
     const fb = loadFirebaseModule();
     globalThis.chrome = createMockChromeStorage();
-
-    await fb._saveLocalSyncTs(-1);
-    const loaded = await fb._loadLocalSyncTs();
-
-    expect(loaded).toBe(0);
+    expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
   });
 
-  it('_loadLocalSyncTs returns 0 when storage has no value yet', async () => {
+  it('migrates the legacy _fb_local_sync_ts into a dirty rev and removes the legacy key', async () => {
     const fb = loadFirebaseModule();
-    globalThis.chrome = createMockChromeStorage();
-
-    expect(await fb._loadLocalSyncTs()).toBe(0);
+    const storage = createMockChromeStorage({
+      _fb_local_sync_ts: 1700000000000,
+      _fb_cloud_sync_ts: 1600000000000,
+    });
+    globalThis.chrome = storage;
+    await fb._loadCloudSyncTs();
+    expect(await fb._loadRevState()).toEqual({ editRev: 1, syncedRev: 0 });
+    expect(storage._data).not.toHaveProperty('_fb_local_sync_ts');
+    expect(storage._data._fb_edit_rev).toBe(1);
+    expect(storage._data._fb_synced_rev).toBe(0);
   });
 
-  it('returns 0 without throwing when no storage API is available', async () => {
+  it('migrates to a clean rev pair when the legacy local ts is not newer than the cloud ts', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({
+      _fb_local_sync_ts: 1500000000000,
+      _fb_cloud_sync_ts: 1600000000000,
+    });
+    await fb._loadCloudSyncTs();
+    expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
+  });
+
+  it('returns a clean rev pair without throwing when no storage API is available', async () => {
     const fb = loadFirebaseModule();
     globalThis.chrome = undefined;
     globalThis.browser = undefined;
-
-    expect(await fb._loadLocalSyncTs()).toBe(0);
-    await expect(fb._saveLocalSyncTs(123)).resolves.toBeUndefined();
+    expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
+    await expect(fb._saveRevState()).resolves.toBeUndefined();
   });
 });

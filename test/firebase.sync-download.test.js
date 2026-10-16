@@ -89,7 +89,7 @@ describe('syncFromCloud', () => {
       });
       globalThis.items = sentinelItems;
       await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
-      await fb._saveLocalSyncTs(new Date('2024-06-01T12:00:00.000Z').getTime());
+      await fb.markLocalCloudDataChanged();
 
       const result = await fb.syncFromCloud();
 
@@ -112,7 +112,7 @@ describe('syncFromCloud', () => {
     });
     globalThis.items = [{ id: 'local-only' }];
     await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
-    await fb._saveLocalSyncTs(new Date('2024-06-01T12:00:00.000Z').getTime());
+    await fb.markLocalCloudDataChanged();
 
     const result = await fb.syncFromCloud({ force: true });
 
@@ -138,7 +138,9 @@ describe('syncFromCloud', () => {
         const result = await fb.syncFromCloud();
 
         expect(result).toBe(true);
-        expect(await fb._loadLocalSyncTs()).toBe(expectedTs);
+        expect(await fb._loadCloudSyncTs()).toBe(expectedTs);
+        expect(await fb._loadRevState()).toEqual({ editRev: 1, syncedRev: 0 });
+        expect(vi.getTimerCount()).toBe(1);
       } finally {
         delete globalThis.normalizeFolderChildItemSizes;
       }

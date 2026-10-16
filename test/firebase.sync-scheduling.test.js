@@ -104,16 +104,15 @@ describe('scheduleSyncToCloud', () => {
 });
 
 describe('markLocalCloudDataChanged', () => {
-  it('persists Date.now() as the local sync timestamp by default and schedules a sync', async () => {
+  it('increments the edit rev and schedules a sync by default', async () => {
     vi.useFakeTimers();
     try {
-      vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
       const fb = loadFirebaseModule();
       await signIn(fb, { verified: true });
 
       await fb.markLocalCloudDataChanged();
 
-      expect(await fb._loadLocalSyncTs()).toBe(Date.now());
+      expect(await fb._loadRevState()).toEqual({ editRev: 1, syncedRev: 0 });
       expect(vi.getTimerCount()).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -128,7 +127,7 @@ describe('markLocalCloudDataChanged', () => {
 
       await fb.markLocalCloudDataChanged({ userEdit: false });
 
-      expect(await fb._loadLocalSyncTs()).toBe(0);
+      expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
       expect(vi.getTimerCount()).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -140,13 +139,13 @@ describe('markLocalCloudDataChanged', () => {
     try {
       vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
       const fb = loadFirebaseModule();
-      // Storage must exist for _saveLocalSyncTs/_loadLocalSyncTs to persist,
+      // Storage must exist for _saveRevState/_loadRevState to persist,
       // but auth is intentionally never loaded so fbIsSignedIn() stays false.
       globalThis.chrome = createMockChromeStorage({});
 
       await fb.markLocalCloudDataChanged();
 
-      expect(await fb._loadLocalSyncTs()).toBe(Date.now());
+      expect(await fb._loadRevState()).toEqual({ editRev: 1, syncedRev: 0 });
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
