@@ -105,6 +105,10 @@ async function _clearAuth() {
   // _needsSwitchPull). The rev keys are machine-local counters and also stay.
   _lastCloudTs = 0;
   _lastSyncDisplayTs = 0;
+  // An unresolved sync conflict belongs to the session being torn down: drop it
+  // so the next sign-in starts clean (the conflict is re-detected on the next
+  // pull from its own persisted state, not from a stale pending record).
+  _clearConflictPending();
   clearTimeout(_syncTimer);
   _syncTimer = null;
   const s = _fbStore();
@@ -695,6 +699,9 @@ function _compareSnapshots(local, cloud) {
   };
 }
 
+// Whole-object assignment, NOT a partial merge: callers always pass the full
+// info shape (see the syncFromCloud conflict branch), so any omitted field here
+// would silently drop from the pending state.
 function _setConflictPending(info) {
   _conflictPending = info;
 }
@@ -715,13 +722,75 @@ function fbGetSyncConflict() {
 function _notifySyncConflict(info) {
   try {
     if (typeof globalThis.onSyncConflict === 'function') {
-      globalThis.onSyncConflict(info);
+      globalThis.onSyncConflict({ ...info });
     } else {
       console.warn('[firebase] sync conflict detected', info);
     }
   } catch {
     // ignore hook errors; the pending conflict is already set
   }
+}
+
+// Resolve a pending sync conflict by explicit user choice:
+//   'cloud' — apply the cloud snapshot unconditionally (drops local edits).
+//   'local' — force-upload the local state (keeps local edits).
+// Returns { ok: boolean, code?: string } so the host can react to each failure
+// mode. Both branches are fail-safe: a failure never silently picks a winner.
+async function fbResolveSyncConflict(choice) {
+  if (!fbIsSignedIn() || !fbIsEmailVerified()) {
+    return { ok: false, code: 'not-signed-in' };
+  }
+  if (!fbGetSyncConflict()) {
+    return { ok: false, code: 'no-conflict' };
+  }
+  if (choice !== 'cloud' && choice !== 'local') {
+    return { ok: false, code: 'invalid-choice' };
+  }
+
+  if (choice === 'cloud') {
+    // Capture the identity this resolution belongs to: a sign-out/sign-in while
+    // the GET is in flight must not be treated as "empty cloud" (which would
+    // queue an import upload against the new session).
+    const epoch = _authEpoch;
+    let applied;
+    try {
+      applied = await syncFromCloud({ mode: 'resolve-cloud', trigger: 'resolve-cloud' });
+    } catch (e) {
+      // A failed pull says nothing about the cloud state: keep the conflict
+      // pending so the user can retry (or pick 'local').
+      return { ok: false, code: e?.code || 'firestore' };
+    }
+    if (epoch !== _authEpoch) {
+      // The session changed while resolving; syncFromCloud already dropped the
+      // late response with zero writes. Not "no cloud data": no import upload.
+      return { ok: false, code: 'session-changed' };
+    }
+    if (!applied) {
+      // The cloud document no longer exists; syncFromCloud already cleared the
+      // conflict and set the baseline. Import the local state instead.
+      scheduleSyncToCloud();
+      return { ok: true, code: 'no-cloud-data' };
+    }
+    return { ok: true };
+  }
+
+  // choice === 'local'
+  let r;
+  try {
+    r = await syncToCloud({ force: true });
+  } catch (e) {
+    // The user's choice is recorded; a failed upload follows the existing
+    // error path (dirty state + retry on next edit). Clear the conflict so the
+    // automatic upload path resumes rather than staying paused forever.
+    _clearConflictPending();
+    return { ok: false, code: e?.code || 'firestore' };
+  }
+  if (r?.skipped) {
+    // The storage-load firewall blocked the upload (nothing was attempted);
+    // keep the conflict pending so the user's choice is not lost.
+    return { ok: false, code: 'storage-read-only' };
+  }
+  return { ok: true };
 }
 
 async function _doSyncToCloud(options = {}) {
@@ -1103,6 +1172,13 @@ async function _handleSyncBtn(direction) {
 
   try {
     if (direction === 'upload') {
+      // While a conflict is pending, the upload button re-surfaces the conflict
+      // instead of force-uploading: the local state disagrees with the cloud
+      // and must not overwrite it until the user explicitly picks a side.
+      if (fbGetSyncConflict()) {
+        _notifySyncConflict({ ..._conflictPending, trigger: 'manual-upload' });
+        return;
+      }
       // The forced upload bypasses _doSyncToCloud's firewall guard on purpose;
       // stop here with a user-visible explanation instead of uploading defaults.
       if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {

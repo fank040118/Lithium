@@ -29,6 +29,7 @@ const EXPORTED_NAMES = [
   '_needsSwitchPull',
   'scheduleSyncToCloud',
   'fbGetSyncConflict',
+  'fbResolveSyncConflict',
   '_toFV',
   '_fromFV',
   '_getToken',

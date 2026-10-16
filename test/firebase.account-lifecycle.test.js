@@ -274,6 +274,31 @@ describe('fbSignOut', () => {
 
     expect(fb.fbIsSignedIn()).toBe(false);
   });
+
+  it('clears a pending sync conflict on sign out', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, {
+        updateTime: '2024-06-02T00:00:00.000000000Z',
+        fields: {
+          items: fb._toFV(JSON.stringify([{ id: 'cloud' }])),
+          engines: fb._toFV(JSON.stringify([])),
+          selected_engine: fb._toFV('google'),
+          clocks: fb._toFV(JSON.stringify([])),
+          grid_columns: fb._toFV(4),
+        },
+      }))],
+    });
+    globalThis.items = [{ id: 'local-only' }];
+    await fb.markLocalCloudDataChanged();
+
+    await fb.syncFromCloud();
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+    await fb.fbSignOut();
+
+    expect(fb.fbGetSyncConflict()).toBeNull();
+  });
 });
 
 describe('fbDeleteAccount', () => {

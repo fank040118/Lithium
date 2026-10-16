@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { jsonResponse, createRoutedFetch } from './helpers/mockFetch.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
+import { installUiMocks } from './helpers/uiMocks.js';
 import { TEST_UID, setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
 
 // A faithful stand-in for app.js's sanitizeItemsShape (which is not loaded in
@@ -58,6 +59,15 @@ function firestoreDoc(fb, { items, engines, selectedEngine, clocks, gridColumns,
   };
 }
 
+// Shorthand for a well-formed cloud document where only `items` differs.
+const CLOUD_TS = '2024-06-02T00:00:00.000000000Z';
+const PATCH_TS = '2024-06-03T00:00:00.000000000Z';
+function cloudDoc(fb, items, updateTime = CLOUD_TS) {
+  return firestoreDoc(fb, {
+    items, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4, updateTime,
+  });
+}
+
 afterEach(() => {
   delete globalThis.chrome;
   delete globalThis.fetch;
@@ -74,6 +84,9 @@ afterEach(() => {
   delete globalThis.normalizeFolderChildItemSizes;
   delete globalThis.clampMainGridColumns;
   delete globalThis.onSyncConflict;
+  delete globalThis.isStorageLoadFailed;
+  delete globalThis.t;
+  delete globalThis.showToast;
   document.body.innerHTML = '';
 });
 
@@ -407,14 +420,22 @@ describe('syncFromCloud conflict detection', () => {
       const conflictHook = vi.fn();
       globalThis.onSyncConflict = conflictHook;
       const cloudItems = [{ id: 'cloud' }];
+      let patchCalls = 0;
       const { storage, uid } = await setupSignedInFirebase(fb, {
-        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
-          items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
-          updateTime: '2024-06-02T00:00:00.000000000Z',
-        })))],
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+            items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+            updateTime: '2024-06-02T00:00:00.000000000Z',
+          }))),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000000Z' });
+          }),
+        ],
       });
       globalThis.items = [{ id: 'cloud' }];
       await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
 
       const result = await fb.syncFromCloud();
 
@@ -424,6 +445,8 @@ describe('syncFromCloud conflict detection', () => {
       expect(globalThis.items).toEqual(cloudItems);
       expect(fb._isDirty()).toBe(false);
       expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+      expect(vi.getTimerCount()).toBe(0);   // clean apply queues no re-upload
+      expect(patchCalls).toBe(0);
     } finally {
       delete globalThis.onSyncConflict;
       vi.useRealTimers();
@@ -773,5 +796,409 @@ describe('syncFromCloud conflict detection', () => {
     expect(globalThis.items).toEqual(cloudItems);
     expect(conflictHook).not.toHaveBeenCalled();
     expect(fb.fbGetSyncConflict()).toBeNull();
+  });
+});
+
+describe('fbResolveSyncConflict', () => {
+  // Common setup for the resolution cases: a dirty local list differing from
+  // the cloud, then a detection pull that records the conflict without applying
+  // either side. Callers pass extra GET/PATCH routes to exercise failures.
+  async function makeConflict(fb, { getResponder, patchResponder, localItems = [{ id: 'local-only' }] }) {
+    const routes = [];
+    if (getResponder) routes.push(firestoreGetRoute(getResponder));
+    if (patchResponder) routes.push(firestorePatchRoute(patchResponder));
+    const setup = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    globalThis.items = localItems;
+    await fb.markLocalCloudDataChanged();
+    vi.clearAllTimers();
+    return setup;
+  }
+
+  it("'cloud' applies the cloud snapshot, clears the conflict, and resumes auto-upload", async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const cloudItems = [{ id: 'cloud' }];
+      let patchCalls = 0;
+      const { storage } = await makeConflict(fb, {
+        getResponder: async () => jsonResponse(200, cloudDoc(fb, cloudItems)),
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      const result = await fb.fbResolveSyncConflict('cloud');
+
+      expect(result).toEqual({ ok: true });
+      expect(globalThis.items).toEqual(cloudItems);
+      expect(fb._isDirty()).toBe(false);
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+
+      // Auto-upload resumes after resolution: a later edit is re-uploaded.
+      await fb.markLocalCloudDataChanged();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("'local' force-uploads the local state and clears the conflict", async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const localItems = [{ id: 'local-only' }];
+      let patchCalls = 0;
+      let capturedBody = null;
+      const { storage } = await makeConflict(fb, {
+        getResponder: async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }])),
+        patchResponder: async (url, options) => {
+          patchCalls += 1;
+          capturedBody = JSON.parse(options.body);
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+        localItems,
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      const result = await fb.fbResolveSyncConflict('local');
+
+      expect(result).toEqual({ ok: true });
+      expect(patchCalls).toBe(1);
+      expect(JSON.parse(capturedBody.fields.items.stringValue)).toEqual(localItems);
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("'cloud' keeps the conflict pending and applies nothing when the pull fails with a network error", async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const localItems = [{ id: 'local-only' }];
+      let patchCalls = 0;
+      let getCalls = 0;
+      await makeConflict(fb, {
+        getResponder: async () => {
+          getCalls += 1;
+          if (getCalls === 1) return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
+          throw new Error('network boom');
+        },
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+        localItems,
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      const result = await fb.fbResolveSyncConflict('cloud');
+
+      expect(result).toEqual({ ok: false, code: 'network' });
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(globalThis.items).toEqual(localItems);
+      expect(patchCalls).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("'cloud' imports the local state when the cloud document has been deleted", async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      let patchCalls = 0;
+      let getCalls = 0;
+      const { storage } = await makeConflict(fb, {
+        getResponder: async () => {
+          getCalls += 1;
+          if (getCalls === 1) return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
+          return jsonResponse(404, {});
+        },
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      const result = await fb.fbResolveSyncConflict('cloud');
+
+      expect(result).toEqual({ ok: true, code: 'no-cloud-data' });
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("'cloud' reports session-changed and does not import when the session changes mid-GET", async () => {
+    const fb = loadFirebaseModule();
+    const localItems = [{ id: 'local-only' }];
+    let patchCalls = 0;
+    let getCalls = 0;
+    let markResolveGetStarted;
+    let releaseResolveGet;
+    const resolveGetStarted = new Promise((r) => { markResolveGetStarted = r; });
+    const resolveGate = new Promise((r) => { releaseResolveGet = r; });
+    await makeConflict(fb, {
+      getResponder: async () => {
+        getCalls += 1;
+        if (getCalls === 1) return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
+        markResolveGetStarted();
+        await resolveGate;
+        return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
+      },
+      patchResponder: async () => {
+        patchCalls += 1;
+        return jsonResponse(200, { updateTime: PATCH_TS });
+      },
+      localItems,
+    });
+    await fb.syncFromCloud();
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+    const resolvePromise = fb.fbResolveSyncConflict('cloud');
+    await resolveGetStarted;
+    await fb.fbSignOut();
+    releaseResolveGet();
+    const result = await resolvePromise;
+
+    expect(result).toEqual({ ok: false, code: 'session-changed' });
+    expect(fb.fbGetSyncConflict()).toBeNull();
+    expect(globalThis.items).toEqual(localItems);
+    expect(patchCalls).toBe(0);
+  });
+
+  it("'local' reports storage-read-only and keeps the conflict when the firewall blocks upload", async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      let patchCalls = 0;
+      await makeConflict(fb, {
+        getResponder: async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }])),
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      globalThis.isStorageLoadFailed = () => true;
+      const result = await fb.fbResolveSyncConflict('local');
+
+      expect(result).toEqual({ ok: false, code: 'storage-read-only' });
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(patchCalls).toBe(0);
+    } finally {
+      delete globalThis.isStorageLoadFailed;
+      vi.useRealTimers();
+    }
+  });
+
+  it("'local' clears the conflict on upload failure and keeps the local state dirty", async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const localItems = [{ id: 'local-only' }];
+      let patchCalls = 0;
+      await makeConflict(fb, {
+        getResponder: async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }])),
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(429, {});
+        },
+        localItems,
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      const result = await fb.fbResolveSyncConflict('local');
+
+      expect(result).toEqual({ ok: false, code: 'quota' });
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(fb._isDirty()).toBe(true);
+      expect(globalThis.items).toEqual(localItems);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns no-conflict when nothing is pending', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+
+    await expect(fb.fbResolveSyncConflict('cloud')).resolves.toEqual({ ok: false, code: 'no-conflict' });
+    await expect(fb.fbResolveSyncConflict('local')).resolves.toEqual({ ok: false, code: 'no-conflict' });
+  });
+
+  it('returns not-signed-in when not signed in', async () => {
+    const fb = loadFirebaseModule();
+
+    await expect(fb.fbResolveSyncConflict('cloud')).resolves.toEqual({ ok: false, code: 'not-signed-in' });
+  });
+
+  it('returns invalid-choice for an unknown choice while a conflict is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      await makeConflict(fb, {
+        getResponder: async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }])),
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      await expect(fb.fbResolveSyncConflict('banana')).resolves.toEqual({ ok: false, code: 'invalid-choice' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('manual sync buttons while a conflict is pending', () => {
+  it('re-notifies the conflict on a manual upload instead of force-uploading', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      const { showToast } = installUiMocks();
+      let patchCalls = 0;
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]))),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: PATCH_TS });
+          }),
+        ],
+      });
+      globalThis.items = [{ id: 'local-only' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      conflictHook.mockClear();
+
+      await fb._handleSyncBtn('upload');
+
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(conflictHook).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'manual-upload' }));
+      expect(patchCalls).toBe(0);
+      expect(showToast).not.toHaveBeenCalled();
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-notifies the conflict on a manual pull when the cloud still differs', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      const { showToast } = installUiMocks();
+      const localItems = [{ id: 'local-only' }];
+      let patchCalls = 0;
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]))),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: PATCH_TS });
+          }),
+        ],
+      });
+      globalThis.items = localItems;
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      conflictHook.mockClear();
+
+      await fb._handleSyncBtn('download');
+
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(conflictHook).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'manual-pull' }));
+      expect(globalThis.items).toEqual(localItems);
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(patchCalls).toBe(0);
+      expect(showToast).not.toHaveBeenCalled();
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies and clears the conflict on a manual pull once the cloud has converged', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      installUiMocks();
+      let cloudItems = [{ id: 'cloud' }];
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, cloudItems)))],
+      });
+      globalThis.items = [{ id: 'local-only' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      cloudItems = [{ id: 'local-only' }];
+      await fb._handleSyncBtn('download');
+
+      expect(globalThis.items).toEqual([{ id: 'local-only' }]);
+      expect(fb.fbGetSyncConflict()).toBeNull();
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('fbGetSyncConflict copy semantics', () => {
+  it('returns a copy so external mutation cannot pollute internal state', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }])))],
+      });
+      globalThis.items = [{ id: 'local-only' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      const copy = fb.fbGetSyncConflict();
+      copy.trigger = 'mutated';
+      copy.isAccountSwitch = true;
+
+      expect(fb.fbGetSyncConflict().trigger).not.toBe('mutated');
+      expect(fb.fbGetSyncConflict().isAccountSwitch).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
