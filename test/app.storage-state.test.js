@@ -158,8 +158,10 @@ describe('app.js storage/state (batch 2, task 1)', () => {
 
       await app.loadAll();
 
+      // The shape sanitizer also fills a string `name` here (renderIcon reads
+      // name.charAt(0), so a missing name must not survive a load).
       expect(setSpy).toHaveBeenCalledWith({
-        startpage_items: [{ id: '1', type: 'link', size: '1x1' }],
+        startpage_items: [{ id: '1', type: 'link', name: '', size: '1x1' }],
       });
       expect(cs._data.startpage_items[0].size).toBe('1x1');
     });
@@ -236,7 +238,9 @@ describe('app.js storage/state (batch 2, task 1)', () => {
 
     it('does not re-push a weather city whose coords already exist in items, but still removes the legacy key', async () => {
       cs._data.startpage_items = [
-        { id: 'w1', type: 'weather', size: '1x2', city: { name: '北京', lat: 39.9, lon: 116.4, tz: 'Asia/Shanghai', country: 'CN', admin1: 'Beijing' } },
+        // Fully-shaped weather item (name included): the sanitizer must have
+        // nothing to repair, so this test observes only the dedupe path.
+        { id: 'w1', type: 'weather', name: '北京', size: '1x2', city: { name: '北京', lat: 39.9, lon: 116.4, tz: 'Asia/Shanghai', country: 'CN', admin1: 'Beijing' } },
       ];
       cs._data.startpage_weather_cities = [
         { name: '北京', lat: 39.9, lon: 116.4, tz: 'Asia/Shanghai', country: 'CN', admin1: 'Beijing' },

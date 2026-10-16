@@ -17,6 +17,8 @@ afterEach(() => {
   delete globalThis.render;
   delete globalThis.getSelectedEngine;
   delete globalThis.normalizeFolderChildItemSizes;
+  delete globalThis.sanitizeItemsShape;
+  delete globalThis.clampMainGridColumns;
   document.body.innerHTML = '';
 });
 
@@ -228,6 +230,38 @@ describe('syncFromCloud', () => {
       }
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('sanitizes cloud items and clamps out-of-range grid columns before applying', async () => {
+    // The sanitizer reports changed=true → the applied snapshot is re-queued
+    // for upload (2s timer). Fake timers keep that pending timer from firing
+    // after the test and polluting later cases (same pattern as the schema
+    // migration test above).
+    vi.useFakeTimers();
+    const fb = loadFirebaseModule();
+    const seen = [];
+    globalThis.sanitizeItemsShape = (list) => { seen.push(list); return { items: [{ id: 'ok' }], changed: true }; };
+    globalThis.clampMainGridColumns = (v) => Math.max(6, Math.min(12, v));
+    try {
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+          items: [{ id: 'weird' }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 999,
+          updateTime: '2024-06-02T00:00:00.000000000Z',
+        })))],
+      });
+      globalThis.mainGridColumns = 8;
+
+      await fb.syncFromCloud({ force: true });
+
+      expect(seen).toHaveLength(1);
+      expect(globalThis.items).toEqual([{ id: 'ok' }]);
+      expect(globalThis.mainGridColumns).toBe(12);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      delete globalThis.sanitizeItemsShape;
+      delete globalThis.clampMainGridColumns;
     }
   });
 

@@ -688,16 +688,23 @@ async function syncFromCloud(options = {}) {
 
     let shouldResyncCloud = false;
     if (Array.isArray(cloudItems)) {
-      const normalized = typeof globalThis.normalizeFolderChildItemSizes === 'function'
-        ? globalThis.normalizeFolderChildItemSizes(cloudItems)
-        : { items: cloudItems, changed: false };
+      const normalize = typeof globalThis.sanitizeItemsShape === 'function'
+        ? globalThis.sanitizeItemsShape
+        : (typeof globalThis.normalizeFolderChildItemSizes === 'function'
+            ? globalThis.normalizeFolderChildItemSizes
+            : null);
+      const normalized = normalize ? normalize(cloudItems) : { items: cloudItems, changed: false };
       items = normalized.items;
       shouldResyncCloud = !!normalized.changed;
     }
     if (Array.isArray(cloudEngines)) customEngines = cloudEngines;
     if (typeof cloudEngine === 'string' && cloudEngine) selectedEngineId = cloudEngine;
     if (Array.isArray(cloudClocks) && cloudClocks.length > 0) clocks = cloudClocks;
-    if (typeof cloudColumns === 'number') mainGridColumns = cloudColumns;
+    if (typeof cloudColumns === 'number' && Number.isFinite(cloudColumns)
+        && typeof globalThis.clampMainGridColumns === 'function') {
+      mainGridColumns = globalThis.clampMainGridColumns(cloudColumns);
+      if (mainGridColumns !== cloudColumns) shouldResyncCloud = true; // corrected value must be re-uploaded
+    }
 
     const s = _fbStore();
     if (s) {

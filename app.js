@@ -296,6 +296,14 @@ function escapeCssUrl(s) {
   return String(s).replace(/["\\()]/g, '\\$&');
 }
 
+// Escape a value for use inside a double-quoted CSS attribute selector such
+// as [data-id="..."]. Only the two characters that can break out of that
+// quoted string need escaping; CSS.escape is avoided because jsdom does not
+// implement it.
+function escapeSelectorValue(s) {
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
 function clampMainGridColumns(value) {
   const parsed = parseInt(value, 10);
   if (Number.isNaN(parsed)) return DEFAULT_MAIN_GRID_COLUMNS;
@@ -374,6 +382,99 @@ function normalizeFolderChildItemSizes(list, insideFolder = false) {
   return { items: normalizedItems, changed };
 }
 
+// Shape sanitizer for item lists arriving from local storage or cloud
+// payloads: drops non-object entries, repairs id/name/type, guarantees an
+// array-valued `children` on every surviving item, then delegates size
+// normalization to normalizeFolderChildItemSizes (the single size authority).
+// Never mutates the input list or its entries; returns { items, changed }.
+function sanitizeItemsShape(list) {
+  function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function sanitizeEntry(entry) {
+    let changed = false;
+    let nextItem = entry;
+
+    if (typeof entry.id !== 'string' || entry.id === '') {
+      nextItem = { ...nextItem, id: generateId() };
+      changed = true;
+    }
+
+    if (typeof entry.name !== 'string') {
+      nextItem = { ...nextItem, name: String(entry.name ?? '') };
+      changed = true;
+    }
+
+    let type = entry.type;
+    if (type !== 'link' && type !== 'folder' && type !== 'weather') {
+      // Unknown or missing type: fall back to a link, the only type that
+      // needs no further shape guarantees to render.
+      type = 'link';
+    }
+    if (type !== entry.type) {
+      nextItem = { ...nextItem, type };
+      changed = true;
+    }
+
+    if (type === 'link') {
+      // Links never carry children; drop a stray field so it cannot be
+      // resurfaced by later renders or uploads.
+      if (entry.children !== undefined) {
+        nextItem = { ...nextItem };
+        delete nextItem.children;
+        changed = true;
+      }
+    } else if (type === 'folder') {
+      if (Array.isArray(entry.children)) {
+        const childResult = sanitizeList(entry.children);
+        if (childResult.changed) {
+          nextItem = { ...nextItem, children: childResult.items };
+          changed = true;
+        }
+      } else {
+        nextItem = { ...nextItem, children: [] };
+        changed = true;
+      }
+    } else if (entry.children !== undefined) {
+      if (Array.isArray(entry.children)) {
+        const childResult = sanitizeList(entry.children);
+        if (childResult.changed) {
+          nextItem = { ...nextItem, children: childResult.items };
+          changed = true;
+        }
+      } else {
+        // weather: a children field has no meaning; drop a malformed value
+        // so no surviving item exposes a non-array children field.
+        nextItem = { ...nextItem };
+        delete nextItem.children;
+        changed = true;
+      }
+    }
+
+    return { item: nextItem, changed };
+  }
+
+  function sanitizeList(entries) {
+    let changed = false;
+    const items = [];
+    for (const entry of entries) {
+      if (!isPlainObject(entry)) {
+        changed = true;
+        continue;
+      }
+      const result = sanitizeEntry(entry);
+      items.push(result.item);
+      if (result.changed) changed = true;
+    }
+    return { items, changed };
+  }
+
+  const shapeResult = sanitizeList(list);
+  const sizeResult = normalizeFolderChildItemSizes(shapeResult.items);
+  return { items: sizeResult.items, changed: shapeResult.changed || sizeResult.changed };
+}
+
 // Slot layout for folder preview on large-size cards.
 // Each size maps to { cols, rows } where cols×rows = total slots.
 // All slots except the last show one normal icon; the last slot shows a 2×2 mini-group.
@@ -431,7 +532,7 @@ function insertOrCombineItem(list, targetId, action, itemObj) {
 
 async function loadAll() {
   const data = await storage.get(STORAGE_KEYS);
-  const itemResult = normalizeFolderChildItemSizes(data.startpage_items || getDefaultData());
+  const itemResult = sanitizeItemsShape(data.startpage_items || getDefaultData());
   items = itemResult.items;
   customEngines = data.startpage_engines || [];
   selectedEngineId = data.startpage_selected_engine || 'google';
@@ -588,6 +689,8 @@ async function fetchWeatherForAllCities() {
 
 globalThis.fetchWeatherForAllCities = fetchWeatherForAllCities;
 globalThis.pruneWeatherCache = pruneWeatherCache;
+globalThis.sanitizeItemsShape = sanitizeItemsShape;
+globalThis.clampMainGridColumns = clampMainGridColumns;
 
 function getAllEngines() {
   return [...DEFAULT_ENGINES, ...customEngines];
@@ -1170,6 +1273,9 @@ function renderFolderMiniSlot(miniChildren) {
 }
 
 function renderIcon(item) {
+  // Tolerate items whose children field is missing or malformed: cloud and
+  // migrated-local payloads can contain weather/link items without children.
+  const children = Array.isArray(item.children) ? item.children : [];
   const ch = escapeHtml(item.name.charAt(0));
   const isExpandedLink = item.type === 'link' && getItemSize(item) !== '1x1';
   if (item.type === 'link') {
@@ -1197,7 +1303,7 @@ function renderIcon(item) {
     return `${buildManagedImageTag({ src: item.icon, style: ICON_STYLE, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
   }
 
-  if (item.children.length === 0) {
+  if (children.length === 0) {
     return `<svg class="grid-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
   }
 
@@ -1206,7 +1312,7 @@ function renderIcon(item) {
 
   if (!layout) {
     // 1x1: existing 2×2 mini-grid preview
-    const previews = item.children.slice(0, 4);
+    const previews = children.slice(0, 4);
     const empties = 4 - previews.length;
     let cells = previews.map(c => {
       const cch = escapeHtml(c.name.charAt(0));
@@ -1238,14 +1344,14 @@ function renderIcon(item) {
   const normalCount = totalSlots - 1;
   let slotsHtml = '';
   for (let i = 0; i < normalCount; i++) {
-    slotsHtml += renderFolderNormalSlot(item.children[i] || null);
+    slotsHtml += renderFolderNormalSlot(children[i] || null);
   }
-  if (item.children.length <= normalCount + 1) {
-    slotsHtml += renderFolderNormalSlot(item.children[normalCount] || null);
+  if (children.length <= normalCount + 1) {
+    slotsHtml += renderFolderNormalSlot(children[normalCount] || null);
   } else {
     const miniChildren = [];
     for (let i = normalCount; i < normalCount + 4; i++) {
-      miniChildren.push(item.children[i] || null);
+      miniChildren.push(children[i] || null);
     }
     slotsHtml += renderFolderMiniSlot(miniChildren);
   }
@@ -1664,7 +1770,7 @@ function applyDragVisuals() {
   clearDragVisuals();
   if (!dragState) return;
 
-  const activeEl = document.querySelector(`.grid-item-wrap[data-id="${dragState.activeId}"] .grid-item-action-area`);
+  const activeEl = document.querySelector(`.grid-item-wrap[data-id="${escapeSelectorValue(dragState.activeId)}"] .grid-item-action-area`);
   if (activeEl) activeEl.classList.add('grid-item-dragging');
 
   if (!dragState.overId) return;
@@ -1679,7 +1785,7 @@ function applyDragVisuals() {
     return;
   }
 
-  const targetWrap = document.querySelector(`.grid-item-wrap[data-id="${dragState.overId}"]`);
+  const targetWrap = document.querySelector(`.grid-item-wrap[data-id="${escapeSelectorValue(dragState.overId)}"]`);
   if (!targetWrap) return;
   const targetArea = targetWrap.querySelector('.grid-item-action-area');
 

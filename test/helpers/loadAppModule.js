@@ -70,6 +70,9 @@ const EXPORTED_NAMES = [
   // this helper.
   'processWallpaper', 'processIconFile', 'openIconCropper',
   'handleWallpaperUpload',
+  // Batch 6: data-hardening layer (2). Task 2 tests the item-shape sanitizer
+  // and the drag-selector escaper — added up front per the same convention.
+  'sanitizeItemsShape', 'escapeSelectorValue',
 ];
 
 // app.js is a classic (non-module) script: its top-level `function`
