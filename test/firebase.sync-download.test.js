@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
-import { setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
+import { TEST_UID, setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
 
 afterEach(() => {
   delete globalThis.chrome;
@@ -354,7 +354,7 @@ describe('_pullAfterSignIn', () => {
     }
   });
 
-  it('keeps the non-forced pull semantics on a first sign-in without a baseline', async () => {
+  it('keeps the non-forced pull semantics when the stored cloud ts is newer than the cloud document', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -365,8 +365,8 @@ describe('_pullAfterSignIn', () => {
           updateTime: '2024-06-02T00:00:00.000000000Z',
         })))],
       });
-      // 无基线（全新设备首次登录）：_pullAfterSignIn() 保持非强制语义，
-      // 旧 _lastCloudTs 使 syncFromCloud 跳过，items 保持 leftover，且不排上传
+      // 加载后基线已播种为当前 uid（并非“无基线”）：拉取保持非强制语义；
+      // 旧 _lastCloudTs 比云端文档新使 syncFromCloud 跳过，items 保持 leftover 且不排上传
       const leftoverItems = [{ id: 'leftover-from-account-a' }];
       storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
       await fb._loadCloudSyncTs();
@@ -374,6 +374,7 @@ describe('_pullAfterSignIn', () => {
 
       await fb._pullAfterSignIn();
 
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
       expect(globalThis.items).toBe(leftoverItems);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
