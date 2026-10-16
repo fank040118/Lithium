@@ -669,6 +669,48 @@ describe('app.js storage/state (batch 2, task 1)', () => {
       expect(cs._data.startpage_items).toBeDefined();
     });
 
+    it('reports the firewall state, warns, and toasts read-only once across repeated blocked writes', async () => {
+      vi.spyOn(cs.storage.local, 'get').mockRejectedValue(new Error('read failed'));
+      const setSpy = vi.spyOn(cs.storage.local, 'set');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const toastSpy = vi.spyOn(globalThis, 'showToast').mockImplementation(() => {});
+
+      await expect(app.loadAll()).rejects.toThrow('read failed');
+
+      // Cross-module hook firebase.js reads to gate cloud uploads.
+      expect(globalThis.isStorageLoadFailed()).toBe(true);
+
+      await app.saveItems();
+      await app.saveItems();
+
+      expect(setSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[Lithium] Storage write skipped: load failed, not overwriting stored data.',
+      );
+      // The user-visible warning fires once; a second blocked write stays quiet.
+      expect(toastSpy).toHaveBeenCalledTimes(1);
+      expect(toastSpy).toHaveBeenCalledWith('toast.syncStorageReadOnly', 'error');
+    });
+
+    it('lifts the firewall via markStorageLoadRecovered so later edits persist again', async () => {
+      vi.spyOn(cs.storage.local, 'get').mockRejectedValue(new Error('read failed'));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(globalThis, 'showToast').mockImplementation(() => {});
+
+      await expect(app.loadAll()).rejects.toThrow('read failed');
+      expect(globalThis.isStorageLoadFailed()).toBe(true);
+
+      // firebase.js calls this after a successful cloud pull has repopulated
+      // the in-memory state with the real data.
+      globalThis.markStorageLoadRecovered();
+
+      expect(globalThis.isStorageLoadFailed()).toBe(false);
+      const setSpy = vi.spyOn(cs.storage.local, 'set');
+      await app.saveItems();
+      expect(setSpy).toHaveBeenCalledTimes(1);
+      expect(cs._data.startpage_items).toBeDefined();
+    });
+
     describe('localStorage branch (no chrome.storage)', () => {
       let appNoChrome;
       beforeEach(() => {

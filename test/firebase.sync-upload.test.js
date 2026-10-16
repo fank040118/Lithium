@@ -334,4 +334,26 @@ describe('_doSyncToCloud / syncToCloud', () => {
     await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'payload-too-large' });
     expect(patchCalls).toBe(0);
   });
+
+  it('skips even a forced upload while the storage load firewall is up', async () => {
+    const fb = loadFirebaseModule();
+    let patchCalls = 0;
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => {
+        patchCalls += 1;
+        return jsonResponse(200, { updateTime: '2024-01-01T00:00:00.000000000Z' });
+      })],
+    });
+    // app.js host hook: the last loadAll() read failed, so the in-memory state
+    // is defaults. Uploading them would overwrite the real cloud document.
+    globalThis.isStorageLoadFailed = () => true;
+    try {
+      const result = await fb._doSyncToCloud({ force: true });
+
+      expect(result).toEqual({ ok: true, skipped: true });
+      expect(patchCalls).toBe(0);
+    } finally {
+      delete globalThis.isStorageLoadFailed;
+    }
+  });
 });

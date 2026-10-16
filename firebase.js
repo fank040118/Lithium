@@ -589,6 +589,14 @@ async function _doSyncToCloud(options = {}) {
     throw new CloudSyncError('not-signed-in', 0);
   }
 
+  // A failed storage load leaves default values in memory; uploading them
+  // would overwrite the real cloud document — an unrecoverable direction.
+  // Every upload path is blocked, including the forced manual one, until a
+  // successful cloud pull repopulates the in-memory state.
+  if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
+    return { ok: true, skipped: true };
+  }
+
   // While an account switch is unresolved, automatic uploads must not run: the
   // local state still contains the previous account's data and would be
   // PATCHed into the signed-in account's document. The manual "upload" button
@@ -777,6 +785,12 @@ async function syncFromCloud(options = {}) {
         startpage_grid_columns: mainGridColumns,
       });
     }
+    // The applied cloud snapshot is now the authoritative in-memory state, so
+    // the host page may lift its storage read-failure firewall: later local
+    // edits can safely be persisted and uploaded again.
+    if (typeof globalThis.markStorageLoadRecovered === 'function') {
+      globalThis.markStorageLoadRecovered();
+    }
 
     await _saveCloudSyncTs(cloudTsMs);
     // The applied cloud snapshot is now the synced baseline: local state is clean.
@@ -888,6 +902,12 @@ async function _handleSyncBtn(direction) {
 
   try {
     if (direction === 'upload') {
+      // The forced upload bypasses _doSyncToCloud's firewall guard on purpose;
+      // stop here with a user-visible explanation instead of uploading defaults.
+      if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
+        showToast(t('toast.syncStorageReadOnly'), 'error');
+        return;
+      }
       await syncToCloud({ force: true });
       showToast(t('toast.syncUploaded'), 'default');
     } else {

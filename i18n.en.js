@@ -213,6 +213,7 @@
       syncNetworkFailed: 'Network error. Please retry later',
       syncQuotaFailed: 'Sync quota exceeded. Please retry later',
       syncPayloadTooLarge: 'Cloud data exceeds the 100KB limit. Trim custom icons and retry.',
+      syncStorageReadOnly: 'Local data could not be read; saving and syncing are paused. Refresh the page and try again.',
       iconCacheUnavailable: 'Icon cache unavailable',
       iconRefreshing: 'Refreshing…',
       iconRefreshedCount: 'Refreshed {count} icons',

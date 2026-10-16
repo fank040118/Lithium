@@ -318,6 +318,34 @@ describe('_handleSyncBtn', () => {
     expect(patchCalls).toBe(0);
   });
 
+  it('blocks a manual upload with a read-only toast while the storage load firewall is up', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    let patchCalls = 0;
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => {
+        patchCalls += 1;
+        return jsonResponse(200, { updateTime: '2024-01-01T00:00:00.000000000Z' });
+      })],
+    });
+    mountAuthDom();
+    globalThis._updateSyncUI = vi.fn();
+    globalThis.isStorageLoadFailed = () => true;
+    try {
+      await fb._handleSyncBtn('upload');
+
+      // The user gets the read-only explanation instead of the forced upload.
+      expect(showToast).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith('toast.syncStorageReadOnly', 'error');
+      expect(patchCalls).toBe(0);
+      // The finally block still restores the button state on this early return.
+      expect(document.getElementById('sync-upload-btn').disabled).toBe(false);
+      expect(document.getElementById('sync-download-btn').disabled).toBe(false);
+    } finally {
+      delete globalThis.isStorageLoadFailed;
+    }
+  });
+
   it('toasts generic sync failure when syncToCloud rejects without a code', async () => {
     const { showToast } = installUiMocks();
     const fb = loadFirebaseModule();

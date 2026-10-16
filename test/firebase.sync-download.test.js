@@ -288,6 +288,29 @@ describe('syncFromCloud', () => {
     expect(storage._data._fb_sync_baseline_uid).toBe(uid);
   });
 
+  it('lifts the storage load firewall after applying cloud data', async () => {
+    const fb = loadFirebaseModule();
+    const recovered = vi.fn();
+    // app.js host hook: the firewall may only be lifted once the real cloud
+    // snapshot has replaced the post-failure defaults in memory.
+    globalThis.markStorageLoadRecovered = recovered;
+    try {
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+          items: [{ id: 'cloud' }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+          updateTime: '2024-06-02T00:00:00.000000000Z',
+        })))],
+      });
+
+      const result = await fb.syncFromCloud({ force: true });
+
+      expect(result).toBe(true);
+      expect(recovered).toHaveBeenCalledTimes(1);
+    } finally {
+      delete globalThis.markStorageLoadRecovered;
+    }
+  });
+
   it('propagates an empty cloud clocks list to the local state and storage', async () => {
     const fb = loadFirebaseModule();
     const { storage } = await setupSignedInFirebase(fb, {
@@ -317,6 +340,31 @@ describe('syncFromCloud', () => {
           items: fb._toFV(JSON.stringify([])),
           engines: fb._toFV(JSON.stringify([])),
           selected_engine: fb._toFV('google'),
+          grid_columns: fb._toFV(4),
+        },
+      }))],
+    });
+    globalThis.clocks = localClocks;
+
+    const result = await fb.syncFromCloud({ force: true });
+
+    expect(result).toBe(true);
+    expect(globalThis.clocks).toBe(localClocks);
+    expect(storage._data.startpage_clocks).toBe(localClocks);
+  });
+
+  it('keeps the local clocks when the cloud clocks field is not an array', async () => {
+    const fb = loadFirebaseModule();
+    const localClocks = [{ id: 'local-clock' }];
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, {
+        updateTime: '2024-06-02T00:00:00.000000000Z',
+        fields: {
+          items: fb._toFV(JSON.stringify([])),
+          engines: fb._toFV(JSON.stringify([])),
+          selected_engine: fb._toFV('google'),
+          // Corrupt/non-array field: "no opinion", so the local list wins.
+          clocks: fb._toFV(JSON.stringify('not-an-array')),
           grid_columns: fb._toFV(4),
         },
       }))],

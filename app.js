@@ -152,14 +152,33 @@ function removeLegacyLocalStorage(keys) {
 // back to can never overwrite the real data that failed to load.
 let storageLoadFailed = false;
 
+// Cross-module hooks for firebase.js: it reads the firewall state to block
+// cloud uploads, and clears it once a successful cloud pull has replaced the
+// in-memory defaults with the real (cloud) data.
+globalThis.isStorageLoadFailed = () => storageLoadFailed;
+globalThis.markStorageLoadRecovered = () => { storageLoadFailed = false; };
+
+// Set after the first blocked write so the read-only toast is shown only once
+// per page session; repeated edits must not spam the user.
+let _storageReadOnlyToastShown = false;
+
+// Shared guard for every storage.set implementation below. Returns true when
+// the write must be skipped because loadAll() never got a valid read.
+function _storageWriteBlocked() {
+  if (!storageLoadFailed) return false;
+  console.warn('[Lithium] Storage write skipped: load failed, not overwriting stored data.');
+  if (!_storageReadOnlyToastShown) {
+    _storageReadOnlyToastShown = true;
+    showToast(t('toast.syncStorageReadOnly'), 'error');
+  }
+  return true;
+}
+
 const storage = extensionStorageArea
   ? {
       async get(keys) { return extensionStorageArea.get(keys); },
       async set(obj) {
-        if (storageLoadFailed) {
-          console.warn('[Lithium] Storage write skipped: load failed, not overwriting stored data.');
-          return;
-        }
+        if (_storageWriteBlocked()) return;
         return extensionStorageArea.set(obj);
       },
       async remove(key) { return extensionStorageArea.remove(key); },
@@ -167,10 +186,7 @@ const storage = extensionStorageArea
   : {
       async get(keys) { return readLegacyLocalStorage(keys); },
       async set(obj) {
-        if (storageLoadFailed) {
-          console.warn('[Lithium] Storage write skipped: load failed, not overwriting stored data.');
-          return;
-        }
+        if (_storageWriteBlocked()) return;
         for (const [k, v] of Object.entries(obj)) {
           localStorage.setItem('sp_' + k, JSON.stringify(v));
         }
@@ -579,6 +595,9 @@ async function loadAll() {
     await storage.set({ startpage_items: items });
     // Schema normalization is not a user edit; do not advance local sync timestamp.
   }
+  // Intentional: the UI has no empty-clock state, so an empty stored list is
+  // reset to defaults here. This deliberately differs from the cloud path,
+  // where an empty array is a real remote state and must land as-is.
   if (clocks.length === 0) clocks = deepClone(DEFAULT_CLOCKS);
   if (legacyWeatherCities.length > 0) {
     let migrated = false;

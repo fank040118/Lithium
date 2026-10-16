@@ -465,6 +465,35 @@ describe('_getToken', () => {
     expect(fb.fbIsSignedIn()).toBe(true);
   });
 
+  it('fires a fresh refresh on the next call after a failed attempt', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    let calls = 0;
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => {
+        calls++;
+        if (calls === 1) return jsonResponse(503, { error: { message: 'server down' } });
+        return jsonResponse(200, {
+          id_token: 'recovered-token',
+          expires_in: '3600',
+          refresh_token: 'recovered-refresh',
+          user_id: 'user-1',
+        });
+      },
+    }]);
+
+    await fb._loadAuth();
+    await expect(fb._getToken()).rejects.toMatchObject({ code: 'network' });
+
+    // The rejected refresh must clear the in-flight slot: the next call has to
+    // issue a fresh request instead of reusing the settled promise.
+    const token = await fb._getToken();
+    expect(token).toBe('recovered-token');
+    expect(calls).toBe(2);
+  });
+
   it.each([
     ['INVALID_GRANT'],
     ['USER_DISABLED'],
