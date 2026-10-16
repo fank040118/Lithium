@@ -287,6 +287,48 @@ describe('syncFromCloud', () => {
 
     expect(storage._data._fb_sync_baseline_uid).toBe(uid);
   });
+
+  it('propagates an empty cloud clocks list to the local state and storage', async () => {
+    const fb = loadFirebaseModule();
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+        items: [], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+        updateTime: '2024-06-02T00:00:00.000000000Z',
+      })))],
+    });
+    // Another device deleted every clock: that empty list is a real cloud
+    // state, not "no opinion", so it must replace the stale local clocks.
+    globalThis.clocks = [{ id: 'stale-clock-a' }, { id: 'stale-clock-b' }];
+
+    const result = await fb.syncFromCloud({ force: true });
+
+    expect(result).toBe(true);
+    expect(globalThis.clocks).toEqual([]);
+    expect(storage._data.startpage_clocks).toEqual([]);
+  });
+
+  it('keeps the local clocks when the cloud document has no clocks field', async () => {
+    const fb = loadFirebaseModule();
+    const localClocks = [{ id: 'local-clock' }];
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, {
+        updateTime: '2024-06-02T00:00:00.000000000Z',
+        fields: {
+          items: fb._toFV(JSON.stringify([])),
+          engines: fb._toFV(JSON.stringify([])),
+          selected_engine: fb._toFV('google'),
+          grid_columns: fb._toFV(4),
+        },
+      }))],
+    });
+    globalThis.clocks = localClocks;
+
+    const result = await fb.syncFromCloud({ force: true });
+
+    expect(result).toBe(true);
+    expect(globalThis.clocks).toBe(localClocks);
+    expect(storage._data.startpage_clocks).toBe(localClocks);
+  });
 });
 
 describe('_pullAfterSignIn', () => {

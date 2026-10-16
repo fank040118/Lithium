@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
-import { setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
+import { setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute, tokenRoute } from './helpers/setupSignedInFirebase.js';
+import { mountAuthDom } from './helpers/authDomFixture.js';
 
 afterEach(() => {
   delete globalThis.chrome;
@@ -297,6 +298,46 @@ describe('_clearAuth', () => {
     expect(fb.fbIsSignedIn()).toBe(false);
     expect(fb.fbIsEmailVerified()).toBe(false);
     expect(fb.fbGetEmail()).toBeNull();
+  });
+});
+
+describe('sign-out verify-email cleanup', () => {
+  it('clears the pending verify email on sign-out and does not revive it on langchange', async () => {
+    globalThis.t = vi.fn((key) => key);
+    try {
+      const fb = loadFirebaseModule();
+      mountAuthDom();
+      globalThis.chrome = createMockChromeStorage({
+        _fb_refresh: 'seed-refresh-token',
+        _fb_uid: 'user-uid',
+        _fb_email_verified: false,
+        _fb_email: 'a@b.com',
+      });
+      globalThis.fetch = createRoutedFetch([
+        tokenRoute(),
+        {
+          match: (url) => url.includes('accounts:lookup'),
+          respond: async () => jsonResponse(200, { users: [{ emailVerified: false }] }),
+        },
+      ]);
+
+      // fbInit registers the lithium:langchange listener; the startup path for
+      // an unverified account lands on the verify pane (no network pull).
+      await fb.fbInit();
+      fb._updateVerifyEmailDisplay('a@b.com');
+      expect(document.getElementById('verify-email-target').textContent).toBe('a@b.com');
+
+      await fb.fbSignOut();
+
+      // The address belonged to the session that just ended.
+      expect(document.getElementById('verify-email-target').textContent).toBe('');
+
+      window.dispatchEvent(new Event('lithium:langchange'));
+
+      expect(document.getElementById('verify-email-target').textContent).toBe('');
+    } finally {
+      delete globalThis.t;
+    }
   });
 });
 

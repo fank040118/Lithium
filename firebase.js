@@ -94,6 +94,11 @@ async function _clearAuth() {
   _uid = null;
   _emailVerified = false;
   _email = null;
+  // The pending verification address belongs to the session being torn down:
+  // drop it and blank the pane so a later language re-render cannot revive it.
+  _pendingVerifyEmail = '';
+  const verifyTargetEl = document.getElementById('verify-email-target');
+  if (verifyTargetEl) verifyTargetEl.textContent = '';
   // The sync baseline is intentionally kept across sign-out: it belongs to the
   // account that just signed out, and keeping it is what tells the next
   // sign-in that the local state still contains that account's data (see
@@ -736,7 +741,10 @@ async function syncFromCloud(options = {}) {
     }
     if (Array.isArray(cloudEngines)) customEngines = cloudEngines;
     if (typeof cloudEngine === 'string' && cloudEngine) selectedEngineId = cloudEngine;
-    if (Array.isArray(cloudClocks) && cloudClocks.length > 0) clocks = cloudClocks;
+    // An empty array is a real cloud state (every clock was deleted on another
+    // device), so it must land as-is. Only a missing or non-array field means
+    // "this cloud document has no opinion" and keeps the local list.
+    if (Array.isArray(cloudClocks)) clocks = cloudClocks;
     if (typeof cloudColumns === 'number' && Number.isFinite(cloudColumns)
         && typeof globalThis.clampMainGridColumns === 'function') {
       mainGridColumns = globalThis.clampMainGridColumns(cloudColumns);
