@@ -147,15 +147,30 @@ function removeLegacyLocalStorage(keys) {
   for (const k of ks) localStorage.removeItem('sp_' + k);
 }
 
+// Raised when loadAll() fails to read from storage. While set, writes and
+// sync marking are blocked so the in-memory default values that init() falls
+// back to can never overwrite the real data that failed to load.
+let storageLoadFailed = false;
+
 const storage = extensionStorageArea
   ? {
       async get(keys) { return extensionStorageArea.get(keys); },
-      async set(obj) { return extensionStorageArea.set(obj); },
+      async set(obj) {
+        if (storageLoadFailed) {
+          console.warn('[Lithium] Storage write skipped: load failed, not overwriting stored data.');
+          return;
+        }
+        return extensionStorageArea.set(obj);
+      },
       async remove(key) { return extensionStorageArea.remove(key); },
     }
   : {
       async get(keys) { return readLegacyLocalStorage(keys); },
       async set(obj) {
+        if (storageLoadFailed) {
+          console.warn('[Lithium] Storage write skipped: load failed, not overwriting stored data.');
+          return;
+        }
         for (const [k, v] of Object.entries(obj)) {
           localStorage.setItem('sp_' + k, JSON.stringify(v));
         }
@@ -166,6 +181,9 @@ const storage = extensionStorageArea
     };
 
 async function markSyncedDataChanged(options = {}) {
+  // A failed load leaves defaults in memory; marking them as a local change
+  // would upload those defaults and overwrite the real cloud data.
+  if (storageLoadFailed) return;
   if (typeof globalThis.markLocalCloudDataChanged !== 'function') return;
   await globalThis.markLocalCloudDataChanged(options);
 }
@@ -531,7 +549,16 @@ function insertOrCombineItem(list, targetId, action, itemObj) {
 }
 
 async function loadAll() {
-  const data = await storage.get(STORAGE_KEYS);
+  let data;
+  try {
+    data = await storage.get(STORAGE_KEYS);
+  } catch (err) {
+    // The caller may fall back to defaults; block writes until a later load
+    // succeeds so those defaults cannot overwrite the real stored data.
+    storageLoadFailed = true;
+    throw err;
+  }
+  storageLoadFailed = false;
   const itemResult = sanitizeItemsShape(data.startpage_items || getDefaultData());
   items = itemResult.items;
   customEngines = data.startpage_engines || [];

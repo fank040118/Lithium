@@ -618,4 +618,79 @@ describe('app.js storage/state (batch 2, task 1)', () => {
       expect(updateGridColumnsControls).toHaveBeenCalledTimes(1);
     });
   });
+
+  // ---- P2 residual hardening, Task 3: storage failure firewall ----
+  // When the initial read fails, loadAll() rejects and init() falls back to
+  // in-memory defaults. To keep those defaults from overwriting the real
+  // stored data on the next edit, loadAll() raises the module-level
+  // `storageLoadFailed` flag on a read failure (rethrowing the original error)
+  // and lowers it again on the next successful read. While raised, storage.set
+  // refuses to write and markSyncedDataChanged() refuses to mark/upload.
+
+  describe('storage failure firewall (P2 task 3)', () => {
+    it('blocks storage writes and sync marking after a failed loadAll()', async () => {
+      vi.spyOn(cs.storage.local, 'get').mockRejectedValue(new Error('read failed'));
+      const setSpy = vi.spyOn(cs.storage.local, 'set');
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(app.loadAll()).rejects.toThrow('read failed');
+
+      await app.saveItems();
+      await app.saveClocks();
+      await app.markSyncedDataChanged({ reason: 'edit' });
+
+      expect(setSpy).not.toHaveBeenCalled();
+      expect(markMock).not.toHaveBeenCalled();
+    });
+
+    it('clears the block once a later loadAll() read succeeds', async () => {
+      vi.spyOn(cs.storage.local, 'get').mockRejectedValueOnce(new Error('read failed'));
+      const setSpy = vi.spyOn(cs.storage.local, 'set');
+      const markMock = vi.fn().mockResolvedValue();
+      globalThis.markLocalCloudDataChanged = markMock;
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(app.loadAll()).rejects.toThrow('read failed');
+
+      // Still blocked right after the failed load.
+      await app.saveItems();
+      expect(setSpy).not.toHaveBeenCalled();
+      expect(markMock).not.toHaveBeenCalled();
+
+      // The once-mock is consumed; this call falls through to the real mock
+      // implementation and must lift the firewall.
+      await expect(app.loadAll()).resolves.toBeUndefined();
+      await app.saveItems();
+
+      expect(setSpy).toHaveBeenCalledTimes(1);
+      expect(markMock).toHaveBeenCalledTimes(1);
+      expect(cs._data.startpage_items).toBeDefined();
+    });
+
+    describe('localStorage branch (no chrome.storage)', () => {
+      let appNoChrome;
+      beforeEach(() => {
+        delete globalThis.chrome;
+        appNoChrome = loadAppModule();
+      });
+
+      it('blocks localStorage writes after a failed loadAll()', async () => {
+        // jsdom's localStorage is a Proxy: spying on the instance does not
+        // intercept, so target the shared Storage prototype instead.
+        vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+          throw new Error('legacy read failed');
+        });
+        const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await expect(appNoChrome.loadAll()).rejects.toThrow('legacy read failed');
+
+        await appNoChrome.saveItems();
+
+        expect(setItemSpy).not.toHaveBeenCalled();
+      });
+    });
+  });
 });
