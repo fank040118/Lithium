@@ -212,6 +212,7 @@
       syncAuthFailed: '登录已过期，请重新登录后同步',
       syncNetworkFailed: '网络异常，请稍后重试',
       syncQuotaFailed: '同步配额已用完，请稍后再试',
+      syncPayloadTooLarge: '云端数据超出 100KB 上限，请精简自定义图标后重试',
       iconCacheUnavailable: '图标缓存不可用',
       iconRefreshing: '刷新中…',
       iconRefreshedCount: '已刷新 {count} 个图标',

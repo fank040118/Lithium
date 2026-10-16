@@ -40,7 +40,9 @@ export async function setupSignedInFirebase(fb, { extraRoutes = [] } = {}) {
     _fb_email: 'user@example.com',
   });
   globalThis.chrome = storage;
-  globalThis.fetch = createRoutedFetch([tokenRoute(), ...extraRoutes]);
+  // extraRoutes are matched first so a test can override the default token
+  // route (e.g. simulate a rejected refresh); tokenRoute() stays as fallback.
+  globalThis.fetch = createRoutedFetch([...extraRoutes, tokenRoute()]);
   globalThis.items = [];
   globalThis.customEngines = [];
   globalThis.selectedEngineId = 'google';

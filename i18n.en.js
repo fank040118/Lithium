@@ -212,6 +212,7 @@
       syncAuthFailed: 'Session expired. Please sign in again to sync',
       syncNetworkFailed: 'Network error. Please retry later',
       syncQuotaFailed: 'Sync quota exceeded. Please retry later',
+      syncPayloadTooLarge: 'Cloud data exceeds the 100KB limit. Trim custom icons and retry.',
       iconCacheUnavailable: 'Icon cache unavailable',
       iconRefreshing: 'Refreshing…',
       iconRefreshedCount: 'Refreshed {count} icons',

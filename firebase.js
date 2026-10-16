@@ -20,6 +20,11 @@ const FB_CLOUD_SYNC_TS_KEY = '_fb_cloud_sync_ts';
 // after every successful pull/upload and kept across sign-out so the next
 // sign-in can tell whether the local data belongs to a previous account.
 const FB_BASELINE_UID_KEY = '_fb_sync_baseline_uid';
+// Conservative pre-check against Firestore's 100KB per-document rule limit.
+// Measured in UTF-16 code units (body.length) per plan ruling R3: CJK-heavy
+// payloads may under-count bytes and then fall through to the server's 403,
+// which keeps the session and shows the dedicated toast as a backstop.
+const FB_PAYLOAD_MAX_BYTES = 90000;
 
 const _fbStore = () =>
   globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local || null;
@@ -43,7 +48,7 @@ class CloudSyncError extends Error {
   constructor(code, status = 0, original = null) {
     super(original?.message || code);
     this.name = 'CloudSyncError';
-    this.code = code; // 'network' | 'auth' | 'quota' | 'firestore' | 'not-signed-in'
+    this.code = code; // 'network' | 'auth' | 'quota' | 'firestore' | 'not-signed-in' | 'payload-too-large'
     this.status = status;
     this.original = original;
   }
@@ -437,6 +442,14 @@ async function _fsSet(data) {
   if (!token) throw new CloudSyncError('not-signed-in', 0);
 
   const fields = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, _toFV(v)]));
+  // Build the body once: the same string is length-checked here and sent
+  // below. Oversized uploads are rejected before any network request so the
+  // user gets the actionable toast instead of the server's generic rule 403.
+  const body = JSON.stringify({ fields });
+  if (body.length > FB_PAYLOAD_MAX_BYTES) {
+    throw new CloudSyncError('payload-too-large', 413);
+  }
+
   let res;
   try {
     res = await fetch(_docUrl(), {
@@ -448,7 +461,7 @@ async function _fsSet(data) {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
       },
-      body: JSON.stringify({ fields }),
+      body,
     });
   } catch (err) {
     throw new CloudSyncError('network', 0, err);
@@ -476,8 +489,25 @@ async function _parseFirestoreError(res) {
       errStatus === 'PERMISSION_DENIED' ||
       msg.includes('UNAUTHENTICATED') ||
       msg.includes('PERMISSION_DENIED')) {
-    await _clearAuth();
-    return { code: 'auth', status };
+    // The request was rejected. Force a token refresh before deciding: a
+    // refresh that still succeeds means the credentials are fine and the
+    // write was refused by the rules (e.g. the 100KB document limit) — the
+    // session must survive that. Only a refresh that itself fails (or that
+    // has no refresh token left) proves the login is dead.
+    _idToken = null;
+    _tokenExpiry = 0;
+    try {
+      const token = await _getToken();
+      if (!token) {
+        await _clearAuth();
+        return { code: 'auth', status };
+      }
+      return { code: 'firestore', status };
+    } catch (e) {
+      // _getToken clears auth itself for fatal refresh failures. A network
+      // failure is reported as-is so the caller can offer a retry.
+      return { code: e?.code === 'network' ? 'network' : 'auth', status };
+    }
   }
   if (status === 429 ||
       errStatus === 'RESOURCE_EXHAUSTED' ||
@@ -834,6 +864,8 @@ async function _handleSyncBtn(direction) {
       showToast(t('toast.syncNetworkFailed'), 'error');
     } else if (code === 'quota') {
       showToast(t('toast.syncQuotaFailed'), 'error');
+    } else if (code === 'payload-too-large') {
+      showToast(t('toast.syncPayloadTooLarge'), 'error');
     } else {
       showToast(t('toast.syncFailed'), 'error');
     }

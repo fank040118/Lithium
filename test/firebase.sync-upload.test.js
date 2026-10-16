@@ -294,4 +294,44 @@ describe('_doSyncToCloud / syncToCloud', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps the session and reports firestore when the rules reject the payload', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => jsonResponse(403, {
+        error: { status: 'PERMISSION_DENIED', message: 'Missing or insufficient permissions.' },
+      }))],
+    });
+
+    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+    expect(fb.fbIsSignedIn()).toBe(true);   // 不得因规则拒绝而登出
+  });
+
+  it('still signs out when the token refresh itself is rejected', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        { match: (url) => url.includes('securetoken.googleapis.com'), respond: async () =>
+            jsonResponse(400, { error: { message: 'INVALID_GRANT' } }) },
+        firestorePatchRoute(async () => jsonResponse(403, {
+          error: { status: 'PERMISSION_DENIED', message: 'Missing or insufficient permissions.' },
+        })),
+      ],
+    });
+
+    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'auth' });
+    expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('rejects oversized payloads before any network request', async () => {
+    const fb = loadFirebaseModule();
+    let patchCalls = 0;
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => { patchCalls += 1; return jsonResponse(200, { updateTime: '2024-01-01T00:00:00.000000000Z' }); })],
+    });
+    globalThis.items = [{ id: 'huge', type: 'link', name: 'x'.repeat(100000), url: 'https://example.com', size: '1x1' }];
+
+    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'payload-too-large' });
+    expect(patchCalls).toBe(0);
+  });
 });

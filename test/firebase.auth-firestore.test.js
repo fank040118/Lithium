@@ -512,20 +512,58 @@ describe('_getToken', () => {
 });
 
 describe('_parseFirestoreError', () => {
-  it('returns auth and clears auth on status 401', async () => {
+  it('returns firestore and keeps the session on status 401 when the token can still be refreshed', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
     const result = await fb._parseFirestoreError(jsonResponse(401, { error: { message: 'UNAUTHENTICATED' } }));
 
-    expect(result).toEqual({ code: 'auth', status: 401 });
-    expect(fb.fbIsSignedIn()).toBe(false);
+    expect(result).toEqual({ code: 'firestore', status: 401 });
+    expect(fb.fbIsSignedIn()).toBe(true);
   });
 
-  it('returns auth and clears auth on status 403', async () => {
+  it('returns firestore and keeps the session on status 403 when the token can still be refreshed', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+
+    expect(result).toEqual({ code: 'firestore', status: 403 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('returns firestore and keeps the session when errStatus is UNAUTHENTICATED and the token can still be refreshed', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(200, { error: { status: 'UNAUTHENTICATED', message: 'nope' } }));
+
+    expect(result).toEqual({ code: 'firestore', status: 200 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('returns firestore and keeps the session when message contains PERMISSION_DENIED and the token can still be refreshed', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb);
+    expect(fb.fbIsSignedIn()).toBe(true);
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: '... PERMISSION_DENIED ...' } }));
+
+    expect(result).toEqual({ code: 'firestore', status: 400 });
+    expect(fb.fbIsSignedIn()).toBe(true);
+  });
+
+  it('returns auth and clears auth when the token refresh itself is rejected', async () => {
+    const fb = loadFirebaseModule();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [{
+        match: (url) => url.includes('securetoken.googleapis.com'),
+        respond: async () => jsonResponse(400, { error: { message: 'INVALID_GRANT' } }),
+      }],
+    });
     expect(fb.fbIsSignedIn()).toBe(true);
 
     const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
@@ -534,25 +572,16 @@ describe('_parseFirestoreError', () => {
     expect(fb.fbIsSignedIn()).toBe(false);
   });
 
-  it('returns auth and clears auth when errStatus is UNAUTHENTICATED', async () => {
+  it('returns auth and clears auth when no refresh token is left to revive the session', async () => {
     const fb = loadFirebaseModule();
-    await setupSignedInFirebase(fb);
-    expect(fb.fbIsSignedIn()).toBe(true);
-
-    const result = await fb._parseFirestoreError(jsonResponse(200, { error: { status: 'UNAUTHENTICATED', message: 'nope' } }));
-
-    expect(result).toEqual({ code: 'auth', status: 200 });
+    const { storage } = await setupSignedInFirebase(fb);
+    delete storage._data._fb_refresh;
+    await fb._loadAuth();
     expect(fb.fbIsSignedIn()).toBe(false);
-  });
 
-  it('returns auth and clears auth when message contains PERMISSION_DENIED', async () => {
-    const fb = loadFirebaseModule();
-    await setupSignedInFirebase(fb);
-    expect(fb.fbIsSignedIn()).toBe(true);
+    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
 
-    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: '... PERMISSION_DENIED ...' } }));
-
-    expect(result).toEqual({ code: 'auth', status: 400 });
+    expect(result).toEqual({ code: 'auth', status: 403 });
     expect(fb.fbIsSignedIn()).toBe(false);
   });
 
@@ -625,26 +654,26 @@ describe('_fsGet', () => {
     expect(result).toEqual(doc);
   });
 
-  it('throws an auth CloudSyncError and clears auth on 401', async () => {
+  it('throws a firestore CloudSyncError and keeps auth on 401 when the token can still be refreshed', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb, {
       extraRoutes: [firestoreGetRoute(async () => jsonResponse(401, { error: { message: 'UNAUTHENTICATED' } }))],
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'auth', status: 401 });
-    expect(fb.fbIsSignedIn()).toBe(false);
+    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'firestore', status: 401 });
+    expect(fb.fbIsSignedIn()).toBe(true);
   });
 
-  it('throws an auth CloudSyncError and clears auth on 403', async () => {
+  it('throws a firestore CloudSyncError and keeps auth on 403 when the token can still be refreshed', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb, {
       extraRoutes: [firestoreGetRoute(async () => jsonResponse(403, { error: { message: 'PERMISSION_DENIED' } }))],
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'auth', status: 403 });
-    expect(fb.fbIsSignedIn()).toBe(false);
+    await expect(fb._fsGet()).rejects.toMatchObject({ code: 'firestore', status: 403 });
+    expect(fb.fbIsSignedIn()).toBe(true);
   });
 
   it('throws a network CloudSyncError when fetch throws', async () => {
@@ -714,7 +743,7 @@ describe('_fsSet', () => {
     expect(result).toBeNull();
   });
 
-  it('throws an auth CloudSyncError and clears auth on 401', async () => {
+  it('throws a firestore CloudSyncError and keeps auth on 401 when the token can still be refreshed', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb, {
       extraRoutes: [firestorePatchRoute(async () =>
@@ -723,8 +752,8 @@ describe('_fsSet', () => {
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'auth', status: 401 });
-    expect(fb.fbIsSignedIn()).toBe(false);
+    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'firestore', status: 401 });
+    expect(fb.fbIsSignedIn()).toBe(true);
   });
 
   it('throws a network CloudSyncError when fetch throws', async () => {

@@ -4,6 +4,7 @@ import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { createRoutedFetch, jsonResponse } from './helpers/mockFetch.js';
 import { mountAuthDom } from './helpers/authDomFixture.js';
 import { installUiMocks } from './helpers/uiMocks.js';
+import { setupSignedInFirebase, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -290,6 +291,31 @@ describe('_handleSyncBtn', () => {
 
     expect(showToast).toHaveBeenCalledWith('toast.syncQuotaFailed', 'error');
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
+  });
+
+  it('toasts payloadTooLarge and keeps the session when the upload exceeds the precheck limit', async () => {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    // The PATCH route would answer with the rules rejection (403), but the
+    // size pre-check must stop the upload before any request reaches it.
+    let patchCalls = 0;
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [firestorePatchRoute(async () => {
+        patchCalls += 1;
+        return jsonResponse(403, {
+          error: { status: 'PERMISSION_DENIED', message: 'Missing or insufficient permissions.' },
+        });
+      })],
+    });
+    mountAuthDom();
+    globalThis._updateSyncUI = vi.fn();
+    globalThis.items = [{ id: 'huge', type: 'link', name: 'x'.repeat(100000), url: 'https://example.com', size: '1x1' }];
+
+    await fb._handleSyncBtn('upload');
+
+    expect(showToast).toHaveBeenCalledWith('toast.syncPayloadTooLarge', 'error');
+    expect(fb.fbIsSignedIn()).toBe(true);
+    expect(patchCalls).toBe(0);
   });
 
   it('toasts generic sync failure when syncToCloud rejects without a code', async () => {
