@@ -116,10 +116,15 @@ async function _clearAuth() {
 
 // ── Token management ─────────────────────────────────────────
 
-async function _getToken() {
-  if (_idToken && Date.now() < _tokenExpiry - 60000) return _idToken;
-  if (!_refreshToken) return null;
+// In-flight refresh request (Promise | null). Concurrent _getToken() callers
+// share this promise instead of racing: two parallel refreshes would both
+// write _idToken/_refreshToken, and the later response could overwrite the
+// newer token with a stale one.
+let _tokenInFlight = null;
 
+// Runs the actual refresh request. Callers must go through _getToken(), which
+// deduplicates concurrent calls.
+async function _doRefreshToken() {
   // Capture the identity this refresh belongs to. A response that lands after
   // a sign-out/sign-in must never touch the new session's state — otherwise a
   // late refresh would revive the signed-out account (and its uid).
@@ -170,6 +175,17 @@ async function _getToken() {
   _uid = data.user_id;
   await _saveAuth();
   return _idToken;
+}
+
+async function _getToken() {
+  if (_idToken && Date.now() < _tokenExpiry - 60000) return _idToken;
+  if (!_refreshToken) return null;
+  if (_tokenInFlight) return _tokenInFlight;
+
+  // Cleared once the shared request settles, success or failure: a rejected
+  // refresh must not poison later attempts.
+  _tokenInFlight = _doRefreshToken().finally(() => { _tokenInFlight = null; });
+  return _tokenInFlight;
 }
 
 // ── Public auth ──────────────────────────────────────────────

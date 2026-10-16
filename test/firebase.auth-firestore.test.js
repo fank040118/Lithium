@@ -394,6 +394,46 @@ describe('_getToken', () => {
     expect(calls).toBe(0);
   });
 
+  it('shares a single in-flight refresh between concurrent callers and caches the result', async () => {
+    const fb = loadFirebaseModule();
+    const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
+    globalThis.chrome = storage;
+    let calls = 0;
+    let releaseToken;
+    const tokenGate = new Promise((resolve) => { releaseToken = resolve; });
+    globalThis.fetch = createRoutedFetch([{
+      match: (url) => url.includes('securetoken.googleapis.com'),
+      respond: async () => {
+        calls++;
+        await tokenGate;
+        return jsonResponse(200, {
+          id_token: 'shared-id-token',
+          expires_in: '3600',
+          refresh_token: 'shared-refresh',
+          user_id: 'user-1',
+        });
+      },
+    }]);
+
+    await fb._loadAuth();
+
+    // Both calls start while the refresh is still gated: they must join the
+    // same in-flight request instead of each firing their own.
+    const first = fb._getToken();
+    const second = fb._getToken();
+    expect(calls).toBe(1);
+
+    releaseToken();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toBe('shared-id-token');
+    expect(b).toBe('shared-id-token');
+    expect(calls).toBe(1);
+
+    // The refresh updated the cache, so the next call needs no request.
+    expect(await fb._getToken()).toBe('shared-id-token');
+    expect(calls).toBe(1);
+  });
+
   it('refreshes the token, updates internal state and persists the new refresh token', async () => {
     const fb = loadFirebaseModule();
     const storage = createMockChromeStorage({ _fb_refresh: 'seed-refresh' });
