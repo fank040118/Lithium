@@ -525,6 +525,12 @@ async function syncFromCloud(options = {}) {
   const { force = false } = options;
   if (!fbIsSignedIn() || !fbIsEmailVerified()) return false;
 
+  // Wait for any in-flight upload first: the GET result must not race with
+  // (or be overwritten by) an upload that is still targeting the same doc.
+  if (_syncInFlight) {
+    try { await _syncInFlight; } catch { /* upload failure is handled by its own path */ }
+  }
+
   _syncState = 'downloading';
   _lastSyncError = null;
   _updateSyncUI();
@@ -545,6 +551,9 @@ async function syncFromCloud(options = {}) {
     if (!force && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
       _syncState = 'idle';
       _updateSyncUI();
+      // A failed upload can leave local edits dirty with no timer pending, so
+      // re-queue them here instead of waiting for the next user edit.
+      if (_isDirty()) scheduleSyncToCloud();
       return true;
     }
 

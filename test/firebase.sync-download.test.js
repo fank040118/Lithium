@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { jsonResponse } from './helpers/mockFetch.js';
-import { setupSignedInFirebase, firestoreGetRoute } from './helpers/setupSignedInFirebase.js';
+import { setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
 
 afterEach(() => {
   delete globalThis.chrome;
@@ -76,6 +76,38 @@ describe('syncFromCloud', () => {
     expect(globalThis.items).toBe(sentinelItems);
   });
 
+  it('re-queues a pending upload when the cloud has not changed since the last sync', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      let patchCalls = 0;
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+            items: [{ id: 'cloud' }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+            updateTime: '2024-06-01T00:00:00.000000000Z',
+          }))),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: '2024-06-01T00:00:00.000000000Z' });
+          }),
+        ],
+      });
+      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb.markLocalCloudDataChanged();   // 上次上传失败的遗留脏数据
+      vi.clearAllTimers();                    // 清掉 mark 排的定时器，只验证 syncFromCloud 自己补排
+
+      const result = await fb.syncFromCloud();
+
+      expect(result).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);     // 跳过分支必须补排上传
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps local edits and reschedules an upload when both local and cloud changed', async () => {
     vi.useFakeTimers();
     try {
@@ -96,6 +128,48 @@ describe('syncFromCloud', () => {
       expect(result).toBe(false);
       expect(globalThis.items).toBe(sentinelItems);
       expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for an in-flight upload before fetching the cloud document', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const events = [];
+      let releasePatch;
+      const patchGate = new Promise((resolve) => { releasePatch = resolve; });
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => {
+            events.push('get');
+            return jsonResponse(200, firestoreDoc(fb, {
+              items: [{ id: 'cloud' }], engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+              updateTime: '2024-06-01T12:00:00.000000000Z',
+            }));
+          }),
+          firestorePatchRoute(async () => {
+            events.push('patch:start');
+            await patchGate;
+            events.push('patch:end');
+            return jsonResponse(200, { updateTime: '2024-06-01T12:00:00.000000000Z' });
+          }),
+        ],
+      });
+
+      await fb.markLocalCloudDataChanged();
+      await vi.advanceTimersByTimeAsync(2000);   // 上传开始并阻塞在网关上
+      expect(events).toEqual(['patch:start']);
+
+      const syncPromise = fb.syncFromCloud();
+      await vi.advanceTimersByTimeAsync(50);     // 给抢先发起 GET 的机会
+      expect(events).toEqual(['patch:start']);   // 在途上传未结束前不得发起 GET
+
+      releasePatch();
+      await syncPromise;
+
+      expect(events).toEqual(['patch:start', 'patch:end', 'get']);
     } finally {
       vi.useRealTimers();
     }
