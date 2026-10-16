@@ -73,6 +73,64 @@ describe('_canonicalJson', () => {
   });
 });
 
+describe('_cloudSnapshotFromFields', () => {
+  it('maps every missing key to undefined', () => {
+    const fb = loadFirebaseModule();
+
+    const snap = fb._cloudSnapshotFromFields({});
+
+    expect(snap.items).toBeUndefined();
+    expect(snap.engines).toBeUndefined();
+    expect(snap.selected_engine).toBeUndefined();
+    expect(snap.clocks).toBeUndefined();
+    expect(snap.grid_columns).toBeUndefined();
+  });
+
+  it('treats a nullish fields map as all-undefined', () => {
+    const fb = loadFirebaseModule();
+
+    expect(fb._cloudSnapshotFromFields(undefined).items).toBeUndefined();
+    expect(fb._cloudSnapshotFromFields(null).items).toBeUndefined();
+  });
+
+  it('decodes present fields to their parsed values', () => {
+    const fb = loadFirebaseModule();
+
+    const snap = fb._cloudSnapshotFromFields({
+      items: fb._toFV(JSON.stringify([{ id: 'a' }])),
+      engines: fb._toFV(JSON.stringify([{ id: 'e1' }])),
+      selected_engine: fb._toFV('e1'),
+      clocks: fb._toFV(JSON.stringify([{ id: 'c1' }])),
+      grid_columns: fb._toFV(8),
+    });
+
+    expect(snap.items).toEqual([{ id: 'a' }]);
+    expect(snap.engines).toEqual([{ id: 'e1' }]);
+    expect(snap.selected_engine).toBe('e1');
+    expect(snap.clocks).toEqual([{ id: 'c1' }]);
+    expect(snap.grid_columns).toBe(8);
+  });
+
+  it('decodes an explicit Firestore nullValue to null (not undefined)', () => {
+    const fb = loadFirebaseModule();
+
+    const snap = fb._cloudSnapshotFromFields({ items: { nullValue: null } });
+
+    expect(snap.items).toBeNull();
+  });
+
+  it('lets _compareSnapshots treat an explicit-null field as a skipped field', () => {
+    const fb = loadFirebaseModule();
+
+    const local = { items: [{ id: 'a' }] };
+    const cloud = fb._cloudSnapshotFromFields({ items: { nullValue: null } });
+
+    const result = fb._compareSnapshots(local, cloud);
+    expect(result.equal).toBe(true);
+    expect(result.skippedFields).toContain('items');
+  });
+});
+
 describe('_compareSnapshots — items normalization', () => {
   it('normalizes folder children, unknown type, and stray link children to equal', () => {
     const fb = loadFirebaseModule();

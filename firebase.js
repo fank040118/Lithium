@@ -594,16 +594,18 @@ function _buildSyncSnapshot() {
   };
 }
 
-// Convert a Firestore `fields` map into the same snapshot shape, leaving a
-// missing field undefined so callers can tell "absent" from "explicit null".
+// Convert a Firestore `fields` map into the same snapshot shape. A missing key
+// maps to `undefined`; an explicitly present field (including a Firestore
+// `nullValue`, which `_fromFV` decodes to `null`) maps to its decoded value.
+// This lets callers distinguish "absent" (undefined) from "explicit null".
 function _cloudSnapshotFromFields(fields) {
   const f = fields || {};
   return {
-    items: _fromFV(f.items),
-    engines: _fromFV(f.engines),
-    selected_engine: _fromFV(f.selected_engine),
-    clocks: _fromFV(f.clocks),
-    grid_columns: _fromFV(f.grid_columns),
+    items: f.items === undefined ? undefined : _fromFV(f.items),
+    engines: f.engines === undefined ? undefined : _fromFV(f.engines),
+    selected_engine: f.selected_engine === undefined ? undefined : _fromFV(f.selected_engine),
+    clocks: f.clocks === undefined ? undefined : _fromFV(f.clocks),
+    grid_columns: f.grid_columns === undefined ? undefined : _fromFV(f.grid_columns),
   };
 }
 
