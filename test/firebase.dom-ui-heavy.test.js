@@ -347,6 +347,35 @@ describe('_handleSyncBtn', () => {
   });
 });
 
+describe('automatic upload feedback', () => {
+  it('toasts payloadTooLarge once for consecutive oversized automatic uploads', async () => {
+    vi.useFakeTimers();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { showToast } = installUiMocks();
+      const fb = loadFirebaseModule();
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [firestorePatchRoute(async () =>
+          jsonResponse(200, { updateTime: '2024-01-01T00:00:00.000000000Z' }))],
+      });
+      globalThis._updateSyncUI = vi.fn();
+      globalThis.items = [{ id: 'huge', type: 'link', name: 'x'.repeat(100000), url: 'https://example.com', size: '1x1' }];
+
+      await fb.markLocalCloudDataChanged();          // edit 1 → automatic upload 1
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(showToast).toHaveBeenCalledWith('toast.syncPayloadTooLarge', 'error');
+      expect(showToast).toHaveBeenCalledTimes(1);
+
+      await fb.markLocalCloudDataChanged();          // edit 2 → automatic upload 2, same code
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(showToast).toHaveBeenCalledTimes(1);    // the repeated code must not toast again
+    } finally {
+      consoleError.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});
+
 function cleanupAuthIntercepts() {
   delete globalThis.fbSignIn;
   delete globalThis.fbSignUp;

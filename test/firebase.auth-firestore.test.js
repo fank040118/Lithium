@@ -585,6 +585,50 @@ describe('_parseFirestoreError', () => {
     expect(fb.fbIsSignedIn()).toBe(false);
   });
 
+  it('does not clear a session that replaced the old one while the token refresh was in flight', async () => {
+    const fb = loadFirebaseModule();
+    let releaseRefresh;
+    const refreshGate = new Promise((resolve) => { releaseRefresh = resolve; });
+    let markRefreshStarted;
+    const refreshStarted = new Promise((resolve) => { markRefreshStarted = resolve; });
+
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        {
+          match: (url) => url.includes('securetoken.googleapis.com'),
+          respond: async () => {
+            markRefreshStarted();
+            await refreshGate;
+            // Old refresh token rejected: the losing refresh must return null
+            // without touching auth state.
+            return jsonResponse(400, { error: { message: 'INVALID_GRANT' } });
+          },
+        },
+        {
+          match: (url) => url.includes('accounts:signInWithPassword'),
+          respond: async () => jsonResponse(200, {
+            idToken: 'new.id.token', expiresIn: '3600',
+            refreshToken: 'new-refresh-token', localId: 'new-uid',
+          }),
+        },
+      ],
+    });
+
+    const parsePromise = fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    await refreshStarted;                                  // the refresh captured the old epoch
+    await fb.fbSignOut();                                  // old session ends
+    await fb.fbSignIn('new@example.com', 'password123');   // new session takes over
+    releaseRefresh();
+
+    const result = await parsePromise;
+
+    expect(result).toEqual({ code: 'auth', status: 403 });
+    // The falsy token result came from the identity race, not from a missing
+    // refresh token: the freshly established session must survive.
+    expect(fb.fbIsSignedIn()).toBe(true);
+    expect(fb.fbGetEmail()).toBe('new@example.com');
+  });
+
   it('returns quota and keeps auth on status 429', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb);

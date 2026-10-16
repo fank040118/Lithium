@@ -499,14 +499,18 @@ async function _parseFirestoreError(res) {
     try {
       const token = await _getToken();
       if (!token) {
-        await _clearAuth();
+        // _getToken returns null both when there is no refresh token at all
+        // and when the refresh lost its identity race; only clear auth in the
+        // former case — the latter means a new session has already taken over.
+        if (!_refreshToken) await _clearAuth();
         return { code: 'auth', status };
       }
       return { code: 'firestore', status };
     } catch (e) {
-      // _getToken clears auth itself for fatal refresh failures. A network
-      // failure is reported as-is so the caller can offer a retry.
-      return { code: e?.code === 'network' ? 'network' : 'auth', status };
+      // _getToken clears auth itself for fatal refresh failures. Keep the
+      // failure kind (network is retryable, quota has its own toast) and fall
+      // back to auth for everything else.
+      return { code: e?.code || 'auth', status };
     }
   }
   if (status === 429 ||
@@ -528,6 +532,9 @@ let _syncedRev = 0;       // edit rev last uploaded to the cloud, persisted as _
 // _syncState and _lastSyncError are consumed by _updateSyncUI in Task 3.
 let _syncState = 'idle';  // 'idle' | 'uploading' | 'downloading' | 'error'
 let _lastSyncError = null;
+// Code of the last failed automatic upload, used to suppress a repeated
+// payload-too-large toast while the user keeps editing. Reset on success.
+let _lastAutoUploadErrorCode = null;
 
 function _isDirty() { return _editRev !== _syncedRev; }
 
@@ -790,10 +797,22 @@ function scheduleSyncToCloud() {
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(() => {
     _syncTimer = null;
-    syncToCloud().catch((err) => {
-      // 自动上传失败只记录并更新状态栏，不弹 toast 打扰用户
-      console.error('[firebase] scheduled upload failed', err);
-    });
+    syncToCloud()
+      .then(() => {
+        _lastAutoUploadErrorCode = null;
+      })
+      .catch((err) => {
+        // Automatic failures are logged and surfaced in the status bar only —
+        // except an oversized payload: it cannot recover on its own and would
+        // otherwise fail silently on every edit. Same consecutive code only
+        // toasts once so repeated edits do not spam the user.
+        console.error('[firebase] scheduled upload failed', err);
+        const code = err?.code || null;
+        if (code === 'payload-too-large' && _lastAutoUploadErrorCode !== code) {
+          showToast(t('toast.syncPayloadTooLarge'), 'error');
+        }
+        _lastAutoUploadErrorCode = code;
+      });
   }, 2000);
 }
 
