@@ -119,7 +119,7 @@ describe('markLocalCloudDataChanged', () => {
     }
   });
 
-  it('does not persist a timestamp when userEdit is false, but still schedules a sync', async () => {
+  it('does not bump the edit rev when userEdit is false, but still schedules a sync', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -134,7 +134,7 @@ describe('markLocalCloudDataChanged', () => {
     }
   });
 
-  it('still persists the timestamp when not signed in, but does not schedule a sync', async () => {
+  it('still bumps the edit rev when not signed in, but does not schedule a sync', async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));

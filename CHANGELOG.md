@@ -9,6 +9,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+- Cross-account data leak: a queued upload or a pull after sign-in could write the previous account's local data into the newly signed-in account's cloud document
+- A token refresh that landed after sign-out could revive the signed-out session and mis-record the account switch
+
+### Changed
+- Local edits are now tracked with a persisted revision counter (`_fb_edit_rev` / `_fb_synced_rev`) instead of comparing client and server timestamps; existing installations are migrated once automatically
+- Signing in to a different account now treats that account's cloud snapshot as authoritative, and automatic uploads stay blocked until it has been pulled (or explicitly re-uploaded)
+- Sign-out now resets the cloud sync state, and the device keeps a persisted sync baseline (`_fb_sync_baseline_uid`) to detect the next account switch
+
+### Notes
+- If you had unsynced edits before upgrading, click the manual "上传" (Upload) button once after signing in
+
 ## [1.0.2] - 2026-07-12
 
 ### Fixed
