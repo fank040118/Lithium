@@ -296,4 +296,33 @@ describe('_pullAfterSignIn', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not schedule an upload when the switch pull fails (fail-safe)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      let patchCalls = 0;
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => { throw new TypeError('network down'); }),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: '2024-06-02T00:00:00.000000000Z' });
+          }),
+        ],
+      });
+      globalThis.items = [{ id: 'leftover-from-account-a' }];
+      await fb.markLocalCloudDataChanged();   // 本地脏数据（上一账号残留）
+      vi.clearAllTimers();                    // 只观察 _pullAfterSignIn 是否自己排上传
+
+      await fb._pullAfterSignIn(true);        // 切换后的强制拉取，GET 抛网络错误
+
+      // fail-safe：拉取失败不代表“云端无数据”，不得把本地脏数据 PATCH 到新账号文档
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

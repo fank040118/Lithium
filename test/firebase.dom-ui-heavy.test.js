@@ -437,7 +437,17 @@ describe('_handleLogin', () => {
     mountAuthDom();
     document.getElementById('login-email').value = 'user@example.com';
     document.getElementById('login-password').value = 'password123';
-    globalThis.fbSignIn = vi.fn(async () => {});
+    const storage = createMockChromeStorage({});
+    globalThis.chrome = storage;
+    await fb._loadAuth();
+    // Emulate the real fbSignIn(): the new uid and the persisted switch marker
+    // appear before _handleLogin resumes, while _lastAuthUid was still null
+    // when _handleLogin captured previousUid before calling fbSignIn.
+    globalThis.fbSignIn = vi.fn(async () => {
+      storage._data._fb_uid = 'user-uid';
+      storage._data._fb_last_uid = 'user-uid';
+      await fb._loadAuth();
+    });
     globalThis.fbIsEmailVerified = vi.fn(() => true);
     globalThis._pullAfterSignIn = vi.fn(async () => {});
     globalThis.syncFromCloud = vi.fn();
@@ -451,7 +461,8 @@ describe('_handleLogin', () => {
     expect(globalThis.fbSignIn).toHaveBeenCalledWith('user@example.com', 'password123');
     expect(globalThis._hideLoginOverlay).toHaveBeenCalledTimes(1);
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
-    // No previous uid in a fresh module → not an account switch → non-forced pull.
+    // First login ever: no uid was stored before this attempt → not an account
+    // switch → non-forced pull, even though the signed-in uid now exists.
     expect(globalThis._pullAfterSignIn).toHaveBeenCalledTimes(1);
     expect(globalThis._pullAfterSignIn).toHaveBeenCalledWith(false);
     expect(globalThis.syncFromCloud).not.toHaveBeenCalled();

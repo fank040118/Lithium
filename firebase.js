@@ -680,8 +680,8 @@ async function markLocalCloudDataChanged(options = {}) {
 }
 
 // Shared "pull after sign-in" entry point for interactive login, email
-// verification and startup restore: pull the cloud snapshot and, when there is
-// nothing to pull, queue an upload of the local state instead.
+// verification and startup restore: pull the cloud snapshot and, when the
+// cloud explicitly has no data, queue an upload of the local state instead.
 // `forcePull` is used right after an account switch so the new account's cloud
 // document always wins over whatever the previous account left on this device.
 async function _pullAfterSignIn(forcePull = false) {
@@ -690,7 +690,13 @@ async function _pullAfterSignIn(forcePull = false) {
   try {
     hadCloudData = await syncFromCloud(forcePull ? { force: true } : {});
   } catch (err) {
+    // Fail-safe: a failed pull says nothing about the cloud state, so it must
+    // not be treated as "no cloud data". Never queue an upload here — after an
+    // account switch a dirty local state could be PATCHed into the new
+    // account's document. Keep it dirty and let the next edit or startup pull
+    // retry.
     console.error('[firebase] initial pull failed', err);
+    return;
   }
   if (!hadCloudData) scheduleSyncToCloud();
 }

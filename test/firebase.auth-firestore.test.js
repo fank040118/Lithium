@@ -195,6 +195,7 @@ describe('_saveAuth', () => {
     });
     expect(mock._data._fb_refresh).toBe('refresh-token');
     expect(mock._data._fb_uid).toBe('user-uid');
+    expect(mock._data._fb_last_uid).toBe('user-uid');
     expect(mock._data._fb_email_verified).toBe(true);
     expect(mock._data._fb_email).toBe('user@example.com');
   });
