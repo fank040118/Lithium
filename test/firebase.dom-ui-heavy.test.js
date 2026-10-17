@@ -1139,6 +1139,13 @@ describe('账号切换验证邮箱路径（C1 回归）', () => {
       expect(storage._data._fb_sync_baseline_uid).toBe('account-a');
       await vi.advanceTimersByTimeAsync(2500);   // 让任何被误排的上传跑完
       expect(patches).toEqual([]);
+
+      // resolve tail：选「用云端」落地 B 快照、baseline 跟进到 B、零 PATCH
+      await fb.fbResolveSyncConflict('cloud');
+      expect(globalThis.items).toEqual(cloudItems);
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(patches).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

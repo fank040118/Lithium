@@ -810,6 +810,9 @@ describe('fbResolveSyncConflict', () => {
     const setup = await setupSignedInFirebase(fb, { extraRoutes: routes });
     globalThis.items = localItems;
     await fb.markLocalCloudDataChanged();
+    // No-op under real timers; under fake timers this drops the auto-upload
+    // timer markLocalCloudDataChanged scheduled so a later syncFromCloud is the
+    // only thing that could queue a PATCH.
     vi.clearAllTimers();
     return setup;
   }
@@ -945,41 +948,52 @@ describe('fbResolveSyncConflict', () => {
   });
 
   it("'cloud' reports session-changed and does not import when the session changes mid-GET", async () => {
-    const fb = loadFirebaseModule();
-    const localItems = [{ id: 'local-only' }];
-    let patchCalls = 0;
-    let getCalls = 0;
-    let markResolveGetStarted;
-    let releaseResolveGet;
-    const resolveGetStarted = new Promise((r) => { markResolveGetStarted = r; });
-    const resolveGate = new Promise((r) => { releaseResolveGet = r; });
-    await makeConflict(fb, {
-      getResponder: async () => {
-        getCalls += 1;
-        if (getCalls === 1) return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
-        markResolveGetStarted();
-        await resolveGate;
-        return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
-      },
-      patchResponder: async () => {
-        patchCalls += 1;
-        return jsonResponse(200, { updateTime: PATCH_TS });
-      },
-      localItems,
-    });
-    await fb.syncFromCloud();
-    expect(fb.fbGetSyncConflict()).not.toBeNull();
+    // Fake timers are safe here: the GET is gated on a manually-resolved
+    // promise (not a timer), so the epoch race is reproduced without the
+    // timer clock interfering. They let us assert no import upload got queued.
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const localItems = [{ id: 'local-only' }];
+      let patchCalls = 0;
+      let getCalls = 0;
+      let markResolveGetStarted;
+      let releaseResolveGet;
+      const resolveGetStarted = new Promise((r) => { markResolveGetStarted = r; });
+      const resolveGate = new Promise((r) => { releaseResolveGet = r; });
+      await makeConflict(fb, {
+        getResponder: async () => {
+          getCalls += 1;
+          if (getCalls === 1) return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
+          markResolveGetStarted();
+          await resolveGate;
+          return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
+        },
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+        localItems,
+      });
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
 
-    const resolvePromise = fb.fbResolveSyncConflict('cloud');
-    await resolveGetStarted;
-    await fb.fbSignOut();
-    releaseResolveGet();
-    const result = await resolvePromise;
+      const resolvePromise = fb.fbResolveSyncConflict('cloud');
+      await resolveGetStarted;
+      await fb.fbSignOut();
+      releaseResolveGet();
+      const result = await resolvePromise;
 
-    expect(result).toEqual({ ok: false, code: 'session-changed' });
-    expect(fb.fbGetSyncConflict()).toBeNull();
-    expect(globalThis.items).toEqual(localItems);
-    expect(patchCalls).toBe(0);
+      expect(result).toEqual({ ok: false, code: 'session-changed' });
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(globalThis.items).toEqual(localItems);
+      expect(patchCalls).toBe(0);
+      // The late response was dropped with zero writes, not treated as "empty
+      // cloud": no import upload may be queued for the new session.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("'local' reports storage-read-only and keeps the conflict when the firewall blocks upload", async () => {
@@ -1032,6 +1046,13 @@ describe('fbResolveSyncConflict', () => {
       expect(fb.fbGetSyncConflict()).toBeNull();
       expect(fb._isDirty()).toBe(true);
       expect(globalThis.items).toEqual(localItems);
+      expect(patchCalls).toBe(1);
+
+      // Retry path: the conflict is now cleared, so the next user edit resumes
+      // the automatic upload (existing error path) instead of staying paused.
+      await fb.markLocalCloudDataChanged();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(2);
     } finally {
       vi.useRealTimers();
     }
@@ -1198,6 +1219,353 @@ describe('fbGetSyncConflict copy semantics', () => {
       expect(fb.fbGetSyncConflict().trigger).not.toBe('mutated');
       expect(fb.fbGetSyncConflict().isAccountSwitch).toBe(false);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('startup re-popup', () => {
+  it('re-detects a pending conflict on startup and re-notifies the hook', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      let patchCalls = 0;
+      const cloudItems = [{ id: 'cloud' }];
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, cloudItems))),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: PATCH_TS });
+          }),
+        ],
+      });
+      globalThis.items = [{ id: 'local-only' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      // 首次登录检测 → 未决（脏本地 + 云端不同）
+      await fb.syncFromCloud();
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      conflictHook.mockClear();
+
+      // "reload": re-eval the module against the same storage, then re-init.
+      // The pending state is re-derived by the startup pull from persisted
+      // dirty/baseline, not carried over from the previous closure.
+      const fb2 = loadFirebaseModule();
+      globalThis.onSyncConflict = conflictHook;
+      await fb2.fbInit();
+
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(conflictHook).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'startup' }));
+      expect(fb2.fbGetSyncConflict()).not.toBeNull();
+      expect(globalThis.items).toEqual([{ id: 'local-only' }]);
+      expect(patchCalls).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('account switch end-to-end', () => {
+  // Set up a signed-in account (TEST_UID) whose persisted baseline still points
+  // at a previous account, plus a dirty local state that differs from the cloud.
+  async function setupSwitch(fb, { cloudItems, patchResponder }) {
+    const routes = [
+      firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, cloudItems))),
+    ];
+    if (patchResponder) routes.push(firestorePatchRoute(patchResponder));
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    // 持久化基线仍指向上一次成功同步的账号 → 切号未解决
+    storage._data._fb_sync_baseline_uid = 'account-a';
+    await fb._loadAuth();
+    return storage;
+  }
+
+  it('switch + dirty + different → hook(isAccountSwitch) → resolve cloud lands the new account snapshot', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      const cloudItems = [{ id: 'B-cloud-data' }];
+      let patchCalls = 0;
+      const storage = await setupSwitch(fb, {
+        cloudItems,
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+      });
+
+      globalThis.items = [{ id: 'A-secret-leftover' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb._pullAfterSignIn({ trigger: 'sign-in' });
+
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(conflictHook).toHaveBeenCalledWith(expect.objectContaining({
+        isAccountSwitch: true,
+        trigger: 'sign-in',
+      }));
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(globalThis.items).toEqual([{ id: 'A-secret-leftover' }]);
+      expect(patchCalls).toBe(0);
+      expect(fb._needsSwitchPull()).toBe(true);
+
+      const result = await fb.fbResolveSyncConflict('cloud');
+
+      expect(result).toEqual({ ok: true });
+      expect(globalThis.items).toEqual(cloudItems);
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+      expect(fb._needsSwitchPull()).toBe(false);
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(patchCalls).toBe(0);   // resolve cloud never PATCHes
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+
+  it('switch + dirty + different → resolve local force-uploads the leftover data into the new account', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      let patchCalls = 0;
+      let capturedBody = null;
+      const storage = await setupSwitch(fb, {
+        cloudItems: [{ id: 'B-cloud-data' }],
+        patchResponder: async (url, options) => {
+          patchCalls += 1;
+          capturedBody = JSON.parse(options.body);
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+      });
+
+      const localItems = [{ id: 'A-secret-leftover' }];
+      globalThis.items = localItems;
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb._pullAfterSignIn({ trigger: 'sign-in' });
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+      const result = await fb.fbResolveSyncConflict('local');
+
+      expect(result).toEqual({ ok: true });
+      expect(patchCalls).toBe(1);
+      expect(JSON.parse(capturedBody.fields.items.stringValue)).toEqual(localItems);
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+      expect(fb.fbGetSyncConflict()).toBeNull();
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+
+  it('switch + dirty + identical content → no hook, silently clears dirty, baseline = new account', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      const cloudItems = [{ id: 'same' }];
+      let patchCalls = 0;
+      const storage = await setupSwitch(fb, {
+        cloudItems,
+        patchResponder: async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        },
+      });
+
+      globalThis.items = [{ id: 'same' }];
+      await fb.markLocalCloudDataChanged();   // 脏，但内容与云端相同
+      vi.clearAllTimers();
+
+      await fb._pullAfterSignIn({ trigger: 'sign-in' });
+
+      expect(conflictHook).not.toHaveBeenCalled();
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(globalThis.items).toEqual(cloudItems);
+      expect(fb._isDirty()).toBe(false);
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+      expect(patchCalls).toBe(0);
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+
+  it('switch + cloud absent → silently imports the local state (no hook, one PATCH)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      let patchCalls = 0;
+      const { storage } = await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(404, {})),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: PATCH_TS });
+          }),
+        ],
+      });
+      storage._data._fb_sync_baseline_uid = 'account-a';
+      await fb._loadAuth();
+
+      globalThis.items = [{ id: 'A-secret-leftover' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb._pullAfterSignIn({ trigger: 'sign-in' });
+
+      expect(conflictHook).not.toHaveBeenCalled();
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(vi.getTimerCount()).toBe(1);   // 导入上传排定
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(1);
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the pending conflict and schedules an import when the cloud doc is deleted while pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      let patchCalls = 0;
+      let cloudDeleted = false;
+      await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => {
+            if (cloudDeleted) return jsonResponse(404, {});
+            return jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }]));
+          }),
+          firestorePatchRoute(async () => {
+            patchCalls += 1;
+            return jsonResponse(200, { updateTime: PATCH_TS });
+          }),
+        ],
+      });
+      globalThis.items = [{ id: 'local-only' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb.syncFromCloud();   // 冲突检测 → 未决
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      conflictHook.mockClear();
+
+      cloudDeleted = true;
+      await fb._pullAfterSignIn({ trigger: 'sign-in' });
+
+      expect(conflictHook).not.toHaveBeenCalled();
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(vi.getTimerCount()).toBe(1);   // 导入上传排定
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(patchCalls).toBe(1);
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('same-account re-login', () => {
+  function b64url(payload) {
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
+  }
+
+  async function setupRelogin(fb, cloudItems, { patchCallsRef }) {
+    const verifiedToken = `h.${b64url({ email_verified: true })}.s`;
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        {
+          match: (url) => url.includes('accounts:signInWithPassword'),
+          respond: async () => jsonResponse(200, {
+            idToken: verifiedToken, expiresIn: '3600', refreshToken: 'b-refresh', localId: TEST_UID,
+          }),
+        },
+        firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, cloudItems))),
+        firestorePatchRoute(async () => {
+          patchCallsRef.count += 1;
+          return jsonResponse(200, { updateTime: PATCH_TS });
+        }),
+      ],
+    });
+    return storage;
+  }
+
+  it('same-account re-login with dirty local and differing cloud → hook (not a switch)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      const patchCalls = { count: 0 };
+      await setupRelogin(fb, [{ id: 'cloud' }], { patchCallsRef: patchCalls });
+
+      globalThis.items = [{ id: 'local-only' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      // 同账号重登：登出（清 ts）→ 重登同账号 → 拉取
+      await fb.fbSignOut();
+      await fb.fbSignIn('user@example.com', 'pw');
+      await fb._pullAfterSignIn({ trigger: 'sign-in' });
+
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(conflictHook).toHaveBeenCalledWith(expect.objectContaining({
+        isAccountSwitch: false,
+        trigger: 'sign-in',
+      }));
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(globalThis.items).toEqual([{ id: 'local-only' }]);
+      expect(patchCalls.count).toBe(0);
+    } finally {
+      delete globalThis.onSyncConflict;
+      vi.useRealTimers();
+    }
+  });
+
+  it('same-account re-login with dirty local and identical cloud → no hook, clears dirty', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const conflictHook = vi.fn();
+      globalThis.onSyncConflict = conflictHook;
+      const patchCalls = { count: 0 };
+      const storage = await setupRelogin(fb, [{ id: 'same' }], { patchCallsRef: patchCalls });
+
+      globalThis.items = [{ id: 'same' }];
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      await fb.fbSignOut();
+      await fb.fbSignIn('user@example.com', 'pw');
+      await fb._pullAfterSignIn({ trigger: 'sign-in' });
+
+      expect(conflictHook).not.toHaveBeenCalled();
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(globalThis.items).toEqual([{ id: 'same' }]);
+      expect(fb._isDirty()).toBe(false);
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+      expect(patchCalls.count).toBe(0);
+    } finally {
+      delete globalThis.onSyncConflict;
       vi.useRealTimers();
     }
   });

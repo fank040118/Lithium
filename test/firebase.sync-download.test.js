@@ -377,27 +377,40 @@ describe('syncFromCloud', () => {
 });
 
 describe('_pullAfterSignIn', () => {
-  it('forces a pull after an account switch even when the stored cloud ts is newer', async () => {
+  it('silently lands the cloud snapshot on an account switch when the local state is clean', async () => {
     const fb = loadFirebaseModule();
+    const conflictHook = vi.fn();
+    globalThis.onSyncConflict = conflictHook;
     const cloudItems = [{ id: 'account-b-cloud' }];
+    let patchCalls = 0;
     const { storage, uid } = await setupSignedInFirebase(fb, {
-      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
-        items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
-        updateTime: '2024-06-02T00:00:00.000000000Z',
-      })))],
+      extraRoutes: [
+        firestoreGetRoute(async () => jsonResponse(200, firestoreDoc(fb, {
+          items: cloudItems, engines: [], selectedEngine: 'google', clocks: [], gridColumns: 4,
+          updateTime: '2024-06-02T00:00:00.000000000Z',
+        }))),
+        firestorePatchRoute(async () => {
+          patchCalls += 1;
+          return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000000Z' });
+        }),
+      ],
     });
     // 持久化基线仍指向上一次成功同步的账号 → 切号未解决
     storage._data._fb_sync_baseline_uid = 'account-a';
     await fb._loadAuth();
-    // 场景：上一次同步时间戳比新账号云文档还新（旧账号残留）
+    // 场景：上一次同步时间戳比新账号云文档还新（旧账号残留），但本地干净
     storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
     await fb._loadCloudSyncTs();
     globalThis.items = [{ id: 'leftover-from-account-a' }];
 
     await fb._pullAfterSignIn();
 
+    // 本地干净 → 无冲突：云端快照静默落地，取代本地残留；不弹 hook、不 PATCH。
     expect(globalThis.items).toEqual(cloudItems);
     expect(storage._data._fb_sync_baseline_uid).toBe(uid);
+    expect(conflictHook).not.toHaveBeenCalled();
+    expect(fb.fbGetSyncConflict()).toBeNull();
+    expect(patchCalls).toBe(0);
   });
 
   it('seeds the upgrade baseline so a switch before the first sync still forces the pull', async () => {
@@ -471,6 +484,13 @@ describe('_pullAfterSignIn', () => {
       expect(globalThis.items).toEqual([{ id: 'A-secret-leftover' }]);
       expect(patches).toEqual([]);
       expect(fb._needsSwitchPull()).toBe(true);
+
+      // resolve tail：选「用云端」落地 B 快照、baseline 跟进到 B、零 PATCH 进 B
+      await fb.fbResolveSyncConflict('cloud');
+      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(patches).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
@@ -601,6 +621,14 @@ describe('_pullAfterSignIn', () => {
       expect(fb.fbGetSyncConflict()).not.toBeNull();
       expect(globalThis.items).toEqual([{ id: 'leftover-from-account-a' }]);
       expect(fb._needsSwitchPull()).toBe(true);
+      expect(patchCalls).toBe(0);
+
+      // resolve tail：选「用云端」落地 B 快照、切号解决、零 PATCH 进 B
+      await fb.fbResolveSyncConflict('cloud');
+      expect(globalThis.items).toEqual(cloudItems);
+      expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+      expect(fb._needsSwitchPull()).toBe(false);
+      expect(fb.fbGetSyncConflict()).toBeNull();
       expect(patchCalls).toBe(0);
     } finally {
       delete globalThis.onSyncConflict;

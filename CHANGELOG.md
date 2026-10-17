@@ -17,6 +17,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Local edits are now tracked with a persisted revision counter (`_fb_edit_rev` / `_fb_synced_rev`) instead of comparing client and server timestamps; existing installations are migrated once automatically
 - Signing in to a different account now treats that account's cloud snapshot as authoritative, and automatic uploads stay blocked until it has been pulled (or explicitly re-uploaded)
 - Sign-out now resets the cloud sync state, and the device keeps a persisted sync baseline (`_fb_sync_baseline_uid`) to detect the next account switch
+- 同步冲突从「静默覆盖」改为「显式选择」：新增冲突数据层与接口（`fbGetSyncConflict` / `fbResolveSyncConflict` / `onSyncConflict` 钩子）；本地脏数据与云端内容不同即进入未决态并暂停自动上传，未决期间手动上传/拉取仅重新通知、不静默覆盖，登出清除未决态；迟到 GET 响应经会话 epoch 复核后零写入丢弃
 
 ### Notes
 - If you had unsynced edits before upgrading, click the manual "上传" (Upload) button once after signing in

@@ -786,10 +786,16 @@ async function fbResolveSyncConflict(choice) {
     return { ok: false, code: e?.code || 'firestore' };
   }
   if (r?.skipped) {
-    // The storage-load firewall blocked the upload (nothing was attempted);
-    // keep the conflict pending so the user's choice is not lost.
+    // `skipped` is a fail-safe union, not solely the storage-load firewall:
+    // _doSyncToCloud also returns it when the identity changed (the epoch
+    // check before/after the PATCH) or a queued continuation switched
+    // session. Treating every such skip as storage-read-only keeps the
+    // conflict pending in all three cases — the safe direction — even though
+    // the label is narrower than the actual cause.
     return { ok: false, code: 'storage-read-only' };
   }
+  // Success: _doSyncToCloud clears the pending conflict at the end of its
+  // own success path (after the upload succeeded and the baseline was saved).
   return { ok: true };
 }
 

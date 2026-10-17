@@ -126,7 +126,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       let releaseFirstPatch;
       const firstPatchGate = new Promise((resolve) => { releaseFirstPatch = resolve; });
 
-      const { uid } = await setupSignedInFirebase(fb, {
+      const { storage, uid } = await setupSignedInFirebase(fb, {
         extraRoutes: [
           {
             match: (url) => url.includes('accounts:signInWithPassword'),
@@ -174,6 +174,14 @@ describe('_doSyncToCloud / syncToCloud', () => {
       // 切换后 B 云端与 A 遗留本地冲突：items 保持 A 遗留，不得 PATCH 进 B
       expect(globalThis.items).toEqual([{ id: 'A-secret-leftover' }]);
       expect(fb.fbGetSyncConflict()).not.toBeNull();
+      expect(patches.filter((p) => p.url.includes('account-b'))).toEqual([]);
+
+      // resolve tail：选「用云端」落地 B 快照、baseline 跟进到 B、零 PATCH 进 B
+      await fb.fbResolveSyncConflict('cloud');
+      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(patches.length).toBe(1);   // 仍只有旧账号那一次 U1 PATCH
       expect(patches.filter((p) => p.url.includes('account-b'))).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -251,6 +259,13 @@ describe('_doSyncToCloud / syncToCloud', () => {
       // 迟到的 U1 簿记未落：切号基线仍指向 A，云端时间戳仍缺席
       expect(storage._data._fb_sync_baseline_uid).toBe(uid);
       expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+
+      // resolve tail：选「用云端」落地 B 快照、baseline 跟进到 B、零 PATCH 进 B
+      await fb.fbResolveSyncConflict('cloud');
+      expect(globalThis.items).toEqual([{ id: 'B-cloud-data' }]);
+      expect(storage._data._fb_sync_baseline_uid).toBe('account-b');
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(patches.filter((p) => p.url.includes('account-b'))).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
