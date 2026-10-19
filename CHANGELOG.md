@@ -7,7 +7,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-## [Unreleased]
+## [1.0.4] - 2026-10-18
 
 ### Added
 - Sync conflict dialog: when this device has unsynced edits and the cloud data has also changed elsewhere, a window shows both copies side by side (last edit / last update time, shortcut and folder counts) and lets you choose "Use local" or "Use cloud"
