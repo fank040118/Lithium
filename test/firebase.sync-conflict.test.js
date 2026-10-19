@@ -1570,3 +1570,146 @@ describe('same-account re-login', () => {
     }
   });
 });
+
+describe('_countSyncItems', () => {
+  it('returns zero counts for non-array input', () => {
+    const fb = loadFirebaseModule();
+    expect(fb._countSyncItems([])).toEqual({ shortcuts: 0, folders: 0 });
+    expect(fb._countSyncItems(null)).toEqual({ shortcuts: 0, folders: 0 });
+    expect(fb._countSyncItems('x')).toEqual({ shortcuts: 0, folders: 0 });
+  });
+
+  it('counts links, id-only and unknown-type objects as shortcuts', () => {
+    const fb = loadFirebaseModule();
+    expect(fb._countSyncItems([{ type: 'link' }, { id: 'a' }, { type: 'mystery' }]))
+      .toEqual({ shortcuts: 3, folders: 0 });
+  });
+
+  it('counts folder children recursively without counting the folder as a shortcut', () => {
+    const fb = loadFirebaseModule();
+    expect(fb._countSyncItems([
+      { type: 'folder', children: [{ type: 'link' }, { type: 'link' }] },
+      { type: 'link' },
+    ])).toEqual({ shortcuts: 3, folders: 1 });
+  });
+
+  it('handles nested folders', () => {
+    const fb = loadFirebaseModule();
+    expect(fb._countSyncItems([
+      { type: 'folder', children: [{ type: 'folder', children: [{ type: 'link' }] }] },
+    ])).toEqual({ shortcuts: 1, folders: 2 });
+  });
+
+  it('ignores weather widgets, non-objects, and tolerates folders without children', () => {
+    const fb = loadFirebaseModule();
+    expect(fb._countSyncItems([{ type: 'weather', city: 'x' }, null, 3, { type: 'folder' }]))
+      .toEqual({ shortcuts: 0, folders: 1 });
+  });
+});
+
+describe('conflict info fields', () => {
+  const routesFor = (fb, cloudItems) => [
+    firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, cloudItems))),
+    firestorePatchRoute(async () => jsonResponse(200, { updateTime: PATCH_TS })),
+  ];
+
+  it('carries recursive counts and the local edit time, without the old item counts', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      await setupSignedInFirebase(fb, { extraRoutes: routesFor(fb, [{ type: 'link' }]) });
+      globalThis.items = [
+        { type: 'folder', children: [{ type: 'link' }, { type: 'link' }] },
+        { type: 'link' },
+      ];
+      vi.setSystemTime(new Date(2026, 9, 18, 14, 32));
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+
+      expect(await fb.syncFromCloud()).toBe(false);
+      const info = fb.fbGetSyncConflict();
+      expect(info).toEqual(expect.objectContaining({
+        localShortcutCount: 3,
+        localFolderCount: 1,
+        cloudShortcutCount: 1,
+        cloudFolderCount: 0,
+        localEditTime: new Date(2026, 9, 18, 14, 32).getTime(),
+      }));
+      expect(info).not.toHaveProperty('localItemCount');
+      expect(info).not.toHaveProperty('cloudItemCount');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('legacy install has localEditTime 0', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routesFor(fb, [{ type: 'link' }]) });
+      storage._data._fb_edit_rev = 2;
+      storage._data._fb_synced_rev = 1;
+      await fb._loadRevState();
+      globalThis.items = [{ type: 'link' }, { type: 'link' }];
+
+      expect(await fb.syncFromCloud()).toBe(false);
+      expect(fb.fbGetSyncConflict().localEditTime).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('system resync does not bump edit time', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const { storage } = await setupSignedInFirebase(fb, {
+        extraRoutes: [
+          firestoreGetRoute(async () => jsonResponse(200, {
+            updateTime: CLOUD_TS,
+            fields: {
+              items: fb._toFV(JSON.stringify([{ id: 'cloud' }])),
+              engines: fb._toFV(JSON.stringify([])),
+              selected_engine: fb._toFV('google'),
+              grid_columns: fb._toFV(4),
+              // clocks missing -> skipped field -> system resync (_editRev bump)
+            },
+          })),
+          firestorePatchRoute(async () => jsonResponse(200, { updateTime: PATCH_TS })),
+        ],
+      });
+      globalThis.items = [{ id: 'cloud' }];
+      globalThis.clocks = [{ id: 'c1', tz: 'UTC' }];
+      vi.setSystemTime(new Date(2026, 9, 18, 10, 0));
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+      const before = storage._data._fb_local_edit_ts;
+      const revBefore = storage._data._fb_edit_rev;
+      vi.setSystemTime(new Date(2026, 9, 18, 11, 0));
+
+      expect(await fb.syncFromCloud()).toBe(true);
+      expect(storage._data._fb_edit_rev).toBeGreaterThan(revBefore);
+      expect(storage._data._fb_local_edit_ts).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('edit time persists and survives sign-out', async () => {
+    vi.useFakeTimers();
+    try {
+      const fb = loadFirebaseModule();
+      const { storage } = await setupSignedInFirebase(fb);
+      const editedAt = new Date(2026, 9, 18, 14, 32).getTime();
+      vi.setSystemTime(editedAt);
+      await fb.markLocalCloudDataChanged();
+      vi.clearAllTimers();
+      expect(storage._data._fb_local_edit_ts).toBe(editedAt);
+
+      await fb._clearAuth();
+      expect(storage._data._fb_local_edit_ts).toBe(editedAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

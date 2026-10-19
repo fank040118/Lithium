@@ -14,6 +14,7 @@ const FB_API_KEY = 'AIzaSyBtwj6EF347eJQS6W1WBdnXOB3LellcT1A';
 const FB_PROJECT_ID = 'mainpage-ext';
 const FB_EDIT_REV_KEY = '_fb_edit_rev';
 const FB_SYNCED_REV_KEY = '_fb_synced_rev';
+const FB_LOCAL_EDIT_TS_KEY = '_fb_local_edit_ts';
 const FB_LEGACY_LOCAL_TS_KEY = '_fb_local_sync_ts';
 const FB_CLOUD_SYNC_TS_KEY = '_fb_cloud_sync_ts';
 // Account whose cloud snapshot the local state is currently based on. Written
@@ -376,16 +377,18 @@ function _rfc3339ToMs(value) {
 async function _loadRevState() {
   const s = _fbStore();
   if (!s) return { editRev: _editRev, syncedRev: _syncedRev };
-  const d = await s.get([FB_EDIT_REV_KEY, FB_SYNCED_REV_KEY, FB_LEGACY_LOCAL_TS_KEY]);
+  const d = await s.get([FB_EDIT_REV_KEY, FB_SYNCED_REV_KEY, FB_LEGACY_LOCAL_TS_KEY, FB_LOCAL_EDIT_TS_KEY]);
   if (d[FB_EDIT_REV_KEY] === undefined) {
     const dirty = _normalizeTs(d[FB_LEGACY_LOCAL_TS_KEY]) > _lastCloudTs;
     _editRev = dirty ? 1 : 0;
     _syncedRev = 0;
+    _localEditTs = 0;
     await s.remove([FB_LEGACY_LOCAL_TS_KEY]);
     await _saveRevState();
   } else {
     _editRev = _normalizeTs(d[FB_EDIT_REV_KEY]);
     _syncedRev = _normalizeTs(d[FB_SYNCED_REV_KEY]);
+    _localEditTs = _normalizeTs(d[FB_LOCAL_EDIT_TS_KEY]);
   }
   return { editRev: _editRev, syncedRev: _syncedRev };
 }
@@ -393,7 +396,11 @@ async function _loadRevState() {
 async function _saveRevState() {
   const s = _fbStore();
   if (!s) return;
-  await s.set({ [FB_EDIT_REV_KEY]: _editRev, [FB_SYNCED_REV_KEY]: _syncedRev });
+  await s.set({
+    [FB_EDIT_REV_KEY]: _editRev,
+    [FB_SYNCED_REV_KEY]: _syncedRev,
+    [FB_LOCAL_EDIT_TS_KEY]: _localEditTs,
+  });
 }
 
 async function _loadCloudSyncTs() {
@@ -554,6 +561,7 @@ let _syncInFlight = null; // Promise | null
 let _lastCloudTs = 0;     // 来自 Firestore Document.updateTime（毫秒）
 let _editRev = 0;         // local edit counter, persisted as _fb_edit_rev
 let _syncedRev = 0;       // edit rev last uploaded to the cloud, persisted as _fb_synced_rev
+let _localEditTs = 0;     // wall-clock of last user edit on this machine (display only), persisted as _fb_local_edit_ts
 // _syncState and _lastSyncError are consumed by _updateSyncUI in Task 3.
 let _syncState = 'idle';  // 'idle' | 'uploading' | 'downloading' | 'error'
 let _lastSyncError = null;
@@ -601,6 +609,29 @@ function _buildSyncSnapshot() {
     clocks,
     grid_columns: mainGridColumns,
   };
+}
+
+// Recursively count shortcuts and folders in a sync snapshot's items for the
+// conflict dialog. Folders count as folders (not shortcuts) and are descended
+// into; weather widgets are ignored; any other object (link, missing or unknown
+// type, matching sanitizeList's coercion to link) is one shortcut. Non-object
+// entries and non-array input are ignored.
+function _countSyncItems(items) {
+  const counts = { shortcuts: 0, folders: 0 };
+  const walk = (list) => {
+    if (!Array.isArray(list)) return;
+    for (const it of list) {
+      if (!it || typeof it !== 'object' || Array.isArray(it)) continue;
+      if (it.type === 'folder') {
+        counts.folders += 1;
+        walk(it.children);
+      } else if (it.type !== 'weather') {
+        counts.shortcuts += 1;
+      }
+    }
+  };
+  walk(items);
+  return counts;
 }
 
 // Convert a Firestore `fields` map into the same snapshot shape. A missing key
@@ -700,7 +731,9 @@ function _compareSnapshots(local, cloud) {
 }
 
 // Whole-object assignment, NOT a partial merge: callers always pass the full
-// info shape (see the syncFromCloud conflict branch), so any omitted field here
+// info shape { isAccountSwitch, localShortcutCount, localFolderCount,
+// cloudShortcutCount, cloudFolderCount, localEditTime (ms, 0 = unknown),
+// cloudUpdateTime, trigger } (see the syncFromCloud conflict branch), so any omitted field here
 // would silently drop from the pending state.
 function _setConflictPending(info) {
   _conflictPending = info;
@@ -991,10 +1024,15 @@ async function syncFromCloud(options = {}) {
         // PATCHed over the cloud before the conflict is resolved.
         clearTimeout(_syncTimer);
         _syncTimer = null;
+        const localCounts = _countSyncItems(localSnap.items);
+        const cloudCounts = _countSyncItems(cloudSnap.items);
         _setConflictPending({
           isAccountSwitch: _needsSwitchPull(),
-          localItemCount: Array.isArray(localSnap.items) ? localSnap.items.length : 0,
-          cloudItemCount: Array.isArray(cloudSnap.items) ? cloudSnap.items.length : 0,
+          localShortcutCount: localCounts.shortcuts,
+          localFolderCount: localCounts.folders,
+          cloudShortcutCount: cloudCounts.shortcuts,
+          cloudFolderCount: cloudCounts.folders,
+          localEditTime: _localEditTs,
           cloudUpdateTime: cloudTsMs,
           trigger,
         });
@@ -1132,6 +1170,7 @@ async function markLocalCloudDataChanged(options = {}) {
   const { userEdit = true } = options;
   if (userEdit) {
     _editRev += 1;
+    _localEditTs = Date.now();
     await _saveRevState();
   }
   scheduleSyncToCloud();
