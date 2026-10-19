@@ -1623,6 +1623,7 @@ function _showDeleteAccountConfirm() {
 // being applied) and keeps late notifications from re-enabling the buttons.
 let _conflictInfo = null;
 let _conflictResolving = false;
+let _conflictErrorCode = null;
 
 function _formatConflictTime(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return t('dialog.syncConflict.unknownTime');
@@ -1686,13 +1687,19 @@ function _openSyncConflictDialog(info) {
   _renderSyncConflictDialog(info);
   overlay.classList.remove('hidden');
   if (_conflictResolving) return;
-  const errEl = document.getElementById('sync-conflict-error');
-  if (errEl) {
-    errEl.textContent = '';
-    errEl.classList.add('hidden');
-  }
+  _setConflictError(null);
   _setConflictControlsDisabled(false);
   document.getElementById('sync-conflict-use-local')?.focus();
+}
+
+// Shows (or clears, with null) the inline error line. The code is remembered
+// so a language change can re-render the line in the new language.
+function _setConflictError(code) {
+  _conflictErrorCode = code || null;
+  const errEl = document.getElementById('sync-conflict-error');
+  if (!errEl) return;
+  errEl.textContent = code ? t(_syncErrorToastKey(code)) : '';
+  errEl.classList.toggle('hidden', !code);
 }
 
 function _setConflictControlsDisabled(disabled) {
@@ -1729,13 +1736,13 @@ async function _handleConflictChoice(choice) {
     } else if (!fbGetSyncConflict()) {
       _closeSyncConflictDialog();
       const reason = t(_syncErrorToastKey(r?.code));
-      showToast(t('toast.syncConflictLocalUploadFailed', { reason }), 'error');
-    } else {
-      const errEl = document.getElementById('sync-conflict-error');
-      if (errEl) {
-        errEl.textContent = t(_syncErrorToastKey(r?.code));
-        errEl.classList.remove('hidden');
+      if (choice === 'local') {
+        showToast(t('toast.syncConflictLocalUploadFailed', { reason }), 'error');
+      } else {
+        showToast(reason, 'error');
       }
+    } else {
+      _setConflictError(r?.code);
       _setConflictControlsDisabled(false);
     }
   } finally {
@@ -1755,19 +1762,30 @@ function _bindSyncConflictButtons() {
   bind('sync-conflict-use-cloud', () => _handleConflictChoice('cloud'));
   bind('sync-conflict-signout', async () => {
     if (_conflictResolving) return;
-    await fbSignOut();
+    const link = document.getElementById('sync-conflict-signout');
+    if (link) link.disabled = true;
+    try {
+      await fbSignOut();
+    } catch (e) {
+      console.warn('[firebase] sign out from conflict dialog failed', e);
+      showToast(t('toast.syncFailed'), 'error');
+    } finally {
+      if (link) link.disabled = false;
+    }
   });
 }
 
 function _closeSyncConflictDialog() {
   document.getElementById('sync-conflict-overlay')?.classList.add('hidden');
   _conflictInfo = null;
+  _setConflictError(null);
 }
 
 function _refreshSyncConflictDialogOnLangChange() {
   const overlay = document.getElementById('sync-conflict-overlay');
   if (!overlay || overlay.classList.contains('hidden') || !_conflictInfo) return;
   _renderSyncConflictDialog(_conflictInfo);
+  if (_conflictErrorCode) _setConflictError(_conflictErrorCode);
 }
 
 async function _handleDeleteAccount() {

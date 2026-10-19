@@ -75,6 +75,8 @@ const EXPORTED_NAMES = [
   '_renderSyncConflictDialog',
   '_openSyncConflictDialog',
   '_closeSyncConflictDialog',
+  '_setConflictError',
+  '_bindSyncConflictButtons',
   '_refreshSyncConflictDialogOnLangChange',
   'fbInit',
 ];

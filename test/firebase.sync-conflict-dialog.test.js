@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { mountAuthDom } from './helpers/authDomFixture.js';
 import { installUiMocks } from './helpers/uiMocks.js';
+import { jsonResponse } from './helpers/mockFetch.js';
+import { setupSignedInFirebase, firestoreGetRoute } from './helpers/setupSignedInFirebase.js';
 import { cleanupFbInitIntercepts, installFbInitEventTracking } from './helpers/fbInitIntercepts.js';
 
 const INFO = {
@@ -167,6 +169,29 @@ describe('re-renders on langchange', () => {
     expect(t).toHaveBeenCalledWith('dialog.syncConflict.text');
   });
 
+  it('re-renders the inline error line in the new language', () => {
+    const { fb, t } = setup();
+    fb._openSyncConflictDialog({ ...INFO });
+    fb._setConflictError('network');
+    expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
+    $('sync-conflict-error').textContent = 'stale-language text';
+    t.mockClear();
+    fb._refreshSyncConflictDialogOnLangChange();
+    expect(t).toHaveBeenCalledWith('toast.syncNetworkFailed');
+    expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
+  });
+
+  it('does not resurrect an error after close or re-open', () => {
+    const { fb } = setup();
+    fb._openSyncConflictDialog({ ...INFO });
+    fb._setConflictError('network');
+    fb._closeSyncConflictDialog();
+    fb._openSyncConflictDialog({ ...INFO });
+    fb._refreshSyncConflictDialogOnLangChange();
+    expect($('sync-conflict-error').textContent).toBe('');
+    expect($('sync-conflict-error').classList.contains('hidden')).toBe(true);
+  });
+
   it('does nothing while closed', () => {
     const { fb, t } = setup();
     fb._openSyncConflictDialog({ ...INFO });
@@ -305,6 +330,14 @@ describe('_handleConflictChoice', () => {
     expect(updateSpy).toHaveBeenCalled();
   });
 
+  it('cloud failure with the conflict cleared closes with a plain error toast, not the local-upload hint', async () => {
+    const { fb, t, showToast } = arrange({ ok: false, code: 'network' });
+    await fb._handleConflictChoice('cloud');
+    expect(hidden()).toBe(true);
+    expect(t).not.toHaveBeenCalledWith('toast.syncConflictLocalUploadFailed', expect.anything());
+    expect(showToast).toHaveBeenCalledWith('toast.syncNetworkFailed', 'error');
+  });
+
   it('still pending on failure keeps the dialog open with an inline error', async () => {
     const { fb, showToast, updateSpy } = arrange({ ok: false, code: 'network' }, { pendingAfter: true });
     await fb._handleConflictChoice('cloud');
@@ -410,19 +443,91 @@ describe('conflict dialog button wiring (real fbInit)', () => {
     d.resolve({ ok: false, code: 'no-conflict' });
   });
 
-  it('real sign-out closes the dialog without resolving anything', async () => {
+  it('double click on sign-out calls fbSignOut once and re-enables afterwards', async () => {
     const { fb } = setup();
     await init(fb);
-    // Real fbSignOut/_clearAuth against a pending conflict.
-    let pending = true;
-    globalThis.fbGetSyncConflict = vi.fn(() => (pending ? { ...INFO, isAccountSwitch: true } : null));
-    globalThis.fbResolveSyncConflict = vi.fn();
-    globalThis.fbSignOut = vi.fn(async () => { pending = false; globalThis._updateSyncUI(); });
-    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    const d = deferred();
+    globalThis.fbSignOut = vi.fn(() => d.promise);
+    $('sync-conflict-signout').click();
+    expect($('sync-conflict-signout').disabled).toBe(true);
+    $('sync-conflict-signout').click(); // disabled buttons ignore click()
+    expect(globalThis.fbSignOut).toHaveBeenCalledTimes(1);
+    d.resolve();
+    await vi.waitFor(() => expect($('sync-conflict-signout').disabled).toBe(false));
+  });
+
+  it('a failing sign-out toasts, re-enables the link and does not throw', async () => {
+    const { fb, showToast } = setup();
+    await init(fb);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fbSignOut = vi.fn(async () => { throw new Error('boom'); });
+    $('sync-conflict-signout').click();
+    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith('toast.syncFailed', 'error'));
+    expect($('sync-conflict-signout').disabled).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('real sign-out from the conflict dialog', () => {
+  afterEach(() => {
+    delete globalThis.chrome;
+    delete globalThis.fetch;
+    delete globalThis.items;
+    delete globalThis.customEngines;
+    delete globalThis.selectedEngineId;
+    delete globalThis.clocks;
+    delete globalThis.mainGridColumns;
+    delete globalThis.applyWallpaper;
+    delete globalThis.applyMainGridColumns;
+    delete globalThis.render;
+    delete globalThis.getSelectedEngine;
+    delete globalThis.isStorageLoadFailed;
+    delete globalThis.t;
+    delete globalThis.showToast;
+  });
+
+  it('closes the dialog, clears the pending conflict and leaves local data and counters untouched', async () => {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    const cloudFields = {
+      items: fb._toFV(JSON.stringify([{ id: 'cloud' }])),
+      engines: fb._toFV(JSON.stringify([])),
+      selected_engine: fb._toFV('google'),
+      clocks: fb._toFV(JSON.stringify([])),
+      grid_columns: fb._toFV(4),
+    };
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [firestoreGetRoute(async () => jsonResponse(200, {
+        updateTime: '2024-06-02T00:00:00.000000000Z', fields: cloudFields,
+      }))],
+    });
+    // setupSignedInFirebase replaces the body; mount the dialog DOM afterwards.
+    mountAuthDom();
+    // fbInit is not run here, so wire the hook and the buttons by hand.
+    globalThis.onSyncConflict = fb._openSyncConflictDialog;
+    fb._bindSyncConflictButtons();
+
+    const localItems = [{ id: 'local-only' }];
+    globalThis.items = localItems;
+    await fb.markLocalCloudDataChanged();
+    await fb.syncFromCloud();
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+    expect($('sync-conflict-overlay').classList.contains('hidden')).toBe(false);
+
+    const before = { rev: storage._data._fb_edit_rev, ts: storage._data._fb_local_edit_ts };
+    expect(before.ts).toBeGreaterThan(0);
+
+    // Reveal the sign-out link (account-switch variant only) and click it.
+    $('sync-conflict-signout-row').classList.remove('hidden');
     $('sync-conflict-signout').click();
     await vi.waitFor(() => expect($('sync-conflict-overlay').classList.contains('hidden')).toBe(true));
-    expect(globalThis.fbGetSyncConflict()).toBeNull();
-    expect(globalThis.fbResolveSyncConflict).not.toHaveBeenCalled();
+
+    expect(fb.fbGetSyncConflict()).toBeNull();
+    expect(globalThis.items).toBe(localItems);
+    expect(globalThis.items).toEqual([{ id: 'local-only' }]);
+    expect(storage._data._fb_edit_rev).toBe(before.rev);
+    expect(storage._data._fb_local_edit_ts).toBe(before.ts);
   });
 });
 

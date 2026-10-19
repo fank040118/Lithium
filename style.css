@@ -1439,6 +1439,10 @@ body {
 
 /* Sync-conflict dialog — no close affordance by design; user must choose a side.
    Amber is reserved for the conflict state (see --warning-* in :root). */
+/* Above every other overlay (max 60, incl. the later-in-DOM icon-crop overlay);
+   below the toast (70). The dialog has no close affordance, so it must never be covered. */
+.sync-conflict-overlay { z-index: 65; }
+
 .dialog-card.sync-conflict-card {
   display: flex;
   flex-direction: column;
