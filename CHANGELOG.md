@@ -7,21 +7,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [Unreleased]
+
+### Added
+- Sync conflict dialog: when this device has unsynced edits and the cloud data has also changed elsewhere, a window shows both copies side by side (last edit / last update time, shortcut and folder counts) and lets you choose "Use local" or "Use cloud"
+- When the conflict is caused by signing in to a different account, the dialog warns about it and offers a "Sign out" exit in case you signed in to the wrong account
+- The sidebar shows a "Conflict unresolved" status while a conflict is pending; automatic upload stays paused, and clicking "Upload" or "Pull" reopens the dialog
+- If the upload fails after choosing "Use local", the dialog tells you so and suggests retrying from the sidebar
+- Local data now records the time of your last edit (new local storage key `_fb_local_edit_ts`)
+
+### Changed
+- A sync conflict is no longer resolved silently: if you choose nothing, your local data is kept and syncing stays paused instead of being overwritten
+
 ## [1.0.3] - 2026-10-16
 
 ### Fixed
 - Cross-account data leak: a queued upload or a pull after sign-in could write the previous account's local data into the newly signed-in account's cloud document
 - A token refresh that landed after sign-out could revive the signed-out session and mis-record the account switch
 
-### Added
-- 同步冲突时弹出选择窗口：并排显示本地与云端的最后编辑/更新时间与快捷方式、文件夹数量，由用户选择「使用本地」或「使用云端」；切号场景提供「退出登录」出口；失败时在窗口内提示，选本地但上传失败会明确提醒重试
-- 侧栏新增「有冲突未解决」状态与提示，点「上传」/「拉取」可重新打开选择窗口
-
 ### Changed
 - Local edits are now tracked with a persisted revision counter (`_fb_edit_rev` / `_fb_synced_rev`) instead of comparing client and server timestamps; existing installations are migrated once automatically
 - Signing in to a different account now treats that account's cloud snapshot as authoritative, and automatic uploads stay blocked until it has been pulled (or explicitly re-uploaded)
 - Sign-out now resets the cloud sync state, and the device keeps a persisted sync baseline (`_fb_sync_baseline_uid`) to detect the next account switch
-- 同步冲突从「静默覆盖」改为「显式选择」：新增冲突数据层与接口（`fbGetSyncConflict` / `fbResolveSyncConflict` / `onSyncConflict` 钩子）；本地脏数据与云端内容不同即进入未决态并暂停自动上传，未决期间手动上传/拉取仅重新通知、不静默覆盖，登出清除未决态；迟到 GET 响应经会话 epoch 复核后零写入丢弃
 
 ### Notes
 - If you had unsynced edits before upgrading, click the manual "上传" (Upload) button once after signing in
