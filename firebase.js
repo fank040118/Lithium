@@ -1292,6 +1292,13 @@ function _updateSyncUI(ts) {
   const statusEl = document.getElementById('sync-status-text');
   const loginSection = document.getElementById('sync-login-section');
   const loggedSection = document.getElementById('sync-logged-section');
+  // A pending conflict cleared elsewhere (sign-out, pull convergence) must not
+  // leave the choice dialog stranded. Runs before the statusEl guard so it
+  // works regardless of sidebar DOM.
+  if (!fbGetSyncConflict()
+    && !document.getElementById('sync-conflict-overlay')?.classList.contains('hidden')) {
+    _closeSyncConflictDialog();
+  }
   if (!statusEl) return;
   const signedIn = fbIsSignedIn();
   const conflict = signedIn && fbIsEmailVerified() && !!fbGetSyncConflict();
@@ -1606,6 +1613,100 @@ function _showDeleteAccountConfirm() {
   return new Promise((resolve) => { _deleteAccountResolve = resolve; });
 }
 
+// ── Sync-conflict choice dialog ─────────────────────────────
+// Opened through the `onSyncConflict` hook (installed by fbInit). Has no close
+// affordance: the user must pick a side (or sign out on account switch).
+// `_conflictInfo` is remembered so language changes can re-render in place;
+// `_conflictResolving` is owned by the choice handler (true while a choice is
+// being applied) and keeps late notifications from re-enabling the buttons.
+let _conflictInfo = null;
+let _conflictResolving = false;
+
+function _formatConflictTime(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return t('dialog.syncConflict.unknownTime');
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return t('dialog.syncConflict.timeFormat', {
+    month: pad(d.getMonth() + 1),
+    day: pad(d.getDate()),
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  });
+}
+
+function _renderSyncConflictSide(sideId, labelKey, timeLabelKey, ms, shortcuts, folders) {
+  const side = document.getElementById(sideId);
+  if (!side) return;
+  const set = (name, text) => {
+    const el = side.querySelector(`[data-field="${name}"]`);
+    if (el) el.textContent = text;
+  };
+  set('label', t(labelKey));
+  set('timeLabel', t(timeLabelKey));
+  set('time', _formatConflictTime(ms));
+  set('shortcuts', t('dialog.syncConflict.shortcuts', { count: shortcuts }));
+  set('folders', t('dialog.syncConflict.folders', { count: folders }));
+}
+
+function _renderSyncConflictDialog(info) {
+  if (!info) return;
+  const isSwitch = !!info.isAccountSwitch;
+  const textEl = document.getElementById('sync-conflict-text');
+  if (textEl) textEl.textContent = t(isSwitch ? 'dialog.syncConflict.textSwitch' : 'dialog.syncConflict.text');
+
+  const warnEl = document.getElementById('sync-conflict-account-warn');
+  if (warnEl) {
+    warnEl.classList.toggle('hidden', !isSwitch);
+    if (isSwitch) {
+      const email = fbGetEmail();
+      warnEl.textContent = email
+        ? t('dialog.syncConflict.accountWarn', { email })
+        : t('dialog.syncConflict.accountWarnNoEmail');
+    } else {
+      warnEl.textContent = '';
+    }
+  }
+  document.getElementById('sync-conflict-signout-row')?.classList.toggle('hidden', !isSwitch);
+
+  _renderSyncConflictSide('sync-conflict-local', 'dialog.syncConflict.localLabel',
+    'dialog.syncConflict.localTimeLabel', info.localEditTime,
+    info.localShortcutCount, info.localFolderCount);
+  _renderSyncConflictSide('sync-conflict-cloud',
+    isSwitch ? 'dialog.syncConflict.cloudLabelCurrent' : 'dialog.syncConflict.cloudLabel',
+    'dialog.syncConflict.cloudTimeLabel', info.cloudUpdateTime,
+    info.cloudShortcutCount, info.cloudFolderCount);
+}
+
+// Idempotent: a second notification while open only re-renders the content.
+function _openSyncConflictDialog(info) {
+  const overlay = document.getElementById('sync-conflict-overlay');
+  if (!overlay || !info) return;
+  _conflictInfo = info;
+  _renderSyncConflictDialog(info);
+  overlay.classList.remove('hidden');
+  if (_conflictResolving) return;
+  const errEl = document.getElementById('sync-conflict-error');
+  if (errEl) {
+    errEl.textContent = '';
+    errEl.classList.add('hidden');
+  }
+  const localBtn = document.getElementById('sync-conflict-use-local');
+  const cloudBtn = document.getElementById('sync-conflict-use-cloud');
+  if (localBtn) localBtn.disabled = false;
+  if (cloudBtn) cloudBtn.disabled = false;
+  localBtn?.focus();
+}
+
+function _closeSyncConflictDialog() {
+  document.getElementById('sync-conflict-overlay')?.classList.add('hidden');
+  _conflictInfo = null;
+}
+
+function _refreshSyncConflictDialogOnLangChange() {
+  const overlay = document.getElementById('sync-conflict-overlay');
+  if (!overlay || overlay.classList.contains('hidden') || !_conflictInfo) return;
+  _renderSyncConflictDialog(_conflictInfo);
+}
+
 async function _handleDeleteAccount() {
   if (!fbIsSignedIn()) return;
 
@@ -1658,6 +1759,9 @@ async function _handleCheckVerified() {
 // ── Init ────────────────────────────────────────────────────
 
 async function fbInit() {
+  // Must be in place before any startup sync detection can raise a conflict.
+  // A preset hook (e.g. from a test) is left alone.
+  if (typeof globalThis.onSyncConflict !== 'function') globalThis.onSyncConflict = _openSyncConflictDialog;
   await _loadAuth();
   await _loadCloudSyncTs();
   await _loadRevState();
@@ -1743,6 +1847,7 @@ async function fbInit() {
     if (_deleteAccountResolve) _renderDeleteAccountConfirmBtn();
     // Re-render sync status text in the new language
     _updateSyncUI();
+    _refreshSyncConflictDialogOnLangChange();
   });
 
   if (!fbIsSignedIn()) {

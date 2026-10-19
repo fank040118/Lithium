@@ -35,7 +35,7 @@ const EXPORTED_NAMES = [
   //
   // Task 1 (12) — confirmed against app.js with full behavior specs in
   // task-1-brief.md; each is exercised by test/app.render-dom-light.test.js:
-  'getCurrentType', 'hideEngineDropdown', 'hideContextMenu', 'openDeleteConfirm',
+  'isEscapeBlockedByModal', 'getCurrentType', 'hideEngineDropdown', 'hideContextMenu', 'openDeleteConfirm',
   'hideDeleteConfirm', 'hideClockSettings', 'setUrlFieldVisible',
   'applyWallpaperEffects', 'updateSidebarWallpaperPreview',
   'handleManagedImageError', 'updateGridItemSizes', 'applyMainGridColumns',

@@ -18,6 +18,7 @@ afterEach(() => {
   delete globalThis.render;
   delete globalThis.getSelectedEngine;
   delete globalThis.normalizeFolderChildItemSizes;
+  delete globalThis.onSyncConflict;
   document.body.innerHTML = '';
 });
 

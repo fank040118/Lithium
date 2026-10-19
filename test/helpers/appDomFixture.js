@@ -238,6 +238,46 @@ export function installAppDomFixture() {
     </div>
   </div>
 
+  <div id="sync-conflict-overlay" class="overlay overlay-mid hidden" role="alertdialog" aria-modal="true" aria-labelledby="sync-conflict-title">
+    <div class="dialog-card sync-conflict-card">
+      <h2 id="sync-conflict-title" class="sync-conflict-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"/>
+          <path d="M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07"/>
+          <path d="M2 2l20 20"/>
+        </svg>
+        <span data-i18n="dialog.syncConflict.title">本地与云端数据不一致</span>
+      </h2>
+      <p id="sync-conflict-text" class="sync-conflict-text"></p>
+      <p id="sync-conflict-account-warn" class="sync-conflict-warn hidden"></p>
+      <div class="sync-conflict-compare">
+        <div id="sync-conflict-local" class="sync-conflict-side">
+          <div class="sync-conflict-side-label" data-field="label"></div>
+          <div class="sync-conflict-side-timelabel" data-field="timeLabel"></div>
+          <div class="sync-conflict-side-time" data-field="time"></div>
+          <div class="sync-conflict-side-count" data-field="shortcuts"></div>
+          <div class="sync-conflict-side-count" data-field="folders"></div>
+        </div>
+        <div id="sync-conflict-cloud" class="sync-conflict-side">
+          <div class="sync-conflict-side-label" data-field="label"></div>
+          <div class="sync-conflict-side-timelabel" data-field="timeLabel"></div>
+          <div class="sync-conflict-side-time" data-field="time"></div>
+          <div class="sync-conflict-side-count" data-field="shortcuts"></div>
+          <div class="sync-conflict-side-count" data-field="folders"></div>
+        </div>
+      </div>
+      <p id="sync-conflict-error" class="sync-conflict-error hidden" role="alert"></p>
+      <div class="dialog-actions sync-conflict-actions">
+        <button type="button" id="sync-conflict-use-local" class="btn-secondary" data-i18n="dialog.syncConflict.useLocal">使用本地</button>
+        <button type="button" id="sync-conflict-use-cloud" class="btn-secondary" data-i18n="dialog.syncConflict.useCloud">使用云端</button>
+      </div>
+      <div id="sync-conflict-signout-row" class="sync-conflict-signout hidden">
+        <span data-i18n="dialog.syncConflict.wrongAccount">登错账号？</span>
+        <button type="button" id="sync-conflict-signout" class="forgot-password-btn" data-i18n="dialog.syncConflict.signOut">退出登录</button>
+      </div>
+    </div>
+  </div>
+
   <div id="edit-overlay" class="overlay overlay-edit hidden" role="dialog" aria-modal="true" aria-labelledby="edit-title">
     <div class="dialog-card dialog-card-wide">
       <header class="modal-header">

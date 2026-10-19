@@ -1685,6 +1685,12 @@ function openDeleteConfirm(id) {
   $('#delete-overlay').classList.remove('hidden');
 }
 
+// Modals that must not be dismissed with Escape (the user has to choose).
+function isEscapeBlockedByModal() {
+  const el = document.getElementById('sync-conflict-overlay');
+  return !!el && !el.classList.contains('hidden');
+}
+
 function hideDeleteConfirm() {
   itemToDelete = null;
   $('#delete-overlay').classList.add('hidden');
@@ -2528,6 +2534,7 @@ function setupEventListeners() {
   // we skip it here to avoid double-firing.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (isEscapeBlockedByModal()) return;
 
     // Folder rename input has its own Esc semantics (cancel rename, don't
     // close the folder). If it's focused, let its onkeydown handler take it.

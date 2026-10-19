@@ -69,6 +69,11 @@ const EXPORTED_NAMES = [
   '_closeDeleteAccountModal',
   '_showDeleteAccountConfirm',
   '_handleDeleteAccount',
+  '_formatConflictTime',
+  '_renderSyncConflictDialog',
+  '_openSyncConflictDialog',
+  '_closeSyncConflictDialog',
+  '_refreshSyncConflictDialogOnLangChange',
   'fbInit',
 ];
 

@@ -1436,6 +1436,89 @@ body {
   line-height: 18px;
 }
 .login-consent-card .dialog-actions { gap: 8px; }
+
+/* Sync-conflict dialog — no close affordance by design; user must choose a side.
+   Amber is reserved for the conflict state (see --warning-* in :root). */
+.dialog-card.sync-conflict-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sync-conflict-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sync-conflict-title svg {
+  flex: none;
+  color: var(--accent-amber-500);
+}
+.sync-conflict-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+.sync-conflict-warn {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--text-warning);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.sync-conflict-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.sync-conflict-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--glass-l1);
+  border: 1px solid var(--glass-l3);
+  font-size: 12px;
+  color: var(--text-quaternary);
+}
+.sync-conflict-side-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+.sync-conflict-side-time {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sync-conflict-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-danger);
+}
+.sync-conflict-actions { gap: 8px; }
+.sync-conflict-actions button { flex: 1; }
+.sync-conflict-signout {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-quaternary);
+}
+.sync-conflict-signout .forgot-password-btn {
+  align-self: auto;
+  text-decoration: underline;
+}
 /* Semantic danger signal — kept red even inside .dialog-title where text
    otherwise inherits --text-primary. */
 .icon-red { color: var(--action-danger-hover); }

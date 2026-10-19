@@ -1771,4 +1771,20 @@ describe('app.js render/dom-light layer', () => {
       expect(document.getElementById('clock-overlay').classList.contains('hidden')).toBe(false);
     });
   });
+
+  describe('isEscapeBlockedByModal', () => {
+    it('is false when the sync-conflict overlay is hidden', () => {
+      expect(app.isEscapeBlockedByModal()).toBe(false);
+    });
+
+    it('is true once the sync-conflict overlay loses hidden', () => {
+      document.getElementById('sync-conflict-overlay').classList.remove('hidden');
+      expect(app.isEscapeBlockedByModal()).toBe(true);
+    });
+
+    it('is false when the overlay element does not exist', () => {
+      document.getElementById('sync-conflict-overlay').remove();
+      expect(app.isEscapeBlockedByModal()).toBe(false);
+    });
+  });
 });
