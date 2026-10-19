@@ -7,7 +7,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-## [Unreleased]
+## [1.0.3] - 2026-10-16
 
 ### Fixed
 - Cross-account data leak: a queued upload or a pull after sign-in could write the previous account's local data into the newly signed-in account's cloud document
