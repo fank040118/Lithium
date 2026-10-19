@@ -1615,3 +1615,75 @@ describe('fbInit', () => {
     expect(document.getElementById('verify-email-target').textContent).toBe('x@y.com');
   });
 });
+
+describe('_updateSyncUI conflict state', () => {
+  function setup({ verified = true, conflict = { isAccountSwitch: false } } = {}) {
+    installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    globalThis.fbIsEmailVerified = vi.fn(() => verified);
+    globalThis.fbGetSyncConflict = vi.fn(() => conflict);
+    return fb;
+  }
+  const statusEl = () => document.getElementById('sync-status-text');
+  const hintEl = () => document.getElementById('sync-conflict-hint');
+
+  it('shows the conflict chip and hint while a conflict is pending', () => {
+    const fb = setup();
+
+    fb._updateSyncUI(1700000000000);
+
+    expect(statusEl().textContent).toBe('sidebar.sync.status.conflict');
+    expect(statusEl().classList.contains('is-conflict')).toBe(true);
+    expect(hintEl().classList.contains('hidden')).toBe(false);
+  });
+
+  it('keeps notVerified ahead of the conflict branch', () => {
+    const fb = setup({ verified: false });
+
+    fb._updateSyncUI();
+
+    expect(statusEl().textContent).toBe('sidebar.sync.status.notVerified');
+    expect(statusEl().classList.contains('is-conflict')).toBe(false);
+    expect(hintEl().classList.contains('hidden')).toBe(true);
+  });
+
+  it('prefers the conflict status over a transient downloading state', async () => {
+    const fb = setup();
+    const { promise, resolve } = deferred();
+    // Real syncFromCloud sets _syncState = 'downloading' before awaiting the GET.
+    globalThis._fsGet = vi.fn(() => promise);
+
+    const call = fb.syncFromCloud({ mode: 'forced' });
+    expect(globalThis._fsGet).toHaveBeenCalled();
+    expect(statusEl().textContent).toBe('sidebar.sync.status.conflict');
+
+    resolve({});
+    await call;
+  });
+
+  it('returns to the normal status and hides the hint once the conflict is cleared', () => {
+    const fb = setup();
+    fb._updateSyncUI();
+    globalThis.fbGetSyncConflict = vi.fn(() => null);
+
+    fb._updateSyncUI(1700000000000);
+
+    expect(statusEl().textContent).toBe('sidebar.sync.status.syncedAt');
+    expect(statusEl().classList.contains('is-conflict')).toBe(false);
+    expect(hintEl().classList.contains('hidden')).toBe(true);
+
+  });
+
+  it('keeps the hint hidden when signed out', () => {
+    const fb = setup();
+    globalThis.fbIsSignedIn = vi.fn(() => false);
+
+    fb._updateSyncUI();
+
+    expect(statusEl().textContent).toBe('');
+    expect(statusEl().classList.contains('is-conflict')).toBe(false);
+    expect(hintEl().classList.contains('hidden')).toBe(true);
+  });
+});

@@ -110,6 +110,7 @@ export function installAppDomFixture() {
             <h2 id="sync-section-title" class="sidebar-title" data-i18n="sidebar.title.sync">云同步</h2>
             <span id="sync-status-text" class="sidebar-value sidebar-sync-status"></span>
           </div>
+          <p id="sync-conflict-hint" class="sidebar-sync-hint hidden" data-i18n="sidebar.sync.conflictHint">本地与云端不一致，自动同步已暂停。点「上传」或「拉取」重新打开选择窗口。</p>
           <div id="sync-login-section" class="sidebar-wallpaper-actions">
             <button type="button" id="sync-login-btn" class="sidebar-action-btn" data-i18n="sidebar.sync.login">登录</button>
           </div>

@@ -1293,11 +1293,17 @@ function _updateSyncUI(ts) {
   const loginSection = document.getElementById('sync-login-section');
   const loggedSection = document.getElementById('sync-logged-section');
   if (!statusEl) return;
-  if (fbIsSignedIn()) {
+  const signedIn = fbIsSignedIn();
+  const conflict = signedIn && fbIsEmailVerified() && !!fbGetSyncConflict();
+  statusEl.classList.toggle('is-conflict', conflict);
+  document.getElementById('sync-conflict-hint')?.classList.toggle('hidden', !conflict);
+  if (signedIn) {
     loginSection?.classList.add('hidden');
     loggedSection?.classList.remove('hidden');
     if (!fbIsEmailVerified()) {
       statusEl.textContent = t('sidebar.sync.status.notVerified');
+    } else if (conflict) {
+      statusEl.textContent = t('sidebar.sync.status.conflict');
     } else if (_syncState === 'uploading') {
       statusEl.textContent = t('sidebar.sync.status.uploading');
     } else if (_syncState === 'downloading') {

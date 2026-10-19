@@ -66,6 +66,12 @@
   --accent-red-border-soft: rgba(248, 113, 113, 0.34);
   --accent-red-border:      rgba(248, 113, 113, 0.50);
 
+  --accent-amber-300:       #fcd34d;
+  --accent-amber-500:       #f59e0b;
+  --warning-bg:             rgba(245, 158, 11, 0.18);
+  --warning-border:         rgba(245, 158, 11, 0.45);
+  --text-warning:           var(--accent-amber-300);
+
   /* Foreground text on dark surfaces */
   --fg-muted:  rgba(255, 255, 255, 0.60);
   --fg-soft:   rgba(255, 255, 255, 0.72);
@@ -2134,6 +2140,19 @@ body {
 
 /* Sync status in sidebar — inherits .sidebar-value chip styling.
    Empty-state hiding is handled by the generic .sidebar-value:empty rule. */
+
+.sidebar-sync-status.is-conflict {
+  background: var(--warning-bg);
+  box-shadow: inset 0 0 0 1px var(--warning-border);
+  color: var(--text-warning);
+}
+
+.sidebar-sync-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-quaternary);
+}
 
 /* Folder open/close animations */
 @keyframes folder-open {

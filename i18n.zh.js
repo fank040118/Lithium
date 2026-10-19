@@ -63,7 +63,9 @@
           downloading: '正在拉取…',
           error: '同步失败，点击重试',
           syncedAt: '{time} 已同步',
+          conflict: '有冲突未解决',
         },
+        conflictHint: '本地与云端不一致，自动同步已暂停。点「上传」或「拉取」重新打开选择窗口。',
       },
     },
 

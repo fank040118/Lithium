@@ -1,6 +1,7 @@
 export function mountAuthDom() {
   document.body.innerHTML = `
     <div id="sync-status-text" class="sidebar-sync-status"></div>
+    <p id="sync-conflict-hint" class="sidebar-sync-hint hidden"></p>
     <div id="sync-login-section"></div>
     <div id="sync-logged-section" class="hidden"></div>
     <button id="sync-upload-btn"></button>

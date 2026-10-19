@@ -63,7 +63,9 @@
           downloading: 'Downloading…',
           error: 'Sync failed — retry',
           syncedAt: 'Synced at {time}',
+          conflict: 'Unresolved conflict',
         },
+        conflictHint: 'Local and cloud data differ, so auto-sync is paused. Click Upload or Download to choose again.',
       },
     },
 
