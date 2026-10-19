@@ -58,6 +58,8 @@ const EXPORTED_NAMES = [
   '_updateSyncUI',
   '_bindSyncActionButtons',
   '_handleSyncBtn',
+  '_syncErrorToastKey',
+  '_handleConflictChoice',
   '_showAuthMode',
   '_handleSyncLoginClick',
   '_handleLogin',

@@ -13,6 +13,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Cross-account data leak: a queued upload or a pull after sign-in could write the previous account's local data into the newly signed-in account's cloud document
 - A token refresh that landed after sign-out could revive the signed-out session and mis-record the account switch
 
+### Added
+- 同步冲突时弹出选择窗口：并排显示本地与云端的最后编辑/更新时间与快捷方式、文件夹数量，由用户选择「使用本地」或「使用云端」；切号场景提供「退出登录」出口；失败时在窗口内提示，选本地但上传失败会明确提醒重试
+- 侧栏新增「有冲突未解决」状态与提示，点「上传」/「拉取」可重新打开选择窗口
+
 ### Changed
 - Local edits are now tracked with a persisted revision counter (`_fb_edit_rev` / `_fb_synced_rev`) instead of comparing client and server timestamps; existing installations are migrated once automatically
 - Signing in to a different account now treats that account's cloud snapshot as authoritative, and automatic uploads stay blocked until it has been pulled (or explicitly re-uploaded)

@@ -1205,6 +1205,19 @@ async function _pullAfterSignIn({ trigger = 'sign-in', force = false } = {}) {
 
 // ── UI ──────────────────────────────────────────────────────
 
+// Error code -> toast i18n key, shared by the sidebar sync buttons and the
+// conflict dialog's inline error / retry hint.
+function _syncErrorToastKey(code) {
+  switch (code) {
+    case 'auth': return 'toast.syncAuthFailed';
+    case 'network': return 'toast.syncNetworkFailed';
+    case 'quota': return 'toast.syncQuotaFailed';
+    case 'payload-too-large': return 'toast.syncPayloadTooLarge';
+    case 'storage-read-only': return 'toast.syncStorageReadOnly';
+    default: return 'toast.syncFailed';
+  }
+}
+
 async function _handleSyncBtn(direction) {
   if (!fbIsEmailVerified()) {
     showToast(t('toast.syncMustVerifyEmail'), 'error');
@@ -1245,18 +1258,7 @@ async function _handleSyncBtn(direction) {
       showToast(pulled ? t('toast.syncDownloaded') : t('toast.syncNoCloudData'), 'default');
     }
   } catch (e) {
-    const code = e?.code || 'firestore';
-    if (code === 'auth') {
-      showToast(t('toast.syncAuthFailed'), 'error');
-    } else if (code === 'network') {
-      showToast(t('toast.syncNetworkFailed'), 'error');
-    } else if (code === 'quota') {
-      showToast(t('toast.syncQuotaFailed'), 'error');
-    } else if (code === 'payload-too-large') {
-      showToast(t('toast.syncPayloadTooLarge'), 'error');
-    } else {
-      showToast(t('toast.syncFailed'), 'error');
-    }
+    showToast(t(_syncErrorToastKey(e?.code)), 'error');
   } finally {
     _syncState = 'idle';
     _updateSyncUI();
@@ -1696,6 +1698,70 @@ function _openSyncConflictDialog(info) {
   localBtn?.focus();
 }
 
+function _setConflictControlsDisabled(disabled) {
+  for (const id of ['sync-conflict-use-local', 'sync-conflict-use-cloud', 'sync-conflict-signout']) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  }
+}
+
+// Applies the user's choice. Result rules (in order): success -> close + toast;
+// no-conflict or signed-out -> close silently; conflict already cleared (only a
+// failed local upload leaves that state) -> close + retry hint; otherwise keep
+// the dialog open with an inline error.
+async function _handleConflictChoice(choice) {
+  if (_conflictResolving) return;
+  _conflictResolving = true;
+  _setConflictControlsDisabled(true);
+  try {
+    let r;
+    try {
+      r = await fbResolveSyncConflict(choice);
+    } catch (e) {
+      console.error('[firebase] resolve conflict failed', e);
+      r = { ok: false, code: 'firestore' };
+    }
+    if (r?.ok && !r.code) {
+      _closeSyncConflictDialog();
+      showToast(t(choice === 'local' ? 'toast.syncUploaded' : 'toast.syncDownloaded'), 'default');
+    } else if (r?.ok && r.code === 'no-cloud-data') {
+      _closeSyncConflictDialog();
+      showToast(t('toast.syncConflictCloudGone'), 'default');
+    } else if (r?.code === 'no-conflict' || !fbIsSignedIn()) {
+      _closeSyncConflictDialog();
+    } else if (!fbGetSyncConflict()) {
+      _closeSyncConflictDialog();
+      const reason = t(_syncErrorToastKey(r?.code));
+      showToast(t('toast.syncConflictLocalUploadFailed', { reason }), 'error');
+    } else {
+      const errEl = document.getElementById('sync-conflict-error');
+      if (errEl) {
+        errEl.textContent = t(_syncErrorToastKey(r?.code));
+        errEl.classList.remove('hidden');
+      }
+      _setConflictControlsDisabled(false);
+    }
+  } finally {
+    _conflictResolving = false;
+    _updateSyncUI();
+  }
+}
+
+function _bindSyncConflictButtons() {
+  const bind = (id, handler) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.bound === 'true') return;
+    el.dataset.bound = 'true';
+    el.addEventListener('click', handler);
+  };
+  bind('sync-conflict-use-local', () => _handleConflictChoice('local'));
+  bind('sync-conflict-use-cloud', () => _handleConflictChoice('cloud'));
+  bind('sync-conflict-signout', async () => {
+    if (_conflictResolving) return;
+    await fbSignOut();
+  });
+}
+
 function _closeSyncConflictDialog() {
   document.getElementById('sync-conflict-overlay')?.classList.add('hidden');
   _conflictInfo = null;
@@ -1826,6 +1892,7 @@ async function fbInit() {
     if (e.key === 'Escape' && _deleteAccountResolve) _closeDeleteAccountModal(false);
   });
   _bindSyncActionButtons();
+  _bindSyncConflictButtons();
 
   // Re-render dynamic text on language change.
   // Note: error / verify status messages are intentionally NOT re-rendered,

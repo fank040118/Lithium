@@ -236,6 +236,8 @@
       syncQuotaFailed: '同步配额已用完，请稍后再试',
       syncPayloadTooLarge: '云端数据超出 100KB 上限，请精简自定义图标后重试',
       syncStorageReadOnly: '本地数据读取失败，已暂停保存与上传；请刷新页面后重试',
+      syncConflictCloudGone: '云端已没有数据，已保留本地并开始上传。',
+      syncConflictLocalUploadFailed: '已选择使用本地，但上传失败：{reason} 可稍后在侧栏点「上传」重试。',
       iconCacheUnavailable: '图标缓存不可用',
       iconRefreshing: '刷新中…',
       iconRefreshedCount: '已刷新 {count} 个图标',

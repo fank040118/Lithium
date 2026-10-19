@@ -236,6 +236,8 @@
       syncQuotaFailed: 'Sync quota exceeded. Please retry later',
       syncPayloadTooLarge: 'Cloud data exceeds the 100KB limit. Trim custom icons and retry.',
       syncStorageReadOnly: 'Local data could not be read; saving and syncing are paused. Refresh the page and try again.',
+      syncConflictCloudGone: 'The cloud has no data anymore, so local data was kept and is being uploaded.',
+      syncConflictLocalUploadFailed: 'Kept local data, but the upload failed: {reason} You can retry with Upload in the sidebar.',
       iconCacheUnavailable: 'Icon cache unavailable',
       iconRefreshing: 'Refreshing…',
       iconRefreshedCount: 'Refreshed {count} icons',

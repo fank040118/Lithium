@@ -32,6 +32,9 @@ afterEach(() => {
   delete globalThis.onSyncConflict;
   delete globalThis.fbGetEmail;
   delete globalThis.fbGetSyncConflict;
+  delete globalThis.fbResolveSyncConflict;
+  delete globalThis.fbIsSignedIn;
+  delete globalThis.fbSignOut;
   document.body.innerHTML = '';
 });
 
@@ -210,5 +213,227 @@ describe('fbInit integration', () => {
     t.mockClear();
     window.dispatchEvent(new Event('lithium:langchange'));
     expect(t).toHaveBeenCalledWith('dialog.syncConflict.text');
+  });
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
+describe('_syncErrorToastKey', () => {
+  it.each([
+    ['auth', 'toast.syncAuthFailed'],
+    ['network', 'toast.syncNetworkFailed'],
+    ['quota', 'toast.syncQuotaFailed'],
+    ['payload-too-large', 'toast.syncPayloadTooLarge'],
+    ['storage-read-only', 'toast.syncStorageReadOnly'],
+    ['firestore', 'toast.syncFailed'],
+    [undefined, 'toast.syncFailed'],
+  ])('maps %s to %s', (code, key) => {
+    const { fb } = setup();
+    expect(fb._syncErrorToastKey(code)).toBe(key);
+  });
+});
+
+describe('_handleConflictChoice', () => {
+  // Opens the dialog with the conflict pending; `pendingAfter` is what
+  // fbGetSyncConflict() reports once the resolve settled.
+  function arrange(result, { pendingAfter = false, signedIn = true } = {}) {
+    const ctx = setup();
+    globalThis.fbIsSignedIn = vi.fn(() => signedIn);
+    globalThis.fbResolveSyncConflict = vi.fn(async () => {
+      globalThis.fbGetSyncConflict = vi.fn(() => (pendingAfter ? { ...INFO } : null));
+      if (result instanceof Error) throw result;
+      return result;
+    });
+    ctx.fb._openSyncConflictDialog({ ...INFO });
+    ctx.updateSpy = vi.fn();
+    globalThis._updateSyncUI = ctx.updateSpy;
+    return ctx;
+  }
+  const hidden = () => $('sync-conflict-overlay').classList.contains('hidden');
+
+  afterEach(() => { delete globalThis._updateSyncUI; });
+
+  it('local success closes and toasts uploaded', async () => {
+    const { fb, showToast, updateSpy } = arrange({ ok: true });
+    await fb._handleConflictChoice('local');
+    expect(globalThis.fbResolveSyncConflict).toHaveBeenCalledWith('local');
+    expect(hidden()).toBe(true);
+    expect(showToast).toHaveBeenCalledWith('toast.syncUploaded', 'default');
+    expect(updateSpy).toHaveBeenCalled();
+  });
+
+  it('cloud success closes and toasts downloaded', async () => {
+    const { fb, showToast } = arrange({ ok: true });
+    await fb._handleConflictChoice('cloud');
+    expect(hidden()).toBe(true);
+    expect(showToast).toHaveBeenCalledWith('toast.syncDownloaded', 'default');
+  });
+
+  it('no-cloud-data closes and toasts the cloud-gone notice', async () => {
+    const { fb, showToast } = arrange({ ok: true, code: 'no-cloud-data' });
+    await fb._handleConflictChoice('cloud');
+    expect(hidden()).toBe(true);
+    expect(showToast).toHaveBeenCalledWith('toast.syncConflictCloudGone', 'default');
+  });
+
+  it('no-conflict closes silently', async () => {
+    const { fb, showToast, updateSpy } = arrange({ ok: false, code: 'no-conflict' });
+    await fb._handleConflictChoice('local');
+    expect(hidden()).toBe(true);
+    expect(showToast).not.toHaveBeenCalled();
+    expect(updateSpy).toHaveBeenCalled();
+  });
+
+  it.each(['storage-read-only', 'session-changed', 'not-signed-in'])(
+    'signed out mid-resolve (%s) closes silently', async (code) => {
+      const { fb, showToast } = arrange({ ok: false, code }, { pendingAfter: true, signedIn: false });
+      await fb._handleConflictChoice('local');
+      expect(hidden()).toBe(true);
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+  it('local upload failure tells user to retry', async () => {
+    const { fb, t, showToast, updateSpy } = arrange({ ok: false, code: 'network' });
+    await fb._handleConflictChoice('local');
+    expect(hidden()).toBe(true);
+    expect(t).toHaveBeenCalledWith('toast.syncConflictLocalUploadFailed', { reason: 'toast.syncNetworkFailed' });
+    expect(showToast).toHaveBeenCalledWith('toast.syncConflictLocalUploadFailed', 'error');
+    expect(updateSpy).toHaveBeenCalled();
+  });
+
+  it('still pending on failure keeps the dialog open with an inline error', async () => {
+    const { fb, showToast, updateSpy } = arrange({ ok: false, code: 'network' }, { pendingAfter: true });
+    await fb._handleConflictChoice('cloud');
+    expect(hidden()).toBe(false);
+    expect($('sync-conflict-error').classList.contains('hidden')).toBe(false);
+    expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
+    expect($('sync-conflict-use-local').disabled).toBe(false);
+    expect($('sync-conflict-use-cloud').disabled).toBe(false);
+    expect(showToast).not.toHaveBeenCalled();
+    expect(updateSpy).toHaveBeenCalled();
+  });
+
+  it('a throwing resolve is treated as a firestore failure', async () => {
+    const { fb } = arrange(new Error('boom'), { pendingAfter: true });
+    await fb._handleConflictChoice('local');
+    expect($('sync-conflict-error').textContent).toBe('toast.syncFailed');
+    expect($('sync-conflict-use-local').disabled).toBe(false);
+  });
+
+  it('double click resolves once and keeps controls disabled while pending', async () => {
+    const { fb } = arrange({ ok: true });
+    const d = deferred();
+    globalThis.fbResolveSyncConflict = vi.fn(() => d.promise);
+    const p1 = fb._handleConflictChoice('cloud');
+    const p2 = fb._handleConflictChoice('cloud');
+    expect(globalThis.fbResolveSyncConflict).toHaveBeenCalledTimes(1);
+    expect($('sync-conflict-use-local').disabled).toBe(true);
+    expect($('sync-conflict-use-cloud').disabled).toBe(true);
+    expect($('sync-conflict-signout').disabled).toBe(true);
+    // A late notification must not re-enable anything while resolving.
+    fb._openSyncConflictDialog({ ...INFO });
+    expect($('sync-conflict-use-local').disabled).toBe(true);
+    expect($('sync-conflict-use-cloud').disabled).toBe(true);
+    expect($('sync-conflict-signout').disabled).toBe(true);
+    globalThis.fbGetSyncConflict = vi.fn(() => null);
+    d.resolve({ ok: true });
+    await Promise.all([p1, p2]);
+    expect(globalThis.fbResolveSyncConflict).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the resolving flag after the dialog was closed mid-resolve', async () => {
+    const { fb } = arrange({ ok: true });
+    await fb._handleConflictChoice('local');
+    $('sync-conflict-use-local').disabled = true;
+    $('sync-conflict-use-cloud').disabled = true;
+    globalThis.fbGetSyncConflict = vi.fn(() => ({ ...INFO }));
+    fb._openSyncConflictDialog({ ...INFO });
+    expect($('sync-conflict-use-local').disabled).toBe(false);
+    expect($('sync-conflict-use-cloud').disabled).toBe(false);
+    expect(document.activeElement.id).toBe('sync-conflict-use-local');
+  });
+
+  it('clears the resolving flag when resolve throws', async () => {
+    const { fb } = arrange(new Error('boom'), { pendingAfter: true });
+    await fb._handleConflictChoice('local');
+    fb._openSyncConflictDialog({ ...INFO });
+    expect($('sync-conflict-use-cloud').disabled).toBe(false);
+  });
+});
+
+describe('conflict dialog button wiring (real fbInit)', () => {
+  async function init(fb) {
+    installFbInitEventTracking();
+    globalThis._loadAuth = vi.fn(async () => {});
+    globalThis._loadRevState = vi.fn(async () => {});
+    globalThis._loadCloudSyncTs = vi.fn(async () => {});
+    globalThis._bindSyncActionButtons = vi.fn();
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    window.showSigninNotice = vi.fn();
+    await fb.fbInit();
+  }
+
+  it('choice buttons call fbResolveSyncConflict with their side', async () => {
+    const { fb } = setup();
+    await init(fb);
+    globalThis.fbResolveSyncConflict = vi.fn(async () => ({ ok: false, code: 'no-conflict' }));
+    $('sync-conflict-use-local').click();
+    await Promise.resolve();
+    expect(globalThis.fbResolveSyncConflict).toHaveBeenLastCalledWith('local');
+    await vi.waitFor(() => expect($('sync-conflict-overlay').classList.contains('hidden')).toBe(true));
+    fb._openSyncConflictDialog({ ...INFO });
+    $('sync-conflict-use-cloud').click();
+    expect(globalThis.fbResolveSyncConflict).toHaveBeenLastCalledWith('cloud');
+  });
+
+  it('sign-out link calls fbSignOut once', async () => {
+    const { fb } = setup();
+    await init(fb);
+    globalThis.fbSignOut = vi.fn(async () => {});
+    $('sync-conflict-signout').click();
+    expect(globalThis.fbSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('sign-out link is inert while a choice is resolving', async () => {
+    const { fb } = setup();
+    await init(fb);
+    const d = deferred();
+    globalThis.fbResolveSyncConflict = vi.fn(() => d.promise);
+    globalThis.fbSignOut = vi.fn(async () => {});
+    $('sync-conflict-use-local').click();
+    expect($('sync-conflict-signout').disabled).toBe(true);
+    $('sync-conflict-signout').click();
+    expect(globalThis.fbSignOut).not.toHaveBeenCalled();
+    d.resolve({ ok: false, code: 'no-conflict' });
+  });
+
+  it('real sign-out closes the dialog without resolving anything', async () => {
+    const { fb } = setup();
+    await init(fb);
+    // Real fbSignOut/_clearAuth against a pending conflict.
+    let pending = true;
+    globalThis.fbGetSyncConflict = vi.fn(() => (pending ? { ...INFO, isAccountSwitch: true } : null));
+    globalThis.fbResolveSyncConflict = vi.fn();
+    globalThis.fbSignOut = vi.fn(async () => { pending = false; globalThis._updateSyncUI(); });
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    $('sync-conflict-signout').click();
+    await vi.waitFor(() => expect($('sync-conflict-overlay').classList.contains('hidden')).toBe(true));
+    expect(globalThis.fbGetSyncConflict()).toBeNull();
+    expect(globalThis.fbResolveSyncConflict).not.toHaveBeenCalled();
+  });
+});
+
+describe('sync-conflict i18n keys', () => {
+  it('toast keys exist in zh and en', async () => {
+    const fs = await import('node:fs');
+    for (const f of ['i18n.zh.js', 'i18n.en.js']) {
+      const src = fs.readFileSync(`${process.cwd()}/${f}`, 'utf8');
+      expect(src).toContain('syncConflictCloudGone');
+      expect(src).toContain('syncConflictLocalUploadFailed');
+    }
   });
 });
