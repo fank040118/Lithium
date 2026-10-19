@@ -348,12 +348,11 @@ describe('_handleConflictChoice', () => {
   it('clears the resolving flag after the dialog was closed mid-resolve', async () => {
     const { fb } = arrange({ ok: true });
     await fb._handleConflictChoice('local');
-    $('sync-conflict-use-local').disabled = true;
-    $('sync-conflict-use-cloud').disabled = true;
     globalThis.fbGetSyncConflict = vi.fn(() => ({ ...INFO }));
     fb._openSyncConflictDialog({ ...INFO });
     expect($('sync-conflict-use-local').disabled).toBe(false);
     expect($('sync-conflict-use-cloud').disabled).toBe(false);
+    expect($('sync-conflict-signout').disabled).toBe(false);
     expect(document.activeElement.id).toBe('sync-conflict-use-local');
   });
 

@@ -1691,11 +1691,8 @@ function _openSyncConflictDialog(info) {
     errEl.textContent = '';
     errEl.classList.add('hidden');
   }
-  const localBtn = document.getElementById('sync-conflict-use-local');
-  const cloudBtn = document.getElementById('sync-conflict-use-cloud');
-  if (localBtn) localBtn.disabled = false;
-  if (cloudBtn) cloudBtn.disabled = false;
-  localBtn?.focus();
+  _setConflictControlsDisabled(false);
+  document.getElementById('sync-conflict-use-local')?.focus();
 }
 
 function _setConflictControlsDisabled(disabled) {
