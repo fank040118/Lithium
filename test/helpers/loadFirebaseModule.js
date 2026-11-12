@@ -59,6 +59,8 @@ const EXPORTED_NAMES = [
   '_preconditionFromBaseline',
   '_preconditionQuery',
   '_buildUploadBody',
+  '_isPayloadTooLarge',
+  '_localPayloadTooLarge',
   '_isPreconditionError',
   '_timedFetch',
   '_parseFirestoreError',

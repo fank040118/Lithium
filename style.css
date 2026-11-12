@@ -1505,6 +1505,25 @@ body {
   font-weight: 600;
   color: var(--text-primary);
 }
+/* Cloud absent: the cloud card drops its time and counts for one empty line. */
+.sync-conflict-side.is-empty [data-field="timeLabel"],
+.sync-conflict-side.is-empty [data-field="time"],
+.sync-conflict-side.is-empty [data-field="shortcuts"],
+.sync-conflict-side.is-empty [data-field="folders"] {
+  display: none;
+}
+.sync-conflict-side-empty {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+/* Persistent note while the local data is over the upload limit (explains the
+   disabled "Use local"); the inline error line below is the transient one. */
+.sync-conflict-limit {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-warning);
+}
 .sync-conflict-error {
   margin: 0;
   font-size: 13px;

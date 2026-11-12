@@ -1194,11 +1194,307 @@ describe('sync-conflict i18n keys', () => {
       for (const key of [
         'syncConflictCloudGone', 'syncStorageUnavailable', 'syncBaselineCleared',
         'syncRetryExhausted', 'syncUpToDate', 'cloudChanged', 'cloudAbsent', 'payloadTooLarge',
-        'defer',
+        'defer', 'cloudEmpty', 'cloudAbsentTooLarge',
       ]) {
         expect(src).toContain(`${key}:`);
       }
       expect(src).not.toContain('syncConflictLocalUploadFailed');
     }
+  });
+});
+
+// ── Stage 3: disabled states (cloudAbsent / payloadTooLarge) ──────────────
+// One link whose name alone pushes the upload body past FB_PAYLOAD_MAX_BYTES.
+const HUGE_ITEMS = () => [{ id: 'huge', type: 'link', name: 'x'.repeat(100000), url: 'https://example.com' }];
+// The button is disabled because of the dialog state (not just a busy flag):
+// native disabled, aria-disabled and a description of why.
+function expectStateDisabled(id, describedBy) {
+  expect($(id).disabled).toBe(true);
+  expect($(id).getAttribute('aria-disabled')).toBe('true');
+  expect($(id).getAttribute('aria-describedby')).toBe(describedBy);
+}
+function expectUsable(id) {
+  expect($(id).disabled).toBe(false);
+  expect($(id).hasAttribute('aria-disabled')).toBe(false);
+  expect($(id).hasAttribute('aria-describedby')).toBe(false);
+}
+
+describe('disabled states: cloud absent (D5)', () => {
+  it.each(['not-found', 'empty'])('(1) cloudState %s: use-cloud disabled with aria, cloud card empty, focus on use-local', (cloudState) => {
+    const { fb } = setup();
+    fb._openSyncConflictDialog({ ...INFO, cloudState, cloudShortcutCount: 0, cloudFolderCount: 0 });
+    expectStateDisabled('sync-conflict-use-cloud', 'sync-conflict-cloud-empty');
+    expectUsable('sync-conflict-use-local');
+    expect($('sync-conflict-cloud').classList.contains('is-empty')).toBe(true);
+    expect($('sync-conflict-local').classList.contains('is-empty')).toBe(false);
+    expect(field('cloud', 'empty').id).toBe('sync-conflict-cloud-empty');
+    expect(field('cloud', 'empty').textContent).toBe('dialog.syncConflict.cloudEmpty');
+    expect(isHidden('sync-conflict-cloud-empty')).toBe(false);
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.cloudAbsent');
+    expect(isHidden('sync-conflict-limit')).toBe(true);
+    expect(document.activeElement.id).toBe('sync-conflict-use-local');
+  });
+
+  it('(2) a failed choose-local that leaves the conflict pending keeps use-cloud disabled and re-enables use-local', async () => {
+    const { fb } = setup();
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    globalThis.fbResolveSyncConflict = vi.fn(async () => ({ ok: false, code: 'network' }));
+    globalThis._updateSyncUI = vi.fn();
+    try {
+      fb._openSyncConflictDialog({ ...INFO, cloudState: 'not-found' });
+      await fb._handleConflictChoice('local');
+      expect(isHidden('sync-conflict-overlay')).toBe(false);
+      expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
+      expectStateDisabled('sync-conflict-use-cloud', 'sync-conflict-cloud-empty');
+      expectUsable('sync-conflict-use-local');
+      expect($('sync-conflict-defer').disabled).toBe(false);
+    } finally {
+      delete globalThis._updateSyncUI;
+    }
+  });
+
+  it('(3) the cloud coming back as a document re-enables use-cloud and drops the empty state', () => {
+    const { fb } = setup();
+    fb._openSyncConflictDialog({ ...INFO, cloudState: 'not-found' });
+    fb._openSyncConflictDialog({ ...INFO, cloudState: 'doc' });
+    expectUsable('sync-conflict-use-cloud');
+    expect($('sync-conflict-cloud').classList.contains('is-empty')).toBe(false);
+    expect(isHidden('sync-conflict-cloud-empty')).toBe(true);
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.text');
+  });
+
+  it('closing the dialog leaves no state-disabled control behind', () => {
+    const { fb } = setup();
+    globalThis.items = HUGE_ITEMS();
+    fb._openSyncConflictDialog({ ...INFO, cloudState: 'not-found' });
+    fb._closeSyncConflictDialog();
+    fb._applyConflictControls();
+    expectUsable('sync-conflict-use-local');
+    expectUsable('sync-conflict-use-cloud');
+  });
+});
+
+describe('disabled states: local payload too large (D6)', () => {
+  it('(5) _isPayloadTooLarge: 90000 characters is within the limit, 90001 is over', () => {
+    const { fb } = setup();
+    expect(fb._isPayloadTooLarge('x'.repeat(90000))).toBe(false);
+    expect(fb._isPayloadTooLarge('x'.repeat(90001))).toBe(true);
+  });
+
+  it('(5) _localPayloadTooLarge reads the in-memory snapshot', () => {
+    const { fb } = setup();
+    expect(fb._localPayloadTooLarge()).toBe(false);
+    globalThis.items = HUGE_ITEMS();
+    expect(fb._localPayloadTooLarge()).toBe(true);
+  });
+
+  it('(5) opening with oversized local data: use-local disabled with aria, persistent limit note, focus on use-cloud', () => {
+    const { fb } = setup();
+    globalThis.items = HUGE_ITEMS();
+    fb._openSyncConflictDialog({ ...INFO });
+    expectStateDisabled('sync-conflict-use-local', 'sync-conflict-limit');
+    expectUsable('sync-conflict-use-cloud');
+    expect(isHidden('sync-conflict-limit')).toBe(false);
+    expect($('sync-conflict-limit').textContent).toBe('dialog.syncConflict.payloadTooLarge');
+    expect($('sync-conflict-limit').hasAttribute('role')).toBe(false);
+    expect(isHidden('sync-conflict-error')).toBe(true);
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.text');
+    expect(document.activeElement.id).toBe('sync-conflict-use-cloud');
+  });
+
+  it('(6, I4) a network failure on use-cloud shows the inline error next to the limit note; reopening clears only the error', async () => {
+    const { fb } = setup();
+    globalThis.items = HUGE_ITEMS();
+    globalThis.fbIsSignedIn = vi.fn(() => true);
+    globalThis.fbResolveSyncConflict = vi.fn(async () => ({ ok: false, code: 'network' }));
+    globalThis._updateSyncUI = vi.fn();
+    try {
+      fb._openSyncConflictDialog({ ...INFO });
+      await fb._handleConflictChoice('cloud');
+      expect(isHidden('sync-conflict-error')).toBe(false);
+      expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
+      expect(isHidden('sync-conflict-limit')).toBe(false);
+      expect($('sync-conflict-limit').textContent).toBe('dialog.syncConflict.payloadTooLarge');
+      // A later notification while open, then a defer and a fresh open.
+      fb._openSyncConflictDialog({ ...INFO });
+      expect(isHidden('sync-conflict-error')).toBe(true);
+      expect(isHidden('sync-conflict-limit')).toBe(false);
+      fb._deferSyncConflictDialog();
+      fb._openSyncConflictDialog({ ...INFO });
+      expect($('sync-conflict-error').textContent).toBe('');
+      expect(isHidden('sync-conflict-error')).toBe(true);
+      expect(isHidden('sync-conflict-limit')).toBe(false);
+      expectStateDisabled('sync-conflict-use-local', 'sync-conflict-limit');
+    } finally {
+      delete globalThis._updateSyncUI;
+    }
+  });
+
+  it('(7, I4) langchange re-renders the limit note in the new language', () => {
+    const { fb, t } = setup();
+    globalThis.items = HUGE_ITEMS();
+    fb._openSyncConflictDialog({ ...INFO });
+    $('sync-conflict-limit').textContent = 'stale-language text';
+    t.mockClear();
+    fb._refreshSyncConflictDialogOnLangChange();
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.payloadTooLarge');
+    expect($('sync-conflict-limit').textContent).toBe('dialog.syncConflict.payloadTooLarge');
+    expect(isHidden('sync-conflict-limit')).toBe(false);
+  });
+
+  it('(7, I4) langchange re-renders the cloud empty line in the new language', () => {
+    const { fb, t } = setup();
+    fb._openSyncConflictDialog({ ...INFO, cloudState: 'empty' });
+    $('sync-conflict-cloud-empty').textContent = 'stale-language text';
+    t.mockClear();
+    fb._refreshSyncConflictDialogOnLangChange();
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.cloudEmpty');
+    expect($('sync-conflict-cloud-empty').textContent).toBe('dialog.syncConflict.cloudEmpty');
+  });
+
+  describe('(8) choose-local returning payload-too-large (fallback, m-9)', () => {
+    function arrangeTooLarge() {
+      const ctx = setup();
+      globalThis.fbIsSignedIn = vi.fn(() => true);
+      globalThis.fbResolveSyncConflict = vi.fn(async () => ({ ok: false, code: 'payload-too-large' }));
+      globalThis._updateSyncUI = vi.fn();
+      // Small enough when the dialog opens; grown before the choice lands.
+      ctx.fb._openSyncConflictDialog({ ...INFO });
+      expect(document.activeElement.id).toBe('sync-conflict-use-local');
+      return ctx;
+    }
+    afterEach(() => { delete globalThis._updateSyncUI; });
+
+    it('size recheck true: no inline error, limit note shown, use-local disabled, focus on use-cloud', async () => {
+      const { fb, showToast } = arrangeTooLarge();
+      globalThis.items = HUGE_ITEMS();
+      await fb._handleConflictChoice('local');
+      expect(isHidden('sync-conflict-overlay')).toBe(false);
+      expect(isHidden('sync-conflict-error')).toBe(true);
+      expect($('sync-conflict-error').textContent).toBe('');
+      expect(isHidden('sync-conflict-limit')).toBe(false);
+      expectStateDisabled('sync-conflict-use-local', 'sync-conflict-limit');
+      expectUsable('sync-conflict-use-cloud');
+      expect(document.activeElement.id).toBe('sync-conflict-use-cloud');
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it('size recheck true also clears an older inline error', async () => {
+      const { fb } = arrangeTooLarge();
+      fb._setConflictError('network');
+      globalThis.items = HUGE_ITEMS();
+      await fb._handleConflictChoice('local');
+      expect(isHidden('sync-conflict-error')).toBe(true);
+      expect(isHidden('sync-conflict-limit')).toBe(false);
+    });
+
+    it('size recheck false: falls back to the inline error so the failure is never silent', async () => {
+      const { fb } = arrangeTooLarge();
+      globalThis._localPayloadTooLarge = vi.fn(() => false);
+      await fb._handleConflictChoice('local');
+      expect(globalThis._localPayloadTooLarge).toHaveBeenCalled();
+      expect(isHidden('sync-conflict-error')).toBe(false);
+      expect($('sync-conflict-error').textContent).toBe('dialog.syncConflict.payloadTooLarge');
+      expect(isHidden('sync-conflict-limit')).toBe(true);
+      expectUsable('sync-conflict-use-local');
+    });
+
+    it('after trimming, the next notification hides the limit note and re-enables use-local', async () => {
+      const { fb } = arrangeTooLarge();
+      globalThis.items = HUGE_ITEMS();
+      await fb._handleConflictChoice('local');
+      globalThis.items = localItems(3, 1);
+      fb._openSyncConflictDialog({ ...INFO });
+      expect(isHidden('sync-conflict-limit')).toBe(true);
+      expectUsable('sync-conflict-use-local');
+      expectUsable('sync-conflict-use-cloud');
+    });
+  });
+
+  it('(8b) a throwing snapshot counts as not too large and the dialog still opens', () => {
+    const { fb } = setup();
+    globalThis._buildSyncSnapshot = vi.fn(() => { throw new Error('boom'); });
+    expect(fb._localPayloadTooLarge()).toBe(false);
+    fb._openSyncConflictDialog({ ...INFO });
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    expectUsable('sync-conflict-use-local');
+    expect(isHidden('sync-conflict-limit')).toBe(true);
+  });
+});
+
+describe('disabled states: cloud absent and too large together (D6, Q2)', () => {
+  it('(9) both choices disabled, body text explains, limit note hidden, focus on defer; defer and sign-out stay usable', () => {
+    const { fb } = setup();
+    globalThis.items = HUGE_ITEMS();
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true, cloudState: 'not-found' });
+    expectStateDisabled('sync-conflict-use-cloud', 'sync-conflict-cloud-empty');
+    expectStateDisabled('sync-conflict-use-local', 'sync-conflict-text');
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.cloudAbsentTooLarge');
+    expect(isHidden('sync-conflict-limit')).toBe(true);
+    expect(document.activeElement.id).toBe('sync-conflict-defer');
+    expect($('sync-conflict-defer').disabled).toBe(false);
+    expect($('sync-conflict-signout').disabled).toBe(false);
+    expect(isHidden('sync-conflict-signout-row')).toBe(false);
+    expect($('sync-conflict-use-local').hasAttribute('title')).toBe(false);
+    expect($('sync-conflict-use-cloud').hasAttribute('title')).toBe(false);
+  });
+
+  it('(9) the defer link still closes the dialog in that state', () => {
+    const { fb } = setup();
+    globalThis.items = HUGE_ITEMS();
+    fb._openSyncConflictDialog({ ...INFO, cloudState: 'empty' });
+    fb._bindSyncConflictButtons();
+    $('sync-conflict-defer').click();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+  });
+});
+
+describe('disabled states: markup and wording', () => {
+  it('page and both fixtures carry the cloud empty line and a non-alert limit note', async () => {
+    const fs = await import('node:fs');
+    const html = fs.readFileSync(`${process.cwd()}/newtab.html`, 'utf8');
+    const check = (root) => {
+      const empty = root.querySelector('#sync-conflict-cloud [data-field="empty"]');
+      expect(empty?.id).toBe('sync-conflict-cloud-empty');
+      expect(empty.classList.contains('hidden')).toBe(true);
+      expect(root.querySelector('#sync-conflict-local [data-field="empty"]')).toBeNull();
+      const limit = root.querySelector('#sync-conflict-limit');
+      expect(limit?.tagName).toBe('P');
+      expect(limit.hasAttribute('role')).toBe(false);
+      expect(limit.classList.contains('hidden')).toBe(true);
+      // Above the buttons, next to the inline error line.
+      const actions = root.querySelector('.sync-conflict-actions');
+      expect(limit.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    };
+    check(new DOMParser().parseFromString(html, 'text/html'));
+    mountAuthDom();
+    check(document);
+    installAppDomFixture();
+    check(document);
+  });
+
+  it('cloudEmpty, cloudAbsent, payloadTooLarge and cloudAbsentTooLarge use the approved wording', async () => {
+    const fs = await import('node:fs');
+    const load = (file) => {
+      const store = {};
+      const prev = window.I18N;
+      window.I18N = { register: (lang, dict) => { store[lang] = dict; } };
+      try {
+        new Function(fs.readFileSync(`${process.cwd()}/${file}`, 'utf8'))();
+      } finally {
+        if (prev === undefined) delete window.I18N; else window.I18N = prev;
+      }
+      return Object.values(store)[0].dialog.syncConflict;
+    };
+    const zh = load('i18n.zh.js');
+    const en = load('i18n.en.js');
+    expect(zh.cloudEmpty).toBe('云端暂无数据');
+    expect(en.cloudEmpty).toBe('No data in the cloud');
+    expect(zh.cloudAbsent).toBe('云端数据已被删除或清空，可使用本地数据重新上传。');
+    expect(en.cloudAbsent).toBe('The cloud data has been deleted or cleared. You can upload the local data again.');
+    expect(zh.payloadTooLarge).toBe('本地数据超出 100KB 上传上限，无法使用本地。可先「稍后处理」精简自定义图标，再重新打开本窗口并选「使用本地」，或改选「使用云端」。');
+    expect(en.payloadTooLarge).toBe('Local data exceeds the 100 KB upload limit, so it can\'t be kept. Choose "Decide later", trim custom icons, then reopen this dialog and choose Use local, or choose "Use cloud".');
+    expect(zh.cloudAbsentTooLarge).toBe('云端数据已被删除或清空，但本地数据超出上传上限。可先「稍后处理」精简自定义图标，再重新打开并选「使用本地」。');
+    expect(en.cloudAbsentTooLarge).toBe('The cloud data has been deleted or cleared, but the local data exceeds the upload limit. Choose "Decide later", trim custom icons, then reopen this dialog and choose Use local.');
   });
 });

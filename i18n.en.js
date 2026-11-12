@@ -141,8 +141,10 @@
         signOut: 'Sign out',
         defer: 'Decide later',
         cloudChanged: 'The cloud data just changed again. The details above have been updated; please review and choose again.',
-        cloudAbsent: 'The cloud data has been deleted or cleared. Either choice will normally refill the cloud with the local data.',
-        payloadTooLarge: 'Local data exceeds the 100 KB upload limit, so it can\'t be kept. Trim custom icons and retry, or choose "Use cloud".',
+        cloudEmpty: 'No data in the cloud',
+        cloudAbsent: 'The cloud data has been deleted or cleared. You can upload the local data again.',
+        payloadTooLarge: 'Local data exceeds the 100 KB upload limit, so it can\'t be kept. Choose "Decide later", trim custom icons, then reopen this dialog and choose Use local, or choose "Use cloud".',
+        cloudAbsentTooLarge: 'The cloud data has been deleted or cleared, but the local data exceeds the upload limit. Choose "Decide later", trim custom icons, then reopen this dialog and choose Use local.',
       },
       deleteAccount: {
         title: 'Permanently delete account',
