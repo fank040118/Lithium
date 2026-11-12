@@ -1514,10 +1514,11 @@ body {
 .sync-conflict-actions button { flex: 1; }
 .sync-conflict-actions .btn-secondary:disabled {
   opacity: 0.5;
-  cursor: default;
+  cursor: not-allowed; /* same as the disabled links (.forgot-password-btn:disabled) */
 }
-/* Footer row under the buttons: "Decide later" alone (same account), or
-   next to "Wrong account? Sign out" on one line (account switch). */
+/* Footer row under the buttons. Same account: "Decide later" alone, centred.
+   Account switch: "Decide later" on the left, "Wrong account? Sign out" on the
+   right (Penpot 04 Dialogs). Both links are underlined, disabled or not. */
 .sync-conflict-footer {
   display: flex;
   flex-wrap: wrap;
@@ -1525,7 +1526,13 @@ body {
   align-items: baseline;
   gap: 6px 16px;
 }
-.sync-conflict-footer .sync-conflict-defer { align-self: auto; }
+.sync-conflict-footer:has(> .sync-conflict-signout:not(.hidden)) {
+  justify-content: space-between;
+}
+.sync-conflict-footer .forgot-password-btn {
+  align-self: auto;
+  text-decoration: underline;
+}
 .sync-conflict-signout {
   display: flex;
   justify-content: center;
@@ -1533,10 +1540,6 @@ body {
   gap: 6px;
   font-size: 13px;
   color: var(--text-quaternary);
-}
-.sync-conflict-signout .forgot-password-btn {
-  align-self: auto;
-  text-decoration: underline;
 }
 /* Semantic danger signal — kept red even inside .dialog-title where text
    otherwise inherits --text-primary. */

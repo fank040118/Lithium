@@ -100,7 +100,7 @@ const EXPORTED_NAMES = [
   '_refreshSyncConflictDialogOnLangChange',
   '_applyConflictControls',
   '_deferSyncConflictDialog',
-  '_handleConflictDialogEscape',
+  '_handleFirebaseDialogsEscape',
   'fbInit',
 ];
 

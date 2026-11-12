@@ -272,11 +272,11 @@ export function installAppDomFixture() {
         <button type="button" id="sync-conflict-use-cloud" class="btn-secondary" data-i18n="dialog.syncConflict.useCloud">使用云端</button>
       </div>
       <div class="sync-conflict-footer">
+        <button type="button" id="sync-conflict-defer" class="forgot-password-btn sync-conflict-defer" data-i18n="dialog.syncConflict.defer">稍后处理</button>
         <div id="sync-conflict-signout-row" class="sync-conflict-signout hidden">
           <span data-i18n="dialog.syncConflict.wrongAccount">登错账号？</span>
           <button type="button" id="sync-conflict-signout" class="forgot-password-btn" data-i18n="dialog.syncConflict.signOut">退出登录</button>
         </div>
-        <button type="button" id="sync-conflict-defer" class="forgot-password-btn sync-conflict-defer" data-i18n="dialog.syncConflict.defer">稍后处理</button>
       </div>
     </div>
   </div>

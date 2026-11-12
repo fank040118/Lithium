@@ -2671,7 +2671,7 @@ function _deferSyncConflictDialog() {
 // Document-level Escape for the dialogs owned by this file, topmost first:
 // the conflict dialog (deferred; the key goes no further), then the
 // delete-account dialog. app.js's central handler steps aside for both.
-function _handleConflictDialogEscape(e) {
+function _handleFirebaseDialogsEscape(e) {
   if (e.key !== 'Escape') return;
   const conflictOverlay = document.getElementById('sync-conflict-overlay');
   if (conflictOverlay && !conflictOverlay.classList.contains('hidden')) {
@@ -2902,7 +2902,7 @@ async function fbInit() {
     if (_deleteAccountSeconds > 0) return;
     _closeDeleteAccountModal(true);
   });
-  document.addEventListener('keydown', (e) => _handleConflictDialogEscape(e));
+  document.addEventListener('keydown', (e) => _handleFirebaseDialogsEscape(e));
   _bindSyncActionButtons();
   _bindSyncConflictButtons();
 

@@ -779,16 +779,18 @@ describe('defer ("Decide later")', () => {
     }
   });
 
-  it.each(['manual-upload', 'manual-pull', 'startup', 'sign-in'])(
-    '(2) a later notification (trigger %s) reopens a deferred dialog', (trigger) => {
-      const { fb } = setup();
-      fb._bindSyncConflictButtons();
-      fb._openSyncConflictDialog({ ...INFO });
-      $('sync-conflict-defer').click();
-      expect(isHidden('sync-conflict-overlay')).toBe(true);
-      fb._openSyncConflictDialog({ ...INFO, trigger });
-      expect(isHidden('sync-conflict-overlay')).toBe(false);
-    });
+  // One case is enough: _openSyncConflictDialog never reads `trigger` (there
+  // is no deferred flag and no trigger whitelist, D1). The real Upload path
+  // is covered by the next case.
+  it('(2) a later notification reopens a deferred dialog, whatever its trigger', () => {
+    const { fb } = setup();
+    fb._bindSyncConflictButtons();
+    fb._openSyncConflictDialog({ ...INFO });
+    $('sync-conflict-defer').click();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+    fb._openSyncConflictDialog({ ...INFO, trigger: 'manual-pull' });
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+  });
 
   it('(2) after a defer, the sidebar Upload reopens the dialog without sending a PATCH (real fbInit)', async () => {
     const { fb, patches } = await realConflict();
@@ -912,6 +914,37 @@ describe('defer ("Decide later")', () => {
     globalThis.fbGetSyncConflict = vi.fn(() => null);
     d.resolve({ ok: false, code: 'no-conflict' });
     await vi.waitFor(() => expect(isHidden('sync-conflict-overlay')).toBe(true));
+  });
+
+  it('(6b, N-b) the sign-out handler itself refuses while a choice is resolving, even with the link force-enabled', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    const d = deferred();
+    globalThis.fbResolveSyncConflict = vi.fn(() => d.promise);
+    globalThis.fbSignOut = vi.fn(async () => {});
+    $('sync-conflict-use-local').click();
+    // Bypass the disabled attribute so the click reaches the handler.
+    $('sync-conflict-signout').disabled = false;
+    $('sync-conflict-signout').click();
+    expect(globalThis.fbSignOut).not.toHaveBeenCalled();
+    globalThis.fbGetSyncConflict = vi.fn(() => null);
+    d.resolve({ ok: false, code: 'no-conflict' });
+    await vi.waitFor(() => expect(isHidden('sync-conflict-overlay')).toBe(true));
+  });
+
+  it('(6b) the sign-out handler does not re-enter while a sign-out is already running', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    const d = deferred();
+    globalThis.fbSignOut = vi.fn(() => d.promise);
+    $('sync-conflict-signout').click();
+    $('sync-conflict-signout').disabled = false;
+    $('sync-conflict-signout').click();
+    expect(globalThis.fbSignOut).toHaveBeenCalledTimes(1);
+    d.resolve();
+    await vi.waitFor(() => expect($('sync-conflict-signout').disabled).toBe(false));
   });
 
   it('(7) defer after an inline error closes the dialog; reopening shows no error', () => {
@@ -1120,6 +1153,24 @@ describe('defer i18n', () => {
       '<button type="button" id="sync-conflict-defer" class="forgot-password-btn sync-conflict-defer" data-i18n="dialog.syncConflict.defer">稍后处理</button>');
     expect(html).toContain(
       'data-i18n="sidebar.sync.conflictHint">本地与云端不一致，自动同步已暂停。点「上传」重新打开选择窗口。</p>');
+  });
+
+  it('(I-1) footer order: "Decide later" comes before the sign-out row in the page and both fixtures', async () => {
+    const fs = await import('node:fs');
+    const html = fs.readFileSync(`${process.cwd()}/newtab.html`, 'utf8');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const check = (root) => {
+      const defer = root.querySelector('#sync-conflict-defer');
+      const row = root.querySelector('#sync-conflict-signout-row');
+      expect(defer.parentElement).toBe(row.parentElement);
+      expect(defer.parentElement.classList.contains('sync-conflict-footer')).toBe(true);
+      expect(defer.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    };
+    check(doc);
+    mountAuthDom();
+    check(document);
+    installAppDomFixture();
+    check(document);
   });
 
   it('(12) the defer link text follows a language change', async () => {

@@ -1687,7 +1687,7 @@ function openDeleteConfirm(id) {
 
 // Modals whose Escape is handled by firebase.js, so the central handler must
 // stay out: on the sync-conflict dialog Escape means "Decide later" (it only
-// hides the dialog; see _handleConflictDialogEscape there).
+// hides the dialog; see _handleFirebaseDialogsEscape there).
 function isEscapeBlockedByModal() {
   const el = document.getElementById('sync-conflict-overlay');
   return !!el && !el.classList.contains('hidden');
