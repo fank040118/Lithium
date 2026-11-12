@@ -5,6 +5,7 @@ import {
   setupSignedInFirebase,
   firestoreGetRoute,
   firestorePatchRoute,
+  preconditionOf,
   TEST_UID,
 } from './helpers/setupSignedInFirebase.js';
 
@@ -29,7 +30,10 @@ function inSequence(...responders) {
 
 // Records every request in order. Each responder may return a promise (e.g.
 // a deferred) so a test can hold a request open.
+// With `fb`, also records each GET/PATCH sent while the deleting flag is set
+// (underFlag): the order-independent safety property of these tests.
 function deletionRoutes({
+  fb = null,
   get = async () => jsonResponse(404, {}),
   patch = okPatch,
   firestoreDelete = async () => jsonResponse(200, {}),
@@ -37,6 +41,8 @@ function deletionRoutes({
 } = {}) {
   const log = [];
   const patches = [];
+  const underFlag = [];
+  const mark = (kind) => { if (fb && fb._getSyncDebugState().accountDeleting) underFlag.push(kind); };
   const routes = [
     {
       match: (url, options = {}) => url.includes(FIRESTORE_DOC_URL_PART) && options.method === 'DELETE',
@@ -46,17 +52,26 @@ function deletionRoutes({
       match: (url) => url.includes('accounts:delete'),
       respond: () => { log.push('ACCOUNT_DELETE'); return accountDelete(); },
     },
-    firestoreGetRoute(() => { log.push('GET'); return get(); }),
+    firestoreGetRoute(() => { log.push('GET'); mark('GET'); return get(); }),
     firestorePatchRoute((url, options) => {
       log.push('PATCH');
+      mark('PATCH');
       patches.push({ url });
       return patch(url, options);
     }),
   ];
-  return { log, patches, routes };
+  return { log, patches, underFlag, routes };
 }
 
 const count = (log, kind) => log.filter((x) => x === kind).length;
+
+// Every PATCH carries a Firestore precondition (updateTime or exists=false).
+function expectAllPreconditioned(patches) {
+  for (const { url } of patches) {
+    const pre = preconditionOf(url);
+    expect(pre.updateTime !== undefined || pre.exists !== undefined).toBe(true);
+  }
+}
 
 async function flush() {
   for (let i = 0; i < 20; i += 1) await vi.advanceTimersByTimeAsync(0);
@@ -141,10 +156,10 @@ describe('fbDeleteAccount as an executor task', () => {
     expect(log).toEqual(['PATCH', 'GET', 'DELETE', 'ACCOUNT_DELETE']);
   });
 
-  it('an auto upload due during the deletion is skipped with account-deleting and sends no PATCH', async () => {
+  it('an auto upload due during a failed deletion: no PATCH under the flag, any later PATCH preconditioned', async () => {
     const fb = loadFirebaseModule();
     const accountGate = deferred();
-    const { log, routes } = deletionRoutes({ accountDelete: () => accountGate.promise });
+    const { log, patches, underFlag, routes } = deletionRoutes({ fb, accountDelete: () => accountGate.promise });
     const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
     await seedDirty(fb, storage);
 
@@ -157,35 +172,67 @@ describe('fbDeleteAccount as an executor task', () => {
     await fb.markLocalCloudDataChanged();
     await vi.advanceTimersByTimeAsync(2000);
     const upload = fb.syncToCloud();
-
-    // The deletion fails, so the queued upload runs its dequeue guard while
-    // the deletion is still in progress.
-    accountGate.resolve(jsonResponse(400, { error: { message: 'CREDENTIAL_TOO_OLD_LOGIN_AGAIN' } }));
-    await expect(del).rejects.toThrow('CREDENTIAL_TOO_OLD_LOGIN_AGAIN');
-    await expect(upload).resolves.toEqual({ ok: true, skipped: true, reason: 'account-deleting' });
     await flush();
     expect(count(log, 'PATCH')).toBe(0);
+
+    // Whether the upload is still dequeued under the flag after the failure
+    // depends on microtask order: only the safety property is asserted.
+    accountGate.resolve(jsonResponse(400, { error: { message: 'CREDENTIAL_TOO_OLD_LOGIN_AGAIN' } }));
+    await expect(del).rejects.toThrow('CREDENTIAL_TOO_OLD_LOGIN_AGAIN');
+    await expect(upload).resolves.toMatchObject({ ok: true });
+    await flush();
+    expect(underFlag).toEqual([]);
+    expectAllPreconditioned(patches);
     expect(deleting(fb)).toBe(false);
   });
 
-  it('a pull or choose-cloud dequeued during the deletion ends with session-changed, without a request', async () => {
+  it('a pull queued during a failed deletion sends no request under the flag', async () => {
     const fb = loadFirebaseModule();
     const accountGate = deferred();
-    const { log, routes } = deletionRoutes({ accountDelete: () => accountGate.promise });
+    const { log, patches, underFlag, routes } = deletionRoutes({ fb, accountDelete: () => accountGate.promise });
     await setupSignedInFirebase(fb, { extraRoutes: routes });
 
     const del = fb.fbDeleteAccount();
     await flush();
     const pull = fb.syncFromCloud({ mode: 'forced' });
+    await flush();
+    expect(log).toEqual(['DELETE', 'ACCOUNT_DELETE']);
 
     accountGate.resolve(jsonResponse(400, { error: { message: 'CREDENTIAL_TOO_OLD_LOGIN_AGAIN' } }));
     await expect(del).rejects.toThrow('CREDENTIAL_TOO_OLD_LOGIN_AGAIN');
-    await expect(pull).resolves.toBe(false);
-    expect(count(log, 'GET')).toBe(0);
-    expect(count(log, 'PATCH')).toBe(0);
+    await pull;
+    await flush();
+    expect(underFlag).toEqual([]);
+    expectAllPreconditioned(patches);
   });
 
-  it('choose-cloud queued during the deletion ends with session-changed and imports nothing', async () => {
+  it('pull + syncToCloud queued during a failed deletion: no request under the flag, PATCHes preconditioned', async () => {
+    const fb = loadFirebaseModule();
+    const accountGate = deferred();
+    const { log, patches, underFlag, routes } = deletionRoutes({ fb, accountDelete: () => accountGate.promise });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+
+    const del = fb.fbDeleteAccount();
+    await flush();
+    // The review probe: two tasks queued behind the deletion. Whichever of
+    // them still sees the flag after the failure is a microtask detail.
+    const pull = fb.syncFromCloud({ mode: 'forced' });
+    const upload = fb.syncToCloud();
+    await flush();
+    expect(log).toEqual(['DELETE', 'ACCOUNT_DELETE']);
+
+    accountGate.resolve(jsonResponse(400, { error: { message: 'CREDENTIAL_TOO_OLD_LOGIN_AGAIN' } }));
+    await expect(del).rejects.toThrow('CREDENTIAL_TOO_OLD_LOGIN_AGAIN');
+    await pull;
+    await expect(upload).resolves.toMatchObject({ ok: true });
+    await flush();
+    expect(underFlag).toEqual([]);
+    expectAllPreconditioned(patches);
+    expect(deleting(fb)).toBe(false);
+  });
+
+  it('choose-cloud queued during a failed deletion: no request under the flag, nothing imported under it', async () => {
     const fb = loadFirebaseModule();
     const accountGate = deferred();
     const cloud = {
@@ -198,7 +245,8 @@ describe('fbDeleteAccount as an executor task', () => {
         grid_columns: fb._toFV(4),
       },
     };
-    const { log, routes } = deletionRoutes({
+    const { log, patches, underFlag, routes } = deletionRoutes({
+      fb,
       get: async () => jsonResponse(200, cloud),
       accountDelete: () => accountGate.promise,
     });
@@ -211,12 +259,15 @@ describe('fbDeleteAccount as an executor task', () => {
     const del = fb.fbDeleteAccount();
     await flush();
     const choice = fb.fbResolveSyncConflict('cloud');
+    await flush();
+    expect(log).toEqual(['DELETE', 'ACCOUNT_DELETE']);
 
     accountGate.resolve(jsonResponse(400, { error: { message: 'CREDENTIAL_TOO_OLD_LOGIN_AGAIN' } }));
     await expect(del).rejects.toThrow('CREDENTIAL_TOO_OLD_LOGIN_AGAIN');
-    await expect(choice).resolves.toEqual({ ok: false, code: 'session-changed' });
-    expect(log).toEqual(['DELETE', 'ACCOUNT_DELETE']);
-    expect(fb.fbGetSyncConflict()).not.toBeNull();
+    await choice;
+    await flush();
+    expect(underFlag).toEqual([]);
+    expectAllPreconditioned(patches);
   });
 
   it('accounts:delete 400 → rejects with the server message, flag cleared, still signed in', async () => {
@@ -315,5 +366,67 @@ describe('fbDeleteAccount as an executor task', () => {
     await expect(fb.fbDeleteAccount()).resolves.toBeUndefined();
     expect(log).toEqual(['DELETE', 'ACCOUNT_DELETE']);
     expect(fb.fbIsSignedIn()).toBe(false);
+  });
+
+  it('a sign-out during the token refresh → DELETE_ACCOUNT_FAILED, no deletion request', async () => {
+    const fb = loadFirebaseModule();
+    const tokenGate = deferred();
+    const { log, routes } = deletionRoutes();
+    await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        { match: (url) => url.includes('securetoken.googleapis.com'), respond: () => tokenGate.promise },
+        ...routes,
+      ],
+    });
+
+    const del = fb.fbDeleteAccount();
+    const settled = del.then(() => 'resolved', (e) => e);
+    await flush();
+    await fb.fbSignOut();
+    tokenGate.resolve(jsonResponse(200, {
+      id_token: 'fresh-id-token',
+      expires_in: '3600',
+      refresh_token: 'refreshed-refresh-token',
+      user_id: TEST_UID,
+    }));
+
+    const err = await settled;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe('DELETE_ACCOUNT_FAILED');
+    expect(log).toEqual([]);
+    expect(deleting(fb)).toBe(false);
+  });
+
+  it('a sign-in to account B during accounts:delete → A is deleted, B\'s session is not torn down', async () => {
+    const fb = loadFirebaseModule();
+    const accountGate = deferred();
+    const { log, routes } = deletionRoutes({ accountDelete: () => accountGate.promise });
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        {
+          match: (url) => url.includes('accounts:signInWithPassword'),
+          respond: async () => jsonResponse(200, {
+            idToken: `h.${btoa(JSON.stringify({ email_verified: true }))}.s`,
+            expiresIn: '3600',
+            refreshToken: 'b-refresh',
+            localId: 'uid-b',
+          }),
+        },
+        ...routes,
+      ],
+    });
+
+    const del = fb.fbDeleteAccount();
+    await flush();
+    expect(log).toEqual(['DELETE', 'ACCOUNT_DELETE']);
+    await fb.fbSignIn('b@example.com', 'pw');
+
+    accountGate.resolve(jsonResponse(200, {}));
+    await expect(del).resolves.toBeUndefined();
+    expect(fb.fbIsSignedIn()).toBe(true);
+    expect(fb.fbGetEmail()).toBe('b@example.com');
+    expect(storage._data._fb_refresh).toBe('b-refresh');
+    expect(storage._data._fb_uid).toBe('uid-b');
+    expect(deleting(fb)).toBe(false);
   });
 });

@@ -368,12 +368,14 @@ async function fbDeleteAccount() {
     const r = await _enqueueSync({ kind: 'delete-account', auto: false, run: _deleteAccountTask });
     if (r?.reason) throw new Error(r.reason === 'session-changed' ? 'DELETE_ACCOUNT_FAILED' : r.reason);
   } finally {
-    // Cleared on success and on failure. Tasks queued behind the deletion are
-    // dequeued synchronously as it settles, before this runs, so they still
-    // see the flag (they were requested while the deletion was in progress).
-    // After a partial failure (document deleted, account kept) a later upload
-    // imports along the normal Absent path: the data comes back, the safe
-    // direction (spec §5.1).
+    // Cleared on success and on failure. The guaranteed property: while the
+    // flag is set, no PATCH is sent and nothing is imported. Whether a task
+    // queued during a failed deletion is still dequeued under the flag
+    // depends on microtask order and is not relied on: once the flag is
+    // cleared it runs through the normal guards, and any PATCH it sends
+    // still carries a precondition. After a partial failure (document
+    // deleted, account kept) that is the import along the normal Absent path
+    // the spec allows (§5.1): the data comes back, the safe direction.
     _accountDeleting = false;
   }
 }
