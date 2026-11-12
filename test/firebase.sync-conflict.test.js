@@ -307,7 +307,7 @@ describe('_buildSyncSnapshot', () => {
   });
 });
 
-describe('_doSyncToCloud payload equivalence', () => {
+describe('syncToCloud payload equivalence', () => {
   it('builds the PATCH payload field-for-field from _buildSyncSnapshot', async () => {
     const fb = loadFirebaseModule();
     let capturedBody = null;
@@ -326,7 +326,7 @@ describe('_doSyncToCloud payload equivalence', () => {
 
     const snap = fb._buildSyncSnapshot();
 
-    await fb._doSyncToCloud({ force: true });
+    await fb.syncToCloud({ force: true });
 
     const fields = capturedBody.fields;
     expect(fields.items.stringValue).toBe(JSON.stringify(snap.items));

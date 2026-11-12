@@ -119,9 +119,11 @@ async function _saveAuth() {
 }
 
 async function _clearAuth() {
-  // Any in-flight token refresh or queued upload was started for the session
-  // being torn down; bumping the epoch makes their late responses no-ops.
-  _authEpoch += 1;
+  // Any in-flight token refresh or sync task was started for the session being
+  // torn down; the reset bumps the epoch (making their late responses no-ops),
+  // drops queued tasks, the debounce timer and the pending conflict. Must stay
+  // the first, synchronous step: _clearAuth also runs inside a sync task.
+  _resetSession();
   _idToken = null;
   _tokenExpiry = 0;
   _refreshToken = null;
@@ -139,12 +141,6 @@ async function _clearAuth() {
   // _needsSwitchPull). The rev keys are machine-local counters and also stay.
   _lastCloudTs = 0;
   _lastSyncDisplayTs = 0;
-  // An unresolved sync conflict belongs to the session being torn down: drop it
-  // so the next sign-in starts clean (the conflict is re-detected on the next
-  // pull from its own persisted state, not from a stale pending record).
-  _clearConflictPending();
-  clearTimeout(_syncTimer);
-  _syncTimer = null;
   const s = _fbStore();
   if (s) await s.remove([
     '_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email',
@@ -242,8 +238,9 @@ async function fbSignIn(email, password) {
   );
   const d = await res.json();
   if (!res.ok) throw new Error(d.error?.message || 'LOGIN_FAILED');
-  // A new identity invalidates in-flight work from the previous session.
-  _authEpoch += 1;
+  // A new identity invalidates in-flight and queued work from the previous
+  // session.
+  _resetSession();
   _idToken = d.idToken;
   _tokenExpiry = Date.now() + Number(d.expiresIn) * 1000;
   _refreshToken = d.refreshToken;
@@ -264,8 +261,9 @@ async function fbSignUp(email, password) {
   );
   const d = await res.json();
   if (!res.ok) throw new Error(d.error?.message || 'SIGNUP_FAILED');
-  // A new identity invalidates in-flight work from the previous session.
-  _authEpoch += 1;
+  // A new identity invalidates in-flight and queued work from the previous
+  // session.
+  _resetSession();
   _idToken = d.idToken;
   _tokenExpiry = Date.now() + Number(d.expiresIn) * 1000;
   _refreshToken = d.refreshToken;
@@ -577,7 +575,8 @@ async function _parseFirestoreError(res, body) {
 // ── Sync ────────────────────────────────────────────────────
 
 let _syncTimer = null;
-let _syncInFlight = null; // Promise | null
+let _syncQueue = [];      // not-started sync tasks, in run order
+let _syncCurrent = null;  // the running sync task, or null
 let _lastCloudTs = 0;     // 来自 Firestore Document.updateTime（毫秒）
 let _editRev = 0;         // local edit counter, persisted as _fb_edit_rev
 let _syncedRev = 0;       // edit rev last uploaded to the cloud, persisted as _fb_synced_rev
@@ -840,21 +839,109 @@ async function fbResolveSyncConflict(choice) {
   }
   if (r?.skipped) {
     // `skipped` is a fail-safe union, not solely the storage-load firewall:
-    // _doSyncToCloud also returns it when the identity changed (the epoch
-    // check before/after the PATCH) or a queued continuation switched
-    // session. Treating every such skip as storage-read-only keeps the
+    // the upload task also skips when the identity changed (the epoch check
+    // before/after the PATCH) or the queued task was dropped by a session
+    // reset. Treating every such skip as storage-read-only keeps the
     // conflict pending in all three cases — the safe direction — even though
     // the label is narrower than the actual cause.
     return { ok: false, code: 'storage-read-only' };
   }
-  // Success: _doSyncToCloud clears the pending conflict at the end of its
+  // Success: _pushCore clears the pending conflict at the end of its
   // own success path (after the upload succeeded and the baseline was saved).
   return { ok: true };
 }
 
-async function _doSyncToCloud(options = {}) {
-  const { force = false } = options;
-  const epoch = _authEpoch;
+// ── Sync executor ──
+// Every cloud operation (pull, upload, and later the conflict resolutions)
+// runs as a task in this single serial queue, one at a time (spec §7.1).
+//
+// Self-wait rule: a task body (run(ctx) and everything it calls) must never
+// call a public entry point (syncToCloud, syncFromCloud, fbResolveSyncConflict,
+// _pullAfterSignIn) or _enqueueSync, and never await another queued task: it
+// would wait for its own queue slot forever. Follow-up work inside a task
+// calls the lock-free cores (_pullCore, _pushCore, _uploadTask) directly;
+// scheduleSyncToCloud() only arms a timer and is allowed.
+
+// Push a task and return its result promise. An auto task merges into a
+// not-yet-started auto task of the same kind and epoch (spec §7.2); it never
+// merges into the running task, whose guards have already been evaluated.
+function _enqueueSync(spec) {
+  if (spec.auto === true) {
+    const queued = _syncQueue.find((t) =>
+      t.auto === true && t.kind === spec.kind && t.epoch === _authEpoch);
+    if (queued) return queued.promise;
+  }
+  const task = { ...spec, epoch: _authEpoch };
+  task.promise = new Promise((resolve, reject) => {
+    task.resolve = resolve;
+    task.reject = reject;
+  });
+  _syncQueue.push(task);
+  _drainSyncQueue();
+  return task.promise;
+}
+
+// Run queued tasks strictly one at a time. A task whose session ended while it
+// waited settles with { reason: 'session-changed' } (the public wrappers map
+// that to their own shapes). A failing task only rejects its own promise.
+async function _drainSyncQueue() {
+  if (_syncCurrent) return;
+  while (_syncQueue.length > 0) {
+    const task = _syncQueue.shift();
+    _syncCurrent = task;
+    if (task.epoch !== _authEpoch) {
+      task.resolve({ reason: 'session-changed' });
+      continue;
+    }
+    const ctx = {
+      epoch: task.epoch,
+      alive: () => task.epoch === _authEpoch,
+      budget: { baselineGet: 1, recoveryGet: 1, patch: 2 },
+      notifyConflict: false,
+      storageRead: null,
+    };
+    try {
+      const result = await task.run(ctx);
+      // The conflict hook is the task's last step: fired, never awaited, and
+      // nothing writes after it (spec §7.1).
+      if (ctx.notifyConflict && ctx.alive() && _conflictPending) {
+        _notifySyncConflict(_conflictPending);
+      }
+      task.resolve(result);
+    } catch (err) {
+      task.reject(err);
+    }
+  }
+  _syncCurrent = null;
+}
+
+// Settle every not-yet-started task with { reason } and empty the queue.
+function _dropQueuedSyncTasks(reason) {
+  const dropped = _syncQueue;
+  _syncQueue = [];
+  for (const task of dropped) task.resolve({ reason });
+}
+
+// Unified session reset for sign-out, sign-in and sign-up (spec §7.4).
+// Synchronous on purpose: it runs inside tasks (via _clearAuth) and must never
+// wait for the queue or the running task — the running task notices the epoch
+// change after its current await and exits with zero writes.
+function _resetSession() {
+  _authEpoch += 1;
+  _dropQueuedSyncTasks('session-changed');
+  clearTimeout(_syncTimer);
+  _syncTimer = null;
+  // An unresolved sync conflict belongs to the session being torn down: drop it
+  // so the next session starts clean (the conflict is re-detected on the next
+  // pull from its own persisted state, not from a stale pending record).
+  _clearConflictPending();
+}
+
+// Upload task body: the guards, then one PATCH via _pushCore.
+// manual: explicit user upload (manual button / choose-local), which bypasses
+// the switch-pending, conflict-pending and clean guards on purpose.
+async function _uploadTask(ctx, { manual }) {
+  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
   if (!fbIsSignedIn() || !fbIsEmailVerified()) {
     throw new CloudSyncError('not-signed-in', 0);
   }
@@ -864,40 +951,40 @@ async function _doSyncToCloud(options = {}) {
   // Every upload path is blocked, including the forced manual one, until a
   // successful cloud pull repopulates the in-memory state.
   if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
-    return { ok: true, skipped: true };
+    return { uploaded: false, reason: 'storage-read-only' };
   }
 
   // While an account switch is unresolved, automatic uploads must not run: the
   // local state still contains the previous account's data and would be
-  // PATCHed into the signed-in account's document. The manual "upload" button
-  // calls this with force: true and is an explicit user action, so it bypasses
-  // this guard on purpose.
-  if (!force && _needsSwitchPull()) return { ok: true, skipped: true };
+  // PATCHed into the signed-in account's document.
+  if (!manual && _needsSwitchPull()) return { uploaded: false, reason: 'switch-pending' };
 
   // While a sync conflict is pending, automatic uploads must not run: the
   // local state is known to disagree with the cloud and would overwrite it
-  // before the user resolves the conflict (Tasks 4/5). Forced manual uploads
-  // bypass this guard on purpose.
-  if (!force && _conflictPending) return { ok: true, skipped: true };
+  // before the user resolves the conflict.
+  if (!manual && _conflictPending) return { uploaded: false, reason: 'conflict-pending' };
 
-  // Skip when the local state is clean and not forced.
-  if (!force && !_isDirty()) return { ok: true, skipped: true };
+  if (!manual && !_isDirty()) return { uploaded: false, reason: 'clean' };
 
   _syncState = 'uploading';
   _lastSyncError = null;
   _updateSyncUI();
+  return _pushCore(ctx);
+}
 
+// One PATCH of the current local state plus the success bookkeeping. No
+// guards: callers (task bodies) decide whether an upload may run.
+async function _pushCore(ctx) {
   // Snapshot the edit rev at upload start so edits made while this request is
   // in flight stay dirty and get picked up by a follow-up upload.
   const revAtStart = _editRev;
   const now = Date.now();
-  // Re-check right before the request: if the identity changed after this call
-  // was accepted (e.g. the queued continuation raced with a sign-out), do not
-  // PATCH the new account's document.
-  if (epoch !== _authEpoch) {
+  // Re-check right before the request: if the identity changed after this task
+  // was accepted, do not PATCH the new account's document.
+  if (!ctx.alive()) {
     _syncState = 'idle';
     _updateSyncUI();
-    return { ok: true, skipped: true };
+    return { uploaded: false, reason: 'session-changed' };
   }
   const snap = _buildSyncSnapshot();
   const cloudUpdateTime = await _fsSet({
@@ -914,12 +1001,7 @@ async function _doSyncToCloud(options = {}) {
   // it with zero bookkeeping writes — persisting its server time or syncing
   // the baseline against a null/other uid would destroy the persisted switch
   // signal and let the old account's local items be uploaded to the new one.
-  if (epoch !== _authEpoch) return { ok: true, skipped: true };
-
-  // The bookkeeping writes below are awaited, and a sign-out could null _uid
-  // while they run. Capture the uid this upload belongs to right here so the
-  // baseline keeps pointing at that session instead of being cleared to null.
-  const uidForBaseline = _uid;
+  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
 
   if (!cloudUpdateTime) throw new CloudSyncError('firestore', 0, new Error('No updateTime in response'));
 
@@ -927,11 +1009,17 @@ async function _doSyncToCloud(options = {}) {
   if (serverMs === 0) {
     throw new CloudSyncError('firestore', 0, new Error('Invalid updateTime from server'));
   }
+  // Each bookkeeping write is awaited; a session change during any of them
+  // stops the rest. _syncedRev and the baseline are written last, so an early
+  // exit leaves the local state dirty — the safe direction (spec §7.4).
   await _saveCloudSyncTs(serverMs);
+  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
   _syncedRev = revAtStart;
   await _saveRevState();
+  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
   // The cloud now holds this local state, so it becomes the sync baseline.
-  await _saveBaselineUid(uidForBaseline);
+  await _saveBaselineUid(_uid);
+  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
   // A successful upload resolves any prior conflict: the cloud now mirrors
   // the local state this upload carried.
   _clearConflictPending();
@@ -939,233 +1027,258 @@ async function _doSyncToCloud(options = {}) {
   _syncState = 'idle';
   _updateSyncUI(serverMs);
   if (_isDirty()) scheduleSyncToCloud();
-  return { ok: true, skipped: false, ts: serverMs };
+  return { uploaded: true, ts: serverMs };
 }
 
+// options.force: manual upload (not mergeable, bypasses the switch-pending,
+// conflict-pending and clean guards). Otherwise an auto upload that merges
+// with a queued auto upload.
+// Resolves { ok: true, skipped, reason?, ts? }; rejects with CloudSyncError.
 function syncToCloud(options = {}) {
-  // A queued continuation belongs to the session that queued it: if the
-  // account changed while the previous upload was in flight, it must be
-  // dropped instead of uploading the old local state to the new account.
-  const epoch = _authEpoch;
-  if (_syncInFlight) {
-    const continueIfSameSession = () =>
-      epoch === _authEpoch ? syncToCloud(options) : Promise.resolve({ ok: true, skipped: true });
-    return _syncInFlight.then(continueIfSameSession, continueIfSameSession);
-  }
-
-  _syncInFlight = _doSyncToCloud(options);
-  _syncInFlight.catch((err) => {
+  const { force = false } = options;
+  const markError = (err) => {
     _syncState = 'error';
     _lastSyncError = err;
     _updateSyncUI();
-  }).finally(() => {
-    _syncInFlight = null;
-  });
+  };
+  // Checked before queueing (not only at dequeue) so a signed-out caller gets
+  // an immediate rejection instead of waiting behind other tasks.
+  if (!fbIsSignedIn() || !fbIsEmailVerified()) {
+    const err = new CloudSyncError('not-signed-in', 0);
+    markError(err);
+    return Promise.reject(err);
+  }
+  const manual = !!force;
+  return _enqueueSync({
+    kind: 'upload',
+    auto: !manual,
+    // The error state is set inside the task, before it settles, so the next
+    // task's own state is never overwritten by this one's failure.
+    run: (ctx) => _uploadTask(ctx, { manual }).catch((err) => {
+      markError(err);
+      throw err;
+    }),
+  }).then((r) => (r.uploaded
+    ? { ok: true, skipped: false, ts: r.ts }
+    : { ok: true, skipped: true, reason: r.reason }));
+}
 
-  return _syncInFlight;
+// Pull core: GET the cloud document and run the pull decision tree. No lock:
+// callable from any task body. A session change after any await exits with
+// zero further writes. A detected conflict sets the pending record and
+// ctx.notifyConflict; the executor fires the hook after the task's last step.
+// Returns PullResult { applied, outcome, cloud? }.
+async function _pullCore(ctx, { mode, trigger }) {
+  const sessionChanged = () => {
+    _syncState = 'idle';
+    _updateSyncUI();
+    return { applied: false, outcome: 'session-changed' };
+  };
+
+  const doc = await _fsGet();
+
+  // The GET response landed after the identity changed (sign-out/sign-in
+  // while it was in flight). Drop it with zero bookkeeping writes.
+  if (!ctx.alive()) return sessionChanged();
+
+  if (!doc?.fields) {
+    _syncState = 'idle';
+    _updateSyncUI();
+    // Nothing to pull: the signed-in account's state is now considered the
+    // baseline, so subsequent automatic uploads are allowed again.
+    await _saveBaselineUid(_uid);
+    if (!ctx.alive()) return sessionChanged();
+    _clearConflictPending();
+    return { applied: false, outcome: 'cloud-empty', cloud: doc ? 'empty' : 'not-found' };
+  }
+
+  const cloudUpdateTime = doc.updateTime || null;
+  const cloudTsMs = _rfc3339ToMs(cloudUpdateTime);
+  const hasCloudTimestamp = cloudTsMs > 0;
+
+  // 非强制模式下，若云端没有变化则跳过（P0-3：脏数据需补排上传）
+  if (mode === 'auto' && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
+    _syncState = 'idle';
+    _updateSyncUI();
+    await _saveBaselineUid(_uid);
+    if (!ctx.alive()) return sessionChanged();
+    // A failed upload can leave local edits dirty with no timer pending, so
+    // re-queue them here instead of waiting for the next user edit.
+    if (_isDirty()) scheduleSyncToCloud();
+    return { applied: true, outcome: 'unchanged' };
+  }
+
+  const f = doc.fields;
+  // 兼容：旧数据仍用 updated_at 字段显示
+  const legacyCloudTs = _fromFV(f.updated_at) || 0;
+
+  // Conflict detection: when the local state is dirty and differs from the
+  // cloud snapshot, do not silently pick a winner — record the conflict and
+  // pause automatic uploads until the user resolves it. resolve-cloud skips
+  // detection entirely (it applies the cloud side by explicit user choice).
+  let skippedFields = [];
+  if (mode !== 'resolve-cloud' && _isDirty()) {
+    const localSnap = _buildSyncSnapshot();
+    const cloudSnap = _cloudSnapshotFromFields(f);
+    const { equal, skippedFields: skipped } = _compareSnapshots(localSnap, cloudSnap);
+    if (!equal) {
+      // Cancel any queued automatic upload: the local state must not be
+      // PATCHed over the cloud before the conflict is resolved.
+      clearTimeout(_syncTimer);
+      _syncTimer = null;
+      const localCounts = _countSyncItems(localSnap.items);
+      const cloudCounts = _countSyncItems(cloudSnap.items);
+      _setConflictPending({
+        isAccountSwitch: _needsSwitchPull(),
+        localShortcutCount: localCounts.shortcuts,
+        localFolderCount: localCounts.folders,
+        cloudShortcutCount: cloudCounts.shortcuts,
+        cloudFolderCount: cloudCounts.folders,
+        localEditTime: _localEditTs,
+        cloudUpdateTime: cloudTsMs,
+        trigger,
+      });
+      ctx.notifyConflict = true;
+      _syncState = 'idle';
+      _updateSyncUI();
+      return { applied: false, outcome: 'conflict' };
+    }
+    skippedFields = skipped;
+  }
+
+  // 真正要应用云端数据时，取消尚未执行的自动上传，防止本地过期状态覆盖刚拉取的数据
+  clearTimeout(_syncTimer);
+  _syncTimer = null;
+
+  const cloudItems = _fromFV(f.items);
+  const cloudEngines = _fromFV(f.engines);
+  const cloudEngine = _fromFV(f.selected_engine);
+  const cloudClocks = _fromFV(f.clocks);
+  const cloudColumns = _fromFV(f.grid_columns);
+
+  let shouldResyncCloud = false;
+  if (Array.isArray(cloudItems)) {
+    const normalize = typeof globalThis.sanitizeItemsShape === 'function'
+      ? globalThis.sanitizeItemsShape
+      : (typeof globalThis.normalizeFolderChildItemSizes === 'function'
+          ? globalThis.normalizeFolderChildItemSizes
+          : null);
+    const normalized = normalize ? normalize(cloudItems) : { items: cloudItems, changed: false };
+    items = normalized.items;
+    shouldResyncCloud = !!normalized.changed;
+  }
+  if (Array.isArray(cloudEngines)) customEngines = cloudEngines;
+  if (typeof cloudEngine === 'string' && cloudEngine) selectedEngineId = cloudEngine;
+  // An empty array is a real cloud state (every clock was deleted on another
+  // device), so it must land as-is. Only a missing or non-array field means
+  // "this cloud document has no opinion" and keeps the local list.
+  if (Array.isArray(cloudClocks)) clocks = cloudClocks;
+  if (typeof cloudColumns === 'number' && Number.isFinite(cloudColumns)
+      && typeof globalThis.clampMainGridColumns === 'function') {
+    mainGridColumns = globalThis.clampMainGridColumns(cloudColumns);
+    if (mainGridColumns !== cloudColumns) shouldResyncCloud = true; // corrected value must be re-uploaded
+  }
+  // Capture the edit rev in the same synchronous block as the in-memory
+  // assignment above: an edit made during the awaits below is newer than the
+  // applied snapshot and must stay dirty (spec §6.5).
+  const revAtApply = _editRev;
+
+  const s = _fbStore();
+  if (s) {
+    await s.set({
+      startpage_items: items,
+      startpage_engines: customEngines,
+      startpage_selected_engine: selectedEngineId,
+      startpage_clocks: clocks,
+      startpage_grid_columns: mainGridColumns,
+    });
+    if (!ctx.alive()) return sessionChanged();
+  }
+  // The applied cloud snapshot is now the authoritative in-memory state, so
+  // the host page may lift its storage read-failure firewall: later local
+  // edits can safely be persisted and uploaded again.
+  if (typeof globalThis.markStorageLoadRecovered === 'function') {
+    globalThis.markStorageLoadRecovered();
+  }
+
+  await _saveCloudSyncTs(cloudTsMs);
+  if (!ctx.alive()) return sessionChanged();
+  // The applied cloud snapshot is now the synced baseline. Only edits up to
+  // revAtApply are covered by it; later edits keep the local state dirty.
+  _syncedRev = revAtApply;
+  await _saveRevState();
+  if (!ctx.alive()) return sessionChanged();
+  // The local state now mirrors this account's cloud document.
+  await _saveBaselineUid(_uid);
+  if (!ctx.alive()) return sessionChanged();
+  _clearConflictPending();
+
+  applyWallpaper();
+  applyMainGridColumns();
+  render();
+  document.getElementById('engine-name').textContent = getSelectedEngine().name;
+  _syncState = 'idle';
+  _updateSyncUI(cloudTsMs || legacyCloudTs);
+  // A cloud snapshot that skipped a field (the cloud has no opinion on it)
+  // left the local value in place; re-upload it so other devices converge on
+  // the local value (I8). Reuse the resync mechanism so a normalization
+  // triggered resync is not double-counted.
+  if (skippedFields.length > 0) shouldResyncCloud = true;
+  if (shouldResyncCloud) {
+    // Cloud data was normalized on apply; bump the edit rev (from revAtApply)
+    // so the canonical form is re-uploaded for other devices. An edit made
+    // during landing already makes the state dirty, so no extra bump.
+    if (_editRev === revAtApply) _editRev = revAtApply + 1;
+    await _saveRevState();
+    if (!ctx.alive()) return sessionChanged();
+    scheduleSyncToCloud();
+  } else if (_editRev !== revAtApply) {
+    // An edit landed during the awaits above. Its own schedule may have been
+    // suppressed (e.g. a conflict was still pending), so re-queue the upload.
+    scheduleSyncToCloud();
+  }
+  if (typeof globalThis.scheduleIconCacheRefresh === 'function') {
+    globalThis.scheduleIconCacheRefresh();
+  }
+  if (typeof globalThis.pruneWeatherCache === 'function') {
+    globalThis.pruneWeatherCache();
+  }
+  if (typeof globalThis.fetchWeatherForAllCities === 'function') {
+    globalThis.fetchWeatherForAllCities();
+  }
+  return { applied: true, outcome: 'applied' };
 }
 
 // Returns true if cloud data was found and applied.
 // mode: 'auto' (default) | 'forced' | 'resolve-cloud'
 //   - 'auto': skip when the cloud has not changed; detect conflicts when dirty.
+//     Merges with a queued auto pull.
 //   - 'forced': bypass the "cloud unchanged" skip, but still detect conflicts.
 //   - 'resolve-cloud': apply cloud data unconditionally (no conflict detection).
 // trigger: provenance label carried into the conflict info object.
+// A queued pull dropped by a session change resolves false.
 async function syncFromCloud(options = {}) {
   const { mode = 'auto', trigger = 'auto' } = options;
   if (!fbIsSignedIn() || !fbIsEmailVerified()) return false;
 
-  // Wait for any in-flight upload first: the GET result must not race with
-  // (or be overwritten by) an upload that is still targeting the same doc.
-  if (_syncInFlight) {
-    try { await _syncInFlight; } catch { /* upload failure is handled by its own path */ }
-  }
-
-  _syncState = 'downloading';
-  _lastSyncError = null;
-  _updateSyncUI();
-
-  // Capture the identity this pull belongs to. A response that lands after a
-  // sign-out/sign-in must be dropped with zero writes (see the epoch check
-  // below), so it cannot revive the signed-out account's timestamp or baseline.
-  const epoch = _authEpoch;
-
-  try {
-    const doc = await _fsGet();
-
-    // The GET response landed after the identity changed (sign-out/sign-in
-    // while it was in flight). Drop it with zero bookkeeping writes.
-    if (epoch !== _authEpoch) {
-      _syncState = 'idle';
+  const r = await _enqueueSync({
+    kind: 'pull',
+    auto: mode === 'auto',
+    run: async (ctx) => {
+      _syncState = 'downloading';
+      _lastSyncError = null;
       _updateSyncUI();
-      return false;
-    }
-
-    if (!doc?.fields) {
-      _syncState = 'idle';
-      _updateSyncUI();
-      // Nothing to pull: the signed-in account's state is now considered the
-      // baseline, so subsequent automatic uploads are allowed again.
-      await _saveBaselineUid(_uid);
-      _clearConflictPending();
-      return false;
-    }
-
-    const cloudUpdateTime = doc.updateTime || null;
-    const cloudTsMs = _rfc3339ToMs(cloudUpdateTime);
-    const hasCloudTimestamp = cloudTsMs > 0;
-
-    // 非强制模式下，若云端没有变化则跳过（P0-3：脏数据需补排上传）
-    if (mode === 'auto' && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
-      _syncState = 'idle';
-      _updateSyncUI();
-      await _saveBaselineUid(_uid);
-      // A failed upload can leave local edits dirty with no timer pending, so
-      // re-queue them here instead of waiting for the next user edit.
-      if (_isDirty()) scheduleSyncToCloud();
-      return true;
-    }
-
-    const f = doc.fields;
-    // 兼容：旧数据仍用 updated_at 字段显示
-    const legacyCloudTs = _fromFV(f.updated_at) || 0;
-
-    // Conflict detection: when the local state is dirty and differs from the
-    // cloud snapshot, do not silently pick a winner — record the conflict and
-    // pause automatic uploads until the user resolves it. resolve-cloud skips
-    // detection entirely (it applies the cloud side by explicit user choice).
-    let skippedFields = [];
-    if (mode !== 'resolve-cloud' && _isDirty()) {
-      const localSnap = _buildSyncSnapshot();
-      const cloudSnap = _cloudSnapshotFromFields(f);
-      const { equal, skippedFields: skipped } = _compareSnapshots(localSnap, cloudSnap);
-      if (!equal) {
-        // Cancel any queued automatic upload: the local state must not be
-        // PATCHed over the cloud before the conflict is resolved.
-        clearTimeout(_syncTimer);
-        _syncTimer = null;
-        const localCounts = _countSyncItems(localSnap.items);
-        const cloudCounts = _countSyncItems(cloudSnap.items);
-        _setConflictPending({
-          isAccountSwitch: _needsSwitchPull(),
-          localShortcutCount: localCounts.shortcuts,
-          localFolderCount: localCounts.folders,
-          cloudShortcutCount: cloudCounts.shortcuts,
-          cloudFolderCount: cloudCounts.folders,
-          localEditTime: _localEditTs,
-          cloudUpdateTime: cloudTsMs,
-          trigger,
-        });
-        _notifySyncConflict(_conflictPending);
-        _syncState = 'idle';
+      try {
+        return await _pullCore(ctx, { mode, trigger });
+      } catch (e) {
+        _syncState = 'error';
+        _lastSyncError = e;
         _updateSyncUI();
-        return false;
+        throw e;
       }
-      skippedFields = skipped;
-    }
-
-    // 真正要应用云端数据时，取消尚未执行的自动上传，防止本地过期状态覆盖刚拉取的数据
-    clearTimeout(_syncTimer);
-    _syncTimer = null;
-
-    const cloudItems = _fromFV(f.items);
-    const cloudEngines = _fromFV(f.engines);
-    const cloudEngine = _fromFV(f.selected_engine);
-    const cloudClocks = _fromFV(f.clocks);
-    const cloudColumns = _fromFV(f.grid_columns);
-
-    let shouldResyncCloud = false;
-    if (Array.isArray(cloudItems)) {
-      const normalize = typeof globalThis.sanitizeItemsShape === 'function'
-        ? globalThis.sanitizeItemsShape
-        : (typeof globalThis.normalizeFolderChildItemSizes === 'function'
-            ? globalThis.normalizeFolderChildItemSizes
-            : null);
-      const normalized = normalize ? normalize(cloudItems) : { items: cloudItems, changed: false };
-      items = normalized.items;
-      shouldResyncCloud = !!normalized.changed;
-    }
-    if (Array.isArray(cloudEngines)) customEngines = cloudEngines;
-    if (typeof cloudEngine === 'string' && cloudEngine) selectedEngineId = cloudEngine;
-    // An empty array is a real cloud state (every clock was deleted on another
-    // device), so it must land as-is. Only a missing or non-array field means
-    // "this cloud document has no opinion" and keeps the local list.
-    if (Array.isArray(cloudClocks)) clocks = cloudClocks;
-    if (typeof cloudColumns === 'number' && Number.isFinite(cloudColumns)
-        && typeof globalThis.clampMainGridColumns === 'function') {
-      mainGridColumns = globalThis.clampMainGridColumns(cloudColumns);
-      if (mainGridColumns !== cloudColumns) shouldResyncCloud = true; // corrected value must be re-uploaded
-    }
-    // Capture the edit rev in the same synchronous block as the in-memory
-    // assignment above: an edit made during the awaits below is newer than the
-    // applied snapshot and must stay dirty (spec §6.5).
-    const revAtApply = _editRev;
-
-    const s = _fbStore();
-    if (s) {
-      await s.set({
-        startpage_items: items,
-        startpage_engines: customEngines,
-        startpage_selected_engine: selectedEngineId,
-        startpage_clocks: clocks,
-        startpage_grid_columns: mainGridColumns,
-      });
-    }
-    // The applied cloud snapshot is now the authoritative in-memory state, so
-    // the host page may lift its storage read-failure firewall: later local
-    // edits can safely be persisted and uploaded again.
-    if (typeof globalThis.markStorageLoadRecovered === 'function') {
-      globalThis.markStorageLoadRecovered();
-    }
-
-    await _saveCloudSyncTs(cloudTsMs);
-    // The applied cloud snapshot is now the synced baseline. Only edits up to
-    // revAtApply are covered by it; later edits keep the local state dirty.
-    _syncedRev = revAtApply;
-    await _saveRevState();
-    // The local state now mirrors this account's cloud document.
-    await _saveBaselineUid(_uid);
-    _clearConflictPending();
-
-    applyWallpaper();
-    applyMainGridColumns();
-    render();
-    document.getElementById('engine-name').textContent = getSelectedEngine().name;
-    _syncState = 'idle';
-    _updateSyncUI(cloudTsMs || legacyCloudTs);
-    // A cloud snapshot that skipped a field (the cloud has no opinion on it)
-    // left the local value in place; re-upload it so other devices converge on
-    // the local value (I8). Reuse the resync mechanism so a normalization
-    // triggered resync is not double-counted.
-    if (skippedFields.length > 0) shouldResyncCloud = true;
-    if (shouldResyncCloud) {
-      // Cloud data was normalized on apply; bump the edit rev (from revAtApply)
-      // so the canonical form is re-uploaded for other devices. An edit made
-      // during landing already makes the state dirty, so no extra bump.
-      if (_editRev === revAtApply) _editRev = revAtApply + 1;
-      await _saveRevState();
-      scheduleSyncToCloud();
-    } else if (_editRev !== revAtApply) {
-      // An edit landed during the awaits above. Its own schedule may have been
-      // suppressed (e.g. a conflict was still pending), so re-queue the upload.
-      scheduleSyncToCloud();
-    }
-    if (typeof globalThis.scheduleIconCacheRefresh === 'function') {
-      globalThis.scheduleIconCacheRefresh();
-    }
-    if (typeof globalThis.pruneWeatherCache === 'function') {
-      globalThis.pruneWeatherCache();
-    }
-    if (typeof globalThis.fetchWeatherForAllCities === 'function') {
-      globalThis.fetchWeatherForAllCities();
-    }
-    return true;
-  } catch (e) {
-    _syncState = 'error';
-    _lastSyncError = e;
-    _updateSyncUI();
-    throw e;
-  }
+    },
+  });
+  return !!r.applied;
 }
 
 function scheduleSyncToCloud() {
@@ -1174,9 +1287,13 @@ function scheduleSyncToCloud() {
   // state is known to disagree with the cloud and must not overwrite it before
   // the user resolves the conflict (Tasks 4/5).
   if (_conflictPending) return;
+  // The timer belongs to the session that armed it: if the session changed
+  // before it fires, drop it instead of queueing an upload (spec §7.4).
+  const epoch = _authEpoch;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(() => {
     _syncTimer = null;
+    if (epoch !== _authEpoch) return;
     syncToCloud()
       .then(() => {
         _lastAutoUploadErrorCode = null;
@@ -1267,8 +1384,8 @@ async function _handleSyncBtn(direction) {
         _notifySyncConflict({ ..._conflictPending, trigger: 'manual-upload' });
         return;
       }
-      // The forced upload bypasses _doSyncToCloud's firewall guard on purpose;
-      // stop here with a user-visible explanation instead of uploading defaults.
+      // The forced upload would only be skipped silently by _uploadTask's
+      // firewall guard; stop here with a user-visible explanation instead of uploading defaults.
       if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
         showToast(t('toast.syncStorageReadOnly'), 'error');
         return;
@@ -1276,10 +1393,9 @@ async function _handleSyncBtn(direction) {
       await syncToCloud({ force: true });
       showToast(t('toast.syncUploaded'), 'default');
     } else {
-      // 关键：手动拉取前取消尚未执行的自动上传，并等待正在执行的上传完成
+      // 关键：手动拉取前取消尚未执行的自动上传；正在执行的任务由同步队列串行等待
       clearTimeout(_syncTimer);
       _syncTimer = null;
-      if (_syncInFlight) await _syncInFlight;
 
       const pulled = await syncFromCloud({ mode: 'forced', trigger: 'manual-pull' });
       // A detected conflict leaves the local/cloud states unresolved; do not

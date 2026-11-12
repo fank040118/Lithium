@@ -10,11 +10,11 @@ function firestoreDoc(fb, { items, updateTime }) {
   };
 }
 
-describe('_doSyncToCloud / syncToCloud', () => {
+describe('syncToCloud', () => {
   it('throws not-signed-in when there is no authenticated user', async () => {
     const fb = loadFirebaseModule();
 
-    await expect(fb._doSyncToCloud()).rejects.toMatchObject({ code: 'not-signed-in' });
+    await expect(fb.syncToCloud()).rejects.toMatchObject({ code: 'not-signed-in' });
   });
 
   it('skips the upload when there are no local changes and force is not set', async () => {
@@ -27,9 +27,9 @@ describe('_doSyncToCloud / syncToCloud', () => {
       })],
     });
 
-    const result = await fb._doSyncToCloud();
+    const result = await fb.syncToCloud();
 
-    expect(result).toEqual({ ok: true, skipped: true });
+    expect(result).toEqual({ ok: true, skipped: true, reason: 'clean' });
     expect(patchCalls).toBe(0);
   });
 
@@ -40,7 +40,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
         jsonResponse(200, { updateTime: '2024-06-01T12:00:00.500000000Z' }))],
     });
 
-    const result = await fb._doSyncToCloud({ force: true });
+    const result = await fb.syncToCloud({ force: true });
 
     const expectedMs = new Date('2024-06-01T12:00:00.500Z').getTime();
     expect(result).toEqual({ ok: true, skipped: false, ts: expectedMs });
@@ -56,7 +56,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, {}))],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
   });
 
   it('throws a firestore error when the server response has an unparseable updateTime', async () => {
@@ -65,7 +65,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, { updateTime: 'not-a-valid-timestamp' }))],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
   });
 
   it('serializes concurrent syncToCloud calls instead of dropping them', async () => {
@@ -301,7 +301,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       globalThis.items = [{ id: 'local-edit' }];
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
-      const uploadPromise = fb._doSyncToCloud();
+      const uploadPromise = fb.syncToCloud();
 
       await tsWriteStarted;      // PATCH response handled; stuck in the bookkeeping write
       await fb.fbSignOut();      // _uid is nulled while that write is pending
@@ -325,7 +325,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       }))],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
     expect(fb.fbIsSignedIn()).toBe(true);   // 不得因规则拒绝而登出
   });
 
@@ -341,7 +341,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       ],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'auth' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'auth' });
     expect(fb.fbIsSignedIn()).toBe(false);
   });
 
@@ -353,7 +353,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
     });
     globalThis.items = [{ id: 'huge', type: 'link', name: 'x'.repeat(100000), url: 'https://example.com', size: '1x1' }];
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'payload-too-large' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'payload-too-large' });
     expect(patchCalls).toBe(0);
   });
 
@@ -370,9 +370,9 @@ describe('_doSyncToCloud / syncToCloud', () => {
     // is defaults. Uploading them would overwrite the real cloud document.
     globalThis.isStorageLoadFailed = () => true;
     try {
-      const result = await fb._doSyncToCloud({ force: true });
+      const result = await fb.syncToCloud({ force: true });
 
-      expect(result).toEqual({ ok: true, skipped: true });
+      expect(result).toEqual({ ok: true, skipped: true, reason: 'storage-read-only' });
       expect(patchCalls).toBe(0);
     } finally {
       delete globalThis.isStorageLoadFailed;
