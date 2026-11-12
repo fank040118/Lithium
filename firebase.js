@@ -1076,6 +1076,10 @@ async function syncFromCloud(options = {}) {
       mainGridColumns = globalThis.clampMainGridColumns(cloudColumns);
       if (mainGridColumns !== cloudColumns) shouldResyncCloud = true; // corrected value must be re-uploaded
     }
+    // Capture the edit rev in the same synchronous block as the in-memory
+    // assignment above: an edit made during the awaits below is newer than the
+    // applied snapshot and must stay dirty (spec §6.5).
+    const revAtApply = _editRev;
 
     const s = _fbStore();
     if (s) {
@@ -1095,8 +1099,9 @@ async function syncFromCloud(options = {}) {
     }
 
     await _saveCloudSyncTs(cloudTsMs);
-    // The applied cloud snapshot is now the synced baseline: local state is clean.
-    _syncedRev = _editRev;
+    // The applied cloud snapshot is now the synced baseline. Only edits up to
+    // revAtApply are covered by it; later edits keep the local state dirty.
+    _syncedRev = revAtApply;
     await _saveRevState();
     // The local state now mirrors this account's cloud document.
     await _saveBaselineUid(_uid);
@@ -1114,10 +1119,15 @@ async function syncFromCloud(options = {}) {
     // triggered resync is not double-counted.
     if (skippedFields.length > 0) shouldResyncCloud = true;
     if (shouldResyncCloud) {
-      // Cloud data was normalized on apply; bump the edit rev so the canonical
-      // form is re-uploaded for other devices.
-      _editRev += 1;
+      // Cloud data was normalized on apply; bump the edit rev (from revAtApply)
+      // so the canonical form is re-uploaded for other devices. An edit made
+      // during landing already makes the state dirty, so no extra bump.
+      if (_editRev === revAtApply) _editRev = revAtApply + 1;
       await _saveRevState();
+      scheduleSyncToCloud();
+    } else if (_editRev !== revAtApply) {
+      // An edit landed during the awaits above. Its own schedule may have been
+      // suppressed (e.g. a conflict was still pending), so re-queue the upload.
       scheduleSyncToCloud();
     }
     if (typeof globalThis.scheduleIconCacheRefresh === 'function') {
