@@ -17,6 +17,13 @@ const FB_SYNCED_REV_KEY = '_fb_synced_rev';
 const FB_LOCAL_EDIT_TS_KEY = '_fb_local_edit_ts';
 const FB_LEGACY_LOCAL_TS_KEY = '_fb_local_sync_ts';
 const FB_CLOUD_SYNC_TS_KEY = '_fb_cloud_sync_ts';
+// Raw Firestore updateTime string of the cloud version the local state is
+// based on (spec §3.1). Always written and cleared together with
+// FB_CLOUD_SYNC_TS_KEY in one storage operation, via _setCloudBaseline only.
+const FB_CLOUD_UPDATE_TIME_KEY = '_fb_cloud_update_time';
+// Persisted value of FB_CLOUD_UPDATE_TIME_KEY meaning "the cloud document does
+// not exist"; only written after a GET returned 404.
+const FB_CLOUD_ABSENT = 'absent';
 // Account whose cloud snapshot the local state is currently based on. Written
 // after every successful pull/upload and kept across sign-out so the next
 // sign-in can tell whether the local data belongs to a previous account.
@@ -139,12 +146,13 @@ async function _clearAuth() {
   // account that just signed out, and keeping it is what tells the next
   // sign-in that the local state still contains that account's data (see
   // _needsSwitchPull). The rev keys are machine-local counters and also stay.
-  _lastCloudTs = 0;
+  // The in-memory cloud baseline was reset to Unknown by _resetSession; the
+  // persisted baseline keys go in the same remove (I1).
   _lastSyncDisplayTs = 0;
   const s = _fbStore();
   if (s) await s.remove([
     '_fb_refresh', '_fb_uid', '_fb_email_verified', '_fb_email',
-    FB_CLOUD_SYNC_TS_KEY,
+    FB_CLOUD_SYNC_TS_KEY, FB_CLOUD_UPDATE_TIME_KEY,
   ]);
 }
 
@@ -399,7 +407,7 @@ function _rfc3339ToMs(value) {
 //
 // One-time migration from the legacy local sync timestamp: a local ts newer
 // than the last known cloud ts means there were unsynced local edits.
-// Callers must run _loadCloudSyncTs() first so _lastCloudTs is populated.
+// Callers must run _loadCloudBaseline() first so _lastCloudTs is populated.
 async function _loadRevState() {
   const s = _fbStore();
   if (!s) return { editRev: _editRev, syncedRev: _syncedRev };
@@ -429,19 +437,110 @@ async function _saveRevState() {
   });
 }
 
-async function _loadCloudSyncTs() {
-  const s = _fbStore();
-  if (!s) return 0;
-  const d = await s.get([FB_CLOUD_SYNC_TS_KEY]);
-  _lastCloudTs = _normalizeTs(d[FB_CLOUD_SYNC_TS_KEY]);
-  return _lastCloudTs;
+// ── Cloud baseline (spec §3.1) ──────────────────────────────
+//
+// Baseline = { kind: 'unknown' } | { kind: 'absent' }
+//          | { kind: 'known', raw: string, ns: bigint }
+// The raw string is kept verbatim (it is what a precondition sends); all
+// comparisons go through its nanosecond value as a BigInt.
+
+const UPDATE_TIME_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/;
+
+// Nanoseconds since the epoch for a Firestore updateTime, or null when the
+// value is not a Z-offset RFC 3339 timestamp with at most 9 fractional digits.
+function _parseUpdateTimeNs(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = UPDATE_TIME_RE.exec(raw);
+  if (!m) return null;
+  const secondsMs = Date.parse(`${m[1]}Z`);
+  if (!Number.isFinite(secondsMs)) return null;
+  const fraction = (m[2] || '').padEnd(9, '0');
+  return BigInt(secondsMs) * 1000000n + BigInt(fraction);
 }
 
-async function _saveCloudSyncTs(ts) {
-  _lastCloudTs = _normalizeTs(ts);
+// Milliseconds for a raw updateTime (display and the ms key); 0 if unparsable.
+function _updateTimeToMs(raw) {
+  const ns = _parseUpdateTimeNs(raw);
+  return ns === null ? 0 : Number(ns / 1000000n);
+}
+
+// Same instant in nanoseconds; an unparsable side never compares equal.
+function _sameUpdateTime(a, b) {
+  const na = _parseUpdateTimeNs(a);
+  const nb = _parseUpdateTimeNs(b);
+  return na !== null && nb !== null && na === nb;
+}
+
+function _knownBaseline(raw) {
+  const ns = _parseUpdateTimeNs(raw);
+  return ns === null ? null : { kind: 'known', raw, ns };
+}
+
+// Pure mapping of the two persisted keys to the in-memory baseline, with the
+// I1 load check: a raw string whose ms does not match the ms key (downgrade,
+// or an old tab wrote the ms key alone) is Unknown and its ms is discarded.
+// Only a missing raw string with a ms value is the migration state (§9).
+function _baselineFromStorage(rawVal, msVal) {
+  const unknown = { baseline: { kind: 'unknown' }, lastCloudTs: 0 };
+  const ms = _normalizeTs(msVal);
+  if (rawVal === FB_CLOUD_ABSENT) {
+    return ms === 0 ? { baseline: { kind: 'absent' }, lastCloudTs: 0 } : unknown;
+  }
+  if (rawVal === undefined || rawVal === null) {
+    return { baseline: { kind: 'unknown' }, lastCloudTs: ms };
+  }
+  const known = _knownBaseline(rawVal);
+  if (!known || _updateTimeToMs(rawVal) !== ms) return unknown;
+  return { baseline: known, lastCloudTs: ms };
+}
+
+// Pre-1.0.5 installs: no raw string yet, only the old ms value (spec §9).
+function _isMigrationState() {
+  return _cloudBaseline.kind === 'unknown' && _lastCloudTs > 0;
+}
+
+async function _loadCloudBaseline() {
   const s = _fbStore();
-  if (!s) return;
-  await s.set({ [FB_CLOUD_SYNC_TS_KEY]: _lastCloudTs });
+  if (!s) return _cloudBaseline;
+  const d = await s.get([FB_CLOUD_UPDATE_TIME_KEY, FB_CLOUD_SYNC_TS_KEY]);
+  const loaded = _baselineFromStorage(d[FB_CLOUD_UPDATE_TIME_KEY], d[FB_CLOUD_SYNC_TS_KEY]);
+  _cloudBaseline = loaded.baseline;
+  _lastCloudTs = loaded.lastCloudTs;
+  return _cloudBaseline;
+}
+
+// The only writer of the two baseline keys: both go in one storage operation
+// (I1). Storage first, memory after: a failed write leaves the old baseline in
+// memory too and rethrows. A session reset during the write keeps the new
+// session's Unknown baseline in memory instead of the previous account's.
+async function _setCloudBaseline(baseline) {
+  const epoch = _authEpoch;
+  const ms = baseline.kind === 'known' ? _updateTimeToMs(baseline.raw) : 0;
+  const s = _fbStore();
+  if (s) {
+    if (baseline.kind === 'known') {
+      await s.set({ [FB_CLOUD_UPDATE_TIME_KEY]: baseline.raw, [FB_CLOUD_SYNC_TS_KEY]: ms });
+    } else if (baseline.kind === 'absent') {
+      await s.set({ [FB_CLOUD_UPDATE_TIME_KEY]: FB_CLOUD_ABSENT, [FB_CLOUD_SYNC_TS_KEY]: 0 });
+    } else {
+      await s.remove([FB_CLOUD_UPDATE_TIME_KEY, FB_CLOUD_SYNC_TS_KEY]);
+    }
+  }
+  if (epoch !== _authEpoch) return;
+  _cloudBaseline = baseline;
+  _lastCloudTs = ms;
+}
+
+// Read-only view of the in-memory baseline (tests and diagnostics).
+function _getCloudBaseline() {
+  return { baseline: { ..._cloudBaseline }, lastCloudTs: _lastCloudTs };
+}
+
+// §4: the cloud is unchanged only when the GET time equals the Known baseline
+// in nanoseconds, or, in the migration state, equals the old ms value.
+function _isCloudUnchanged(raw) {
+  if (_cloudBaseline.kind === 'known') return _sameUpdateTime(_cloudBaseline.raw, raw);
+  return _isMigrationState() && _rfc3339ToMs(raw) === _lastCloudTs;
 }
 
 // ── Firestore helpers ────────────────────────────────────────
@@ -577,7 +676,10 @@ async function _parseFirestoreError(res, body) {
 let _syncTimer = null;
 let _syncQueue = [];      // not-started sync tasks, in run order
 let _syncCurrent = null;  // the running sync task, or null
-let _lastCloudTs = 0;     // 来自 Firestore Document.updateTime（毫秒）
+let _cloudBaseline = { kind: 'unknown' }; // see _setCloudBaseline
+// Ms of the Known baseline; 0 for Absent/Unknown, except the migration state
+// (Unknown with the pre-1.0.5 ms value, used only by _isCloudUnchanged).
+let _lastCloudTs = 0;
 let _editRev = 0;         // local edit counter, persisted as _fb_edit_rev
 let _syncedRev = 0;       // edit rev last uploaded to the cloud, persisted as _fb_synced_rev
 let _localEditTs = 0;     // wall-clock of last user edit on this machine (display only), persisted as _fb_local_edit_ts
@@ -935,6 +1037,30 @@ function _resetSession() {
   // so the next session starts clean (the conflict is re-detected on the next
   // pull from its own persisted state, not from a stale pending record).
   _clearConflictPending();
+  // The cloud baseline belongs to the previous session: the new one must
+  // re-establish it with a pull. Persisted keys are only removed by _clearAuth.
+  _cloudBaseline = { kind: 'unknown' };
+  _lastCloudTs = 0;
+}
+
+// Records that the local state is now based on the cloud version `baseline`:
+// the cloud baseline first, then (when given) the synced rev, then the
+// baseline account. Shared by every landing, adoption and upload success so
+// the write order stays identical (spec §7.4: baseline and _syncedRev last).
+// syncedRev must have been captured by the caller in the same synchronous
+// block as its in-memory apply / adopt decision (spec §6.5).
+// Returns false when the session changed during any write (stop, no more
+// writes); storage errors propagate.
+async function _adoptCloudVersion(ctx, baseline, { syncedRev = null } = {}) {
+  await _setCloudBaseline(baseline);
+  if (!ctx.alive()) return false;
+  if (syncedRev !== null) {
+    _syncedRev = syncedRev;
+    await _saveRevState();
+    if (!ctx.alive()) return false;
+  }
+  await _saveBaselineUid(_uid);
+  return ctx.alive();
 }
 
 // Upload task body: the guards, then one PATCH via _pushCore.
@@ -1004,22 +1130,17 @@ async function _pushCore(ctx) {
   if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
 
   if (!cloudUpdateTime) throw new CloudSyncError('firestore', 0, new Error('No updateTime in response'));
-
-  const serverMs = _rfc3339ToMs(cloudUpdateTime);
-  if (serverMs === 0) {
+  const cloudBaseline = _knownBaseline(cloudUpdateTime);
+  if (!cloudBaseline) {
     throw new CloudSyncError('firestore', 0, new Error('Invalid updateTime from server'));
   }
-  // Each bookkeeping write is awaited; a session change during any of them
-  // stops the rest. _syncedRev and the baseline are written last, so an early
-  // exit leaves the local state dirty — the safe direction (spec §7.4).
-  await _saveCloudSyncTs(serverMs);
-  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
-  _syncedRev = revAtStart;
-  await _saveRevState();
-  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
-  // The cloud now holds this local state, so it becomes the sync baseline.
-  await _saveBaselineUid(_uid);
-  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
+  const serverMs = _updateTimeToMs(cloudUpdateTime);
+  // The cloud now holds this local state, so it becomes the sync baseline. A
+  // session change during the bookkeeping stops it with the local state still
+  // dirty — the safe direction (spec §7.4).
+  if (!(await _adoptCloudVersion(ctx, cloudBaseline, { syncedRev: revAtStart }))) {
+    return { uploaded: false, reason: 'session-changed' };
+  }
   // A successful upload resolves any prior conflict: the cloud now mirrors
   // the local state this upload carried.
   _clearConflictPending();
@@ -1081,27 +1202,40 @@ async function _pullCore(ctx, { mode, trigger }) {
   // while it was in flight). Drop it with zero bookkeeping writes.
   if (!ctx.alive()) return sessionChanged();
 
-  if (!doc?.fields) {
+  // Nothing to pull: the signed-in account's state is now considered the
+  // baseline, so subsequent automatic uploads are allowed again. A 404
+  // (Absent) and an existing document without fields (Known) are distinct
+  // baselines (I2).
+  const cloudEmpty = async (baseline, cloud) => {
     _syncState = 'idle';
     _updateSyncUI();
-    // Nothing to pull: the signed-in account's state is now considered the
-    // baseline, so subsequent automatic uploads are allowed again.
-    await _saveBaselineUid(_uid);
-    if (!ctx.alive()) return sessionChanged();
+    if (!(await _adoptCloudVersion(ctx, baseline))) return sessionChanged();
     _clearConflictPending();
-    return { applied: false, outcome: 'cloud-empty', cloud: doc ? 'empty' : 'not-found' };
+    return { applied: false, outcome: 'cloud-empty', cloud };
+  };
+
+  if (!doc) return cloudEmpty({ kind: 'absent' }, 'not-found');
+
+  // An existing document always carries an updateTime; without a usable one
+  // there is no version to base later uploads on, so treat it as a server
+  // error rather than landing or adopting anything.
+  const cloudUpdateTime = doc.updateTime;
+  const cloudBaseline = _knownBaseline(cloudUpdateTime);
+  if (!cloudBaseline) {
+    throw new CloudSyncError('firestore', 0, new Error('Invalid updateTime from server'));
   }
+  const cloudTsMs = _updateTimeToMs(cloudUpdateTime);
 
-  const cloudUpdateTime = doc.updateTime || null;
-  const cloudTsMs = _rfc3339ToMs(cloudUpdateTime);
-  const hasCloudTimestamp = cloudTsMs > 0;
+  if (!doc.fields) return cloudEmpty(cloudBaseline, 'empty');
 
-  // 非强制模式下，若云端没有变化则跳过（P0-3：脏数据需补排上传）
-  if (mode === 'auto' && hasCloudTimestamp && cloudTsMs <= _lastCloudTs) {
+  // Cloud unchanged since the baseline (spec §4): skip, adopting the GET's raw
+  // string as the baseline (this completes the §9 migration). The local state
+  // is not marked clean: dirty edits are re-queued for upload. Not taken while
+  // a conflict is pending; the content comparison below decides instead.
+  if (mode === 'auto' && !_conflictPending && _isCloudUnchanged(cloudUpdateTime)) {
     _syncState = 'idle';
     _updateSyncUI();
-    await _saveBaselineUid(_uid);
-    if (!ctx.alive()) return sessionChanged();
+    if (!(await _adoptCloudVersion(ctx, cloudBaseline))) return sessionChanged();
     // A failed upload can leave local edits dirty with no timer pending, so
     // re-queue them here instead of waiting for the next user edit.
     if (_isDirty()) scheduleSyncToCloud();
@@ -1109,8 +1243,6 @@ async function _pullCore(ctx, { mode, trigger }) {
   }
 
   const f = doc.fields;
-  // 兼容：旧数据仍用 updated_at 字段显示
-  const legacyCloudTs = _fromFV(f.updated_at) || 0;
 
   // Conflict detection: when the local state is dirty and differs from the
   // cloud snapshot, do not silently pick a winner — record the conflict and
@@ -1201,16 +1333,11 @@ async function _pullCore(ctx, { mode, trigger }) {
     globalThis.markStorageLoadRecovered();
   }
 
-  await _saveCloudSyncTs(cloudTsMs);
-  if (!ctx.alive()) return sessionChanged();
   // The applied cloud snapshot is now the synced baseline. Only edits up to
   // revAtApply are covered by it; later edits keep the local state dirty.
-  _syncedRev = revAtApply;
-  await _saveRevState();
-  if (!ctx.alive()) return sessionChanged();
-  // The local state now mirrors this account's cloud document.
-  await _saveBaselineUid(_uid);
-  if (!ctx.alive()) return sessionChanged();
+  if (!(await _adoptCloudVersion(ctx, cloudBaseline, { syncedRev: revAtApply }))) {
+    return sessionChanged();
+  }
   _clearConflictPending();
 
   applyWallpaper();
@@ -1218,7 +1345,7 @@ async function _pullCore(ctx, { mode, trigger }) {
   render();
   document.getElementById('engine-name').textContent = getSelectedEngine().name;
   _syncState = 'idle';
-  _updateSyncUI(cloudTsMs || legacyCloudTs);
+  _updateSyncUI(cloudTsMs);
   // A cloud snapshot that skipped a field (the cloud has no opinion on it)
   // left the local value in place; re-upload it so other devices converge on
   // the local value (I8). Reuse the resync mechanism so a normalization
@@ -1433,6 +1560,12 @@ function _bindSyncActionButtons() {
 }
 
 let _lastSyncDisplayTs = 0;
+
+// Read-only snapshot of internal sync flags that tests cannot reach otherwise
+// (top-level `let` bindings are not visible through the test loader).
+function _getSyncDebugState() {
+  return { lastSyncDisplayTs: _lastSyncDisplayTs };
+}
 
 function _updateSyncUI(ts) {
   if (typeof ts === 'number') _lastSyncDisplayTs = ts;
@@ -1990,7 +2123,7 @@ async function fbInit() {
   // A preset hook (e.g. from a test) is left alone.
   if (typeof globalThis.onSyncConflict !== 'function') globalThis.onSyncConflict = _openSyncConflictDialog;
   await _loadAuth();
-  await _loadCloudSyncTs();
+  await _loadCloudBaseline();
   await _loadRevState();
   // Seed the displayed sync time from the persisted cloud timestamp so a
   // fresh page load shows "synced at HH:MM" immediately instead of falling

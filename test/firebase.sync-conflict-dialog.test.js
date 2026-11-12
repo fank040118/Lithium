@@ -207,7 +207,7 @@ describe('fbInit integration', () => {
     installFbInitEventTracking();
     globalThis._loadAuth = vi.fn(async () => {});
     globalThis._loadRevState = vi.fn(async () => {});
-    globalThis._loadCloudSyncTs = vi.fn(async () => {});
+    globalThis._loadCloudBaseline = vi.fn(async () => {});
     globalThis._bindSyncActionButtons = vi.fn();
     globalThis.fbIsSignedIn = vi.fn(() => false);
     window.showSigninNotice = vi.fn();
@@ -402,7 +402,7 @@ describe('conflict dialog button wiring (real fbInit)', () => {
     installFbInitEventTracking();
     globalThis._loadAuth = vi.fn(async () => {});
     globalThis._loadRevState = vi.fn(async () => {});
-    globalThis._loadCloudSyncTs = vi.fn(async () => {});
+    globalThis._loadCloudBaseline = vi.fn(async () => {});
     globalThis._bindSyncActionButtons = vi.fn();
     globalThis.fbIsSignedIn = vi.fn(() => true);
     window.showSigninNotice = vi.fn();

@@ -472,7 +472,7 @@ describe('syncFromCloud conflict detection', () => {
           }),
         ],
       });
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -510,7 +510,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -546,7 +546,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -581,7 +581,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -613,7 +613,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -629,7 +629,10 @@ describe('syncFromCloud conflict detection', () => {
     }
   });
 
-  it('detects a conflict even when the cloud document has no updateTime', async () => {
+  // Plan deviation (Review Focus 3): a document without a usable updateTime
+  // has no version to base an upload on, so the pull fails as a server error
+  // instead of running conflict detection.
+  it('throws firestore without a conflict or landing when the cloud document has no updateTime', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -650,11 +653,12 @@ describe('syncFromCloud conflict detection', () => {
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
-      const result = await fb.syncFromCloud();
+      await expect(fb.syncFromCloud()).rejects.toMatchObject({ code: 'firestore' });
 
-      expect(result).toBe(false);
-      expect(fb.fbGetSyncConflict()).not.toBeNull();
-      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(conflictHook).not.toHaveBeenCalled();
+      expect(globalThis.items).toEqual([{ id: 'local-only' }]);
+      expect(fb._isDirty()).toBe(true);
     } finally {
       delete globalThis.onSyncConflict;
       vi.useRealTimers();
@@ -693,6 +697,7 @@ describe('syncFromCloud conflict detection', () => {
     expect(globalThis.items).toEqual([{ id: 'local-only' }]);
     // 迟到的响应不得复活云端时间戳，也不得改写基线
     expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+    expect(storage._data._fb_cloud_update_time).toBeUndefined();
     expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
   });
 
@@ -759,7 +764,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 

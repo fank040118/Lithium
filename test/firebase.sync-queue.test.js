@@ -353,6 +353,7 @@ describe('serial sync queue', () => {
     await expect(queued).resolves.toBe(false);
     expect(fb.fbIsSignedIn()).toBe(false);
     expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+    expect(storage._data._fb_cloud_update_time).toBeUndefined();
     expect(count(log, 'GET')).toBe(0);
 
     await fb.fbSignIn('user@example.com', 'pw');

@@ -45,7 +45,9 @@ describe('syncToCloud', () => {
     const expectedMs = new Date('2024-06-01T12:00:00.500Z').getTime();
     expect(result).toEqual({ ok: true, skipped: false, ts: expectedMs });
     expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
-    expect(await fb._loadCloudSyncTs()).toBe(expectedMs);
+    expect(storage._data._fb_cloud_update_time).toBe('2024-06-01T12:00:00.500000000Z');
+    expect(storage._data._fb_cloud_sync_ts).toBe(expectedMs);
+    expect(fb._getCloudBaseline().lastCloudTs).toBe(expectedMs);
     // 成功上传后，本机同步基线跟进到当前账号
     expect(storage._data._fb_sync_baseline_uid).toBe(uid);
   });
@@ -245,6 +247,7 @@ describe('syncToCloud', () => {
       // 迟到的响应不得覆写切换信号与云端时间戳
       expect(storage._data._fb_sync_baseline_uid).toBe(uid);
       expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+      expect(storage._data._fb_cloud_update_time).toBeUndefined();
 
       // 下一次登录仍能识别账号切换并强制拉取 B 的云端快照
       await fb.fbSignIn('b@example.com', 'password123');
@@ -259,6 +262,7 @@ describe('syncToCloud', () => {
       // 迟到的 U1 簿记未落：切号基线仍指向 A，云端时间戳仍缺席
       expect(storage._data._fb_sync_baseline_uid).toBe(uid);
       expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+      expect(storage._data._fb_cloud_update_time).toBeUndefined();
 
       // resolve tail：选「用云端」落地 B 快照、baseline 跟进到 B、零 PATCH 进 B
       await fb.fbResolveSyncConflict('cloud');
@@ -290,7 +294,7 @@ describe('syncToCloud', () => {
       const tsWriteStarted = new Promise((resolve) => { markTsWriteStarted = resolve; });
       let gatedOnce = false;
       storage.storage.local.set = async (values) => {
-        if (!gatedOnce && '_fb_cloud_sync_ts' in values) {
+        if (!gatedOnce && '_fb_cloud_update_time' in values) {
           gatedOnce = true;
           markTsWriteStarted();
           await tsWriteGate;

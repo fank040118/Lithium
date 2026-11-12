@@ -74,14 +74,19 @@ describe('_rfc3339ToMs', () => {
 });
 
 describe('sync timestamp persistence', () => {
-  it('_saveCloudSyncTs then _loadCloudSyncTs round-trips the value', async () => {
+  it('_setCloudBaseline then _loadCloudBaseline round-trips the raw updateTime and its ms', async () => {
+    const raw = '2023-11-14T22:13:20.123456Z';
+    const writer = loadFirebaseModule();
+    const storage = createMockChromeStorage();
+    globalThis.chrome = storage;
+    await writer._setCloudBaseline(writer._knownBaseline(raw));
+
+    // A fresh module instance only sees what was persisted.
     const fb = loadFirebaseModule();
-    globalThis.chrome = createMockChromeStorage();
+    const loaded = await fb._loadCloudBaseline();
 
-    await fb._saveCloudSyncTs(1700000000000);
-    const loaded = await fb._loadCloudSyncTs();
-
-    expect(loaded).toBe(1700000000000);
+    expect(loaded).toEqual({ kind: 'known', raw, ns: fb._parseUpdateTimeNs(raw) });
+    expect(fb._getCloudBaseline().lastCloudTs).toBe(Date.parse('2023-11-14T22:13:20.123Z'));
   });
 });
 
@@ -99,7 +104,8 @@ describe('sync rev state persistence', () => {
       _fb_cloud_sync_ts: 1600000000000,
     });
     globalThis.chrome = storage;
-    await fb._loadCloudSyncTs();
+    // Pre-1.0.5 state (ms key only) seeds _lastCloudTs for the legacy check.
+    await fb._loadCloudBaseline();
     expect(await fb._loadRevState()).toEqual({ editRev: 1, syncedRev: 0 });
     expect(storage._data).not.toHaveProperty('_fb_local_sync_ts');
     expect(storage._data._fb_edit_rev).toBe(1);
@@ -112,7 +118,8 @@ describe('sync rev state persistence', () => {
       _fb_local_sync_ts: 1500000000000,
       _fb_cloud_sync_ts: 1600000000000,
     });
-    await fb._loadCloudSyncTs();
+    // Pre-1.0.5 state (ms key only) seeds _lastCloudTs for the legacy check.
+    await fb._loadCloudBaseline();
     expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
   });
 

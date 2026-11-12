@@ -254,7 +254,7 @@ describe('_saveAuth', () => {
 });
 
 describe('_clearAuth', () => {
-  it('resets internal state and removes auth keys plus cloud sync ts from storage', async () => {
+  it('resets internal state and removes auth keys plus both cloud baseline keys from storage', async () => {
     const fb = loadFirebaseModule();
     const mock = createMockChromeStorage({
       _fb_refresh: 'refresh-token',
@@ -262,6 +262,7 @@ describe('_clearAuth', () => {
       _fb_email_verified: true,
       _fb_email: 'user@example.com',
       _fb_cloud_sync_ts: 123456789,
+      _fb_cloud_update_time: '1970-01-02T10:17:36.789Z',
     });
     globalThis.chrome = mock;
 
@@ -282,12 +283,14 @@ describe('_clearAuth', () => {
       '_fb_email_verified',
       '_fb_email',
       '_fb_cloud_sync_ts',
+      '_fb_cloud_update_time',
     ]);
     expect(mock._data).not.toHaveProperty('_fb_refresh');
     expect(mock._data).not.toHaveProperty('_fb_uid');
     expect(mock._data).not.toHaveProperty('_fb_email_verified');
     expect(mock._data).not.toHaveProperty('_fb_email');
     expect(mock._data).not.toHaveProperty('_fb_cloud_sync_ts');
+    expect(mock._data).not.toHaveProperty('_fb_cloud_update_time');
   });
 
   it('resets internal state and skips storage removal when storage is unavailable', async () => {

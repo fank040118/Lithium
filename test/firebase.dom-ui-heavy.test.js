@@ -1120,7 +1120,7 @@ describe('账号切换验证邮箱路径（C1 回归）', () => {
       globalThis.getSelectedEngine = () => ({ name: 'Google' });
 
       await fb._loadAuth();
-      await fb._loadCloudSyncTs();
+      await fb._loadCloudBaseline();   // ms key only: pre-1.0.5 migration state
       await fb._loadRevState();
 
       // 切出 A、登录未验证的 B，再从验证面板完成验证
@@ -1411,7 +1411,7 @@ describe('fbInit', () => {
 
     const _loadAuth = vi.fn(async () => {});
     const _loadRevState = vi.fn(async () => {});
-    const _loadCloudSyncTs = vi.fn(async () => {});
+    const _loadCloudBaseline = vi.fn(async () => {});
     const _updateSyncUI = vi.fn();
     const _bindSyncActionButtons = vi.fn();
     const _showAuthMode = vi.fn();
@@ -1432,7 +1432,7 @@ describe('fbInit', () => {
 
     globalThis._loadAuth = _loadAuth;
     globalThis._loadRevState = _loadRevState;
-    globalThis._loadCloudSyncTs = _loadCloudSyncTs;
+    globalThis._loadCloudBaseline = _loadCloudBaseline;
     globalThis._updateSyncUI = _updateSyncUI;
     globalThis._bindSyncActionButtons = _bindSyncActionButtons;
     globalThis._showAuthMode = _showAuthMode;
@@ -1451,7 +1451,7 @@ describe('fbInit', () => {
     globalThis.fbIsEmailVerified = fbIsEmailVerified;
     window.showSigninNotice = showSigninNotice;
 
-    return { fb, _loadAuth, _loadRevState, _loadCloudSyncTs, _updateSyncUI, _bindSyncActionButtons, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, _pullAfterSignIn, scheduleSyncToCloud, fbSignOut, fbIsSignedIn, fbIsEmailVerified, showSigninNotice };
+    return { fb, _loadAuth, _loadRevState, _loadCloudBaseline, _updateSyncUI, _bindSyncActionButtons, _showAuthMode, _showLoginOverlay, _updateVerifyEmailDisplay, _handleLogin, _handleSyncLoginClick, _closeDeleteAccountModal, fbGetEmail, fbRefreshEmailVerifiedStatus, syncFromCloud, _pullAfterSignIn, scheduleSyncToCloud, fbSignOut, fbIsSignedIn, fbIsEmailVerified, showSigninNotice };
   }
 
   it('shows signin notice and binds sync action buttons when not signed in', async () => {
@@ -1548,7 +1548,7 @@ describe('fbInit', () => {
     globalThis._updateSyncUI = _updateSyncUI;
     globalThis._loadAuth = vi.fn(async () => {});
     globalThis._loadRevState = vi.fn(async () => {});
-    globalThis._loadCloudSyncTs = vi.fn(async () => {});
+    globalThis._loadCloudBaseline = vi.fn(async () => {});
     globalThis._bindSyncActionButtons = vi.fn();
     globalThis._showAuthMode = vi.fn();
     globalThis._showLoginOverlay = vi.fn();
@@ -1618,7 +1618,7 @@ describe('_updateSyncUI conflict state', () => {
     expect(globalThis._fsGet).toHaveBeenCalled();
     expect(statusEl().textContent).toBe('sidebar.sync.status.conflict');
 
-    resolve({});
+    resolve({ updateTime: '2024-06-02T00:00:00.000000Z' });   // empty document
     await call;
   });
 

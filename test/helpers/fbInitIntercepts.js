@@ -18,7 +18,7 @@ export function cleanupFbInitIntercepts() {
 
   delete globalThis._loadAuth;
   delete globalThis._loadRevState;
-  delete globalThis._loadCloudSyncTs;
+  delete globalThis._loadCloudBaseline;
   delete globalThis._updateSyncUI;
   delete globalThis._bindSyncActionButtons;
   delete globalThis._showAuthMode;
