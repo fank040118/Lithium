@@ -1390,9 +1390,12 @@ describe('disabled states: local payload too large (D6)', () => {
 
     it('size recheck false: falls back to the inline error so the failure is never silent', async () => {
       const { fb } = arrangeTooLarge();
-      globalThis._localPayloadTooLarge = vi.fn(() => false);
+      // Oversized data but the size check says "fits": only the recheck's
+      // result (not a fixed assumption) may decide the branch.
+      globalThis.items = HUGE_ITEMS();
+      globalThis._isPayloadTooLarge = vi.fn(() => false);
       await fb._handleConflictChoice('local');
-      expect(globalThis._localPayloadTooLarge).toHaveBeenCalled();
+      expect(globalThis._isPayloadTooLarge).toHaveBeenCalled();
       expect(isHidden('sync-conflict-error')).toBe(false);
       expect($('sync-conflict-error').textContent).toBe('dialog.syncConflict.payloadTooLarge');
       expect(isHidden('sync-conflict-limit')).toBe(true);
@@ -1435,6 +1438,7 @@ describe('disabled states: cloud absent and too large together (D6, Q2)', () => 
     expect($('sync-conflict-defer').disabled).toBe(false);
     expect($('sync-conflict-signout').disabled).toBe(false);
     expect(isHidden('sync-conflict-signout-row')).toBe(false);
+    // (回) regression guard: no title tooltip (Q2); never set by the code.
     expect($('sync-conflict-use-local').hasAttribute('title')).toBe(false);
     expect($('sync-conflict-use-cloud').hasAttribute('title')).toBe(false);
   });
@@ -1493,8 +1497,8 @@ describe('disabled states: markup and wording', () => {
     expect(zh.cloudAbsent).toBe('云端数据已被删除或清空，可使用本地数据重新上传。');
     expect(en.cloudAbsent).toBe('The cloud data has been deleted or cleared. You can upload the local data again.');
     expect(zh.payloadTooLarge).toBe('本地数据超出 100KB 上传上限，无法使用本地。可先「稍后处理」精简自定义图标，再重新打开本窗口并选「使用本地」，或改选「使用云端」。');
-    expect(en.payloadTooLarge).toBe('Local data exceeds the 100 KB upload limit, so it can\'t be kept. Choose "Decide later", trim custom icons, then reopen this dialog and choose Use local, or choose "Use cloud".');
+    expect(en.payloadTooLarge).toBe('Local data exceeds the 100 KB upload limit, so it can\'t be kept. Choose "Decide later", trim custom icons, then reopen this dialog and choose "Use local", or choose "Use cloud".');
     expect(zh.cloudAbsentTooLarge).toBe('云端数据已被删除或清空，但本地数据超出上传上限。可先「稍后处理」精简自定义图标，再重新打开并选「使用本地」。');
-    expect(en.cloudAbsentTooLarge).toBe('The cloud data has been deleted or cleared, but the local data exceeds the upload limit. Choose "Decide later", trim custom icons, then reopen this dialog and choose Use local.');
+    expect(en.cloudAbsentTooLarge).toBe('The cloud data has been deleted or cleared, but the local data exceeds the upload limit. Choose "Decide later", trim custom icons, then reopen this dialog and choose "Use local".');
   });
 });

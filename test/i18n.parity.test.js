@@ -74,7 +74,7 @@ describe('upload-precondition sync texts', () => {
       'The cloud data just changed again. The details above have been updated; please review and choose again.'],
     // Reworded with the "Decide later" way out (conflict-dialog-defer, Q4).
     'dialog.syncConflict.payloadTooLarge': ['本地数据超出 100KB 上传上限，无法使用本地。可先「稍后处理」精简自定义图标，再重新打开本窗口并选「使用本地」，或改选「使用云端」。',
-      'Local data exceeds the 100 KB upload limit, so it can\'t be kept. Choose "Decide later", trim custom icons, then reopen this dialog and choose Use local, or choose "Use cloud".'],
+      'Local data exceeds the 100 KB upload limit, so it can\'t be kept. Choose "Decide later", trim custom icons, then reopen this dialog and choose "Use local", or choose "Use cloud".'],
   };
 
   it.each(Object.entries(REQUIRED))('%s has the agreed text in both languages', (key, [zhText, enText]) => {
