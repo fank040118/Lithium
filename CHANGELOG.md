@@ -9,6 +9,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- The conflict dialog can now be put off with "Decide later" (or Esc). It only closes the dialog: the conflict stays unresolved and automatic sync stays paused; click "Upload" in the sidebar to reopen it, and a page reload detects the conflict again. When reopened, the local side shows your latest data
+
 ### Fixed
 - A long-open tab could silently overwrite newer cloud data written by another device; uploads now carry a Firestore precondition and fall back to conflict detection when the cloud has changed
 - An upload could be sent while a pull was still in flight
