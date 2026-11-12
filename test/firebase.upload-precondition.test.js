@@ -134,6 +134,18 @@ describe('precondition helpers', () => {
     expect(fb._preconditionQuery({ exists: false })).toBe('?currentDocument.exists=false');
   });
 
+  it('_preconditionQuery rejects malformed input instead of guessing a precondition', () => {
+    const fb = loadFirebaseModule();
+    // Never silently exists=false, never the literal "undefined".
+    expect(() => fb._preconditionQuery({})).toThrow('invalid precondition');
+    expect(() => fb._preconditionQuery(undefined)).toThrow('invalid precondition');
+    expect(() => fb._preconditionQuery({ exists: true })).toThrow('invalid precondition');
+    expect(() => fb._preconditionQuery({ updateTime: undefined })).toThrow('invalid precondition updateTime');
+    expect(() => fb._preconditionQuery({ updateTime: null })).toThrow('invalid precondition updateTime');
+    expect(() => fb._preconditionQuery({ updateTime: 123 })).toThrow('invalid precondition updateTime');
+    expect(() => fb._preconditionQuery({ updateTime: '' })).toThrow('invalid precondition updateTime');
+  });
+
   it('_docUrl defaults to the signed-in uid and accepts an explicit one', async () => {
     const fb = loadFirebaseModule();
     await setupSignedInFirebase(fb);

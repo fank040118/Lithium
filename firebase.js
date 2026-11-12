@@ -646,9 +646,25 @@ function _preconditionFromBaseline(b) {
 }
 
 // Query string carrying a precondition; the raw updateTime is sent verbatim.
+// Only the two well-formed shapes are accepted: anything else (no updateTime,
+// undefined, a non-string or empty value) is a programming error and must
+// never silently become exists=false or the literal "undefined".
 function _preconditionQuery(pre) {
-  if ('updateTime' in pre) return '?currentDocument.updateTime=' + encodeURIComponent(pre.updateTime);
-  return '?currentDocument.exists=false';
+  if (pre && 'updateTime' in pre) {
+    if (typeof pre.updateTime !== 'string' || pre.updateTime === '') {
+      throw new Error('invalid precondition updateTime');
+    }
+    return '?currentDocument.updateTime=' + encodeURIComponent(pre.updateTime);
+  }
+  if (pre && pre.exists === false) return '?currentDocument.exists=false';
+  throw new Error('invalid precondition');
+}
+
+// Choose-local's precondition (spec §5.2, §7.3): the cloud version recorded in
+// the pending conflict, captured when the choice was queued. A 404 sends
+// exists=false; an existing document (with or without fields) its raw string.
+function _preconditionFromPending({ cloudState, cloudRaw }) {
+  return cloudState === 'not-found' ? { exists: false } : { updateTime: cloudRaw };
 }
 
 // PATCH body for a sync snapshot (whole-document replace, no updateMask).
@@ -961,10 +977,41 @@ function _compareSnapshots(local, cloud) {
 // Whole-object assignment, NOT a partial merge: callers always pass the full
 // info shape { isAccountSwitch, localShortcutCount, localFolderCount,
 // cloudShortcutCount, cloudFolderCount, localEditTime (ms, 0 = unknown),
-// cloudUpdateTime, trigger } (see the syncFromCloud conflict branch), so any omitted field here
-// would silently drop from the pending state.
+// cloudUpdateTime (ms, 0 = none), cloudRaw, cloudState, trigger } (built only
+// by _recordConflict), so any omitted field here would silently drop from the
+// pending state.
+//   cloudState: 'doc' (a document with fields; how a conflict first appears),
+//     'empty' (a document without fields) or 'not-found' (GET 404) — the
+//     latter two are the cloud-absent marks of spec §7.3.
+//   cloudRaw: that GET's raw updateTime; null for 'not-found'.
 function _setConflictPending(info) {
   _conflictPending = info;
+}
+
+// Records (or updates) the pending conflict from a pull that saw the cloud at
+// `cloudRaw` / `cloudState` and did not land it. The local side is recounted
+// from the current state; the hook fires from the executor (ctx.notifyConflict).
+function _recordConflict(ctx, { cloudCounts, cloudUpdateTime, cloudRaw, cloudState, trigger }) {
+  // Cancel any queued automatic upload: the local state must not be PATCHed
+  // over the cloud before the conflict is resolved.
+  clearTimeout(_syncTimer);
+  _syncTimer = null;
+  const localCounts = _countSyncItems(items);
+  _setConflictPending({
+    isAccountSwitch: _needsSwitchPull(),
+    localShortcutCount: localCounts.shortcuts,
+    localFolderCount: localCounts.folders,
+    cloudShortcutCount: cloudCounts.shortcuts,
+    cloudFolderCount: cloudCounts.folders,
+    localEditTime: _localEditTs,
+    cloudUpdateTime,
+    cloudRaw,
+    cloudState,
+    trigger,
+  });
+  ctx.notifyConflict = true;
+  _syncState = 'idle';
+  _updateSyncUI();
 }
 
 function _clearConflictPending() {
@@ -994,74 +1041,145 @@ function _notifySyncConflict(info) {
 
 // Resolve a pending sync conflict by explicit user choice:
 //   'cloud' — apply the cloud snapshot unconditionally (drops local edits).
-//   'local' — force-upload the local state (keeps local edits).
-// Returns { ok: boolean, code?: string } so the host can react to each failure
-// mode. Both branches are fail-safe: a failure never silently picks a winner.
+//   'local' — upload the local state over the cloud version the user saw.
+// Both are executor tasks (spec §5.1); this entry point only validates and
+// queues. Returns { ok: boolean, code?: string } so the host can react to each
+// failure mode. Both branches are fail-safe: a failure never silently picks a
+// winner.
 async function fbResolveSyncConflict(choice) {
+  // From here to _enqueueSync is one synchronous block (no await): the pending
+  // conflict choose-local captures is the one these checks saw.
   if (!fbIsSignedIn() || !fbIsEmailVerified()) {
     return { ok: false, code: 'not-signed-in' };
   }
-  if (!fbGetSyncConflict()) {
+  if (!_conflictPending) {
     return { ok: false, code: 'no-conflict' };
   }
   if (choice !== 'cloud' && choice !== 'local') {
     return { ok: false, code: 'invalid-choice' };
   }
 
-  if (choice === 'cloud') {
-    // Capture the identity this resolution belongs to: a sign-out/sign-in while
-    // the GET is in flight must not be treated as "empty cloud" (which would
-    // queue an import upload against the new session).
-    const epoch = _authEpoch;
-    let pull;
-    try {
-      pull = await _runPullTask({ mode: 'resolve-cloud', trigger: 'resolve-cloud' });
-    } catch (e) {
-      // A failed pull says nothing about the cloud state: keep the conflict
-      // pending so the user can retry (or pick 'local').
-      return { ok: false, code: e?.code || 'firestore' };
-    }
-    if (epoch !== _authEpoch) {
-      // The session changed while resolving; the pull already dropped the
-      // late response with zero writes. Not "no cloud data": no import upload.
-      return { ok: false, code: 'session-changed' };
-    }
-    if (pull.outcome === 'cloud-empty') {
-      // The cloud document no longer exists (or is empty); the pull already
-      // cleared the conflict and set the baseline. Import the local state.
-      scheduleSyncToCloud();
-      return { ok: true, code: 'no-cloud-data' };
-    }
-    // Any other non-landing outcome (session-changed, storage-unavailable,
-    // baseline-cleared, ...) wrote nothing and says nothing about the cloud:
-    // report it as is, never as "no cloud data".
-    if (!pull.applied) return { ok: false, code: pull.outcome };
-    return { ok: true };
+  let task;
+  if (choice === 'local') {
+    // The cloud version the user compared against; checked again at dequeue.
+    const captured = { cloudState: _conflictPending.cloudState, cloudRaw: _conflictPending.cloudRaw };
+    task = _enqueueSync({
+      kind: 'resolve-local', auto: false, captured,
+      run: (ctx) => _resolveLocalTask(ctx, captured).catch(_markSyncErrorAndThrow),
+    });
+  } else {
+    task = _enqueueSync({
+      kind: 'resolve-cloud', auto: false,
+      run: (ctx) => _resolveCloudTask(ctx).catch(_markSyncErrorAndThrow),
+    });
   }
 
-  // choice === 'local'
   let r;
   try {
-    r = await syncToCloud({ force: true });
+    r = await task;
   } catch (e) {
-    // The user's choice is recorded; a failed upload follows the existing
-    // error path (dirty state + retry on next edit). Clear the conflict so the
-    // automatic upload path resumes rather than staying paused forever.
-    _clearConflictPending();
+    // Errors keep the conflict pending (choose-local §6.4; a failed choose-cloud
+    // GET), except a failed choose-cloud import, whose pull already resolved it.
     return { ok: false, code: e?.code || 'firestore' };
   }
-  if (r?.skipped) {
-    // `skipped` is a fail-safe union, not solely the storage-load firewall:
-    // the upload task also skips when the identity changed (the epoch check
-    // before/after the PATCH) or the queued task was dropped by a session
-    // reset. Treating every such skip as storage-read-only keeps the
-    // conflict pending in all three cases — the safe direction — even though
-    // the label is narrower than the actual cause.
-    return { ok: false, code: 'storage-read-only' };
+  if (r.resolved) return r.code ? { ok: true, code: r.code } : { ok: true };
+  // §5.4: a pull that ended in (or updated) the conflict is "cloud changed" to
+  // the dialog; every other reason is its own code.
+  return { ok: false, code: r.reason === 'conflict' ? 'cloud-changed' : r.reason };
+}
+
+// Choose-local task body (spec §5.1, §5.2, §6.2, §6.4, §7.3), after the
+// dequeue guards (which already re-checked the pending conflict against
+// `captured`). Exempt from switch-pending, the clean skip and the §8 "stored
+// value differs" row; not from the firewall, deletion, epoch or a cleared
+// storage. Every failure keeps the conflict pending; only a successful upload
+// (an import included) clears it.
+// Resolves { resolved: true } | { resolved: false, reason }; other errors reject.
+async function _resolveLocalTask(ctx, captured) {
+  const stop = (reason) => ({ resolved: false, reason });
+  if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
+    return stop('storage-read-only');
   }
-  // Success: _pushCore clears the pending conflict at the end of its
-  // own success path (after the upload succeeded and the baseline was saved).
-  return { ok: true };
+  // §8 re-read right before the request; only the cleared rows apply.
+  const read = await _readSyncStorage();
+  if (!ctx.alive()) return stop('session-changed');
+  ctx.storageRead = read;
+  const decision = _decideUploadStorage(read, _cloudBaseline, { exemptValueDiff: true });
+  if (decision !== 'proceed') return stop(decision);
+
+  const r = await _pushWithRecovery(ctx, {
+    precondition: _preconditionFromPending(captured),
+    compareWhenClean: true,
+    afterRecoveryPull: _resolveLocalAfterPull,
+  });
+  // up-to-date: the recovery pull found the same content and resolved it.
+  if (r.uploaded || r.reason === 'up-to-date') return { resolved: true };
+  return stop(r.reason);
+}
+
+// Choose-local's step after a recovery pull. A cloud-absent mark (404 or
+// empty document, still pending) retries against the new mark: the import,
+// which clears the pending only once it succeeds (§6.2). Everything else
+// follows the upload rules: a still-different cloud stops with conflict, a
+// landing that resolved the conflict stops with up-to-date.
+function _resolveLocalAfterPull(pull) {
+  if (pull.outcome === 'conflict' && pull.cloud && _conflictPending) {
+    return { precondition: _preconditionFromPending(_conflictPending) };
+  }
+  return _uploadAfterPull(pull);
+}
+
+// Choose-cloud task body (spec §5.1, §7.3), after the dequeue guards (which
+// already re-checked that a conflict is pending). Lands the cloud side
+// unconditionally — the landing is not limited by the firewall (it lifts it).
+// A cloud with no data resolves the conflict and imports the local state in
+// this same hold.
+// Resolves { resolved: true, code? } | { resolved: false, reason }; a failed
+// GET or import rejects.
+async function _resolveCloudTask(ctx) {
+  _syncState = 'downloading';
+  _lastSyncError = null;
+  _updateSyncUI();
+  const pull = await _pullCore(ctx, { mode: 'resolve-cloud', trigger: 'resolve-cloud' });
+  if (pull.outcome === 'cloud-empty') return _resolveCloudImport(ctx);
+  if (!pull.applied) return { resolved: false, reason: pull.outcome };
+  return { resolved: true };
+}
+
+// The import of choose-cloud when the cloud has no data. The pull has cleared
+// the pending conflict and set the baseline (I2). The import is guarded like
+// choose-local (firewall, deletion, §8 cleared rows) and sent once with the
+// precondition of that baseline; a failure is reported, not recovered.
+async function _resolveCloudImport(ctx) {
+  const stop = (reason) => ({ resolved: false, reason });
+  // The firewall: memory may hold defaults that must never be imported.
+  if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
+    return stop('storage-read-only');
+  }
+  if (_accountDeleting) return stop('account-deleting');
+  const read = await _readSyncStorage();
+  if (!ctx.alive()) return stop('session-changed');
+  ctx.storageRead = read;
+  const decision = _decideUploadStorage(read, _cloudBaseline, { exemptValueDiff: true });
+  if (decision !== 'proceed') return stop(decision);
+  _syncState = 'uploading';
+  _updateSyncUI();
+  const r = await _pushCore(ctx);
+  if (!r.uploaded) return stop(r.reason);
+  return { resolved: true, code: 'no-cloud-data' };
+}
+
+// Sets the sync error state for a failing task body before it settles, so the
+// next task's own state is never overwritten by this one's failure.
+function _markSyncError(err) {
+  _syncState = 'error';
+  _lastSyncError = err;
+  _updateSyncUI();
+}
+
+function _markSyncErrorAndThrow(err) {
+  _markSyncError(err);
+  throw err;
 }
 
 // ── Sync executor ──
@@ -1110,33 +1228,37 @@ async function _drainSyncQueue() {
       epoch: task.epoch,
       alive: () => task.epoch === _authEpoch,
       budget: { baselineGet: 1, recoveryGet: 1, patch: 2 },
+      // Set by a task (or its guard) that recorded or re-surfaces the pending
+      // conflict; notifyTrigger optionally relabels the hook call only.
       notifyConflict: false,
+      notifyTrigger: null,
       storageRead: null,
     };
+    let settle;
     try {
-      const skip = await _dequeueGuard(task, ctx);
-      if (skip) {
-        task.resolve(skip);
-        continue;
-      }
-      const result = await task.run(ctx);
-      // The conflict hook is the task's last step: fired, never awaited, and
-      // nothing writes after it (spec §7.1).
-      if (ctx.notifyConflict && ctx.alive() && _conflictPending) {
-        _notifySyncConflict(_conflictPending);
-      }
-      task.resolve(result);
+      const result = (await _dequeueGuard(task, ctx)) || (await task.run(ctx));
+      settle = () => task.resolve(result);
     } catch (err) {
-      task.reject(err);
+      settle = () => task.reject(err);
     }
+    // The conflict hook is the task's last step, before it settles: fired,
+    // never awaited, and nothing writes after it (spec §7.1). Task bodies
+    // never call the hook themselves.
+    if (ctx.notifyConflict && ctx.alive() && _conflictPending) {
+      _notifySyncConflict({ ..._conflictPending, trigger: ctx.notifyTrigger || _conflictPending.trigger });
+    }
+    settle();
   }
   _syncCurrent = null;
 }
 
 // The skip result of a task that does not run, in its kind's result shape:
-// a PullResult for pulls, a PushResult otherwise.
+// a PullResult for pulls, a resolve result for the conflict choices, a
+// PushResult otherwise.
 function _skipResult(kind, reason) {
-  return kind === 'pull' ? { applied: false, outcome: reason } : { uploaded: false, reason };
+  if (kind === 'pull') return { applied: false, outcome: reason };
+  if (kind === 'resolve-local' || kind === 'resolve-cloud') return { resolved: false, reason };
+  return { uploaded: false, reason };
 }
 
 const _UPLOAD_TASK_KINDS = new Set(['upload', 'resolve-local']);
@@ -1145,7 +1267,8 @@ const _UPLOAD_TASK_KINDS = new Set(['upload', 'resolve-local']);
 // epoch check, step 1, runs before this in _drainSyncQueue). Returns the skip
 // result to settle the task with, or null to run it; throws not-signed-in for
 // upload-class tasks. Step 5 (switch, clean, firewall, Unknown baseline, §8
-// comparison) belongs to the upload body (_uploadTask).
+// comparison) belongs to the task bodies (_uploadTask, _resolveLocalTask,
+// _resolveCloudImport).
 async function _dequeueGuard(task, ctx) {
   const skip = (reason) => _skipResult(task.kind, reason);
   const isUpload = _UPLOAD_TASK_KINDS.has(task.kind);
@@ -1163,11 +1286,28 @@ async function _dequeueGuard(task, ctx) {
     if (isUpload) throw new CloudSyncError('not-signed-in', 0);
     return skip('not-signed-in');
   }
-  // 4. Pending conflict. An auto upload must not run over it; a pull is not
-  // intercepted (its landing is constrained instead). The manual upload's
-  // re-surfacing of the dialog stays at its entry point (_handleSyncBtn)
-  // until the queued form lands (Task 8).
-  if (task.kind === 'upload' && task.auto && _conflictPending) return skip('conflict-pending');
+  // 4. Pending conflict. A pull is not intercepted (its landing is
+  // constrained instead, see _pullCore).
+  if (task.kind === 'upload' && _conflictPending) {
+    // An auto upload must not run over it; a manual one re-surfaces the
+    // dialog (fired by the executor, labelled manual-upload) without a request.
+    if (!task.auto) {
+      ctx.notifyConflict = true;
+      ctx.notifyTrigger = 'manual-upload';
+    }
+    return skip('conflict-pending');
+  }
+  // The conflict choices need the conflict still pending; choose-local also
+  // needs the cloud version it captured at enqueue (a pull queued ahead may
+  // have updated it — the dialog was refreshed by that pull).
+  if (task.kind === 'resolve-local' || task.kind === 'resolve-cloud') {
+    if (!_conflictPending) return skip('no-conflict');
+    if (task.kind === 'resolve-local'
+        && (_conflictPending.cloudState !== task.captured.cloudState
+          || _conflictPending.cloudRaw !== task.captured.cloudRaw)) {
+      return skip('conflict');
+    }
+  }
   return null;
 }
 
@@ -1221,8 +1361,9 @@ async function _adoptCloudVersion(ctx, baseline, { syncedRev = null } = {}) {
 // 1–4): the step-5 guards, the §8 storage re-read, a baseline or recovery
 // pull when it calls for one, then the PATCH with its recovery pull and retry
 // (_pushWithRecovery).
-// manual: explicit user upload (manual button / choose-local), which bypasses
-// the switch-pending and clean guards on purpose; the firewall still applies.
+// manual: explicit user upload (the manual button), which bypasses the
+// switch-pending and clean guards on purpose; the firewall still applies.
+// (Choose-local has its own body, _resolveLocalTask.)
 async function _uploadTask(ctx, { manual }) {
   if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
 
@@ -1294,16 +1435,30 @@ function _uploadStopAfterPull(pull) {
   return null;
 }
 
+// _pushWithRecovery's default step after its recovery pull: stop as
+// _uploadStopAfterPull says, or retry against the baseline that pull wrote.
+function _uploadAfterPull(pull) {
+  const stop = _uploadStopAfterPull(pull);
+  return stop ? { stop } : { precondition: undefined };
+}
+
 // PATCH with recovery (spec §6.2, §7.5), shared by every task that uploads.
 // A precondition-class rejection is handled here, never thrown and never
 // toasted: one forced recovery pull in this same hold, then, when its outcome
 // still calls for an upload, one retry PATCH against the baseline that pull
 // wrote. Each step is bounded by ctx.budget; running out returns
 // retry-exhausted with the local state left dirty. Other errors propagate.
-// precondition: explicit precondition for the first PATCH only (later
-// attempts always use the baseline the recovery pull established).
+// precondition: explicit precondition for the first PATCH (undefined: the
+// in-memory baseline at send time).
 // compareWhenClean: passed to the recovery pull (manual upload, choose-local).
-async function _pushWithRecovery(ctx, { precondition, compareWhenClean = false } = {}) {
+// afterRecoveryPull(pull): what follows the recovery pull — { stop: PushResult }
+// to stop, or { precondition } for the retry (undefined: the baseline that
+// pull wrote). Choose-local retries a cloud-absent mark from its pending
+// conflict instead, since a pull never moves the baseline while one is
+// pending (spec §7.3).
+async function _pushWithRecovery(ctx, {
+  precondition, compareWhenClean = false, afterRecoveryPull = _uploadAfterPull,
+} = {}) {
   const stopIdle = (reason) => {
     _syncState = 'idle';
     _updateSyncUI();
@@ -1320,7 +1475,6 @@ async function _pushWithRecovery(ctx, { precondition, compareWhenClean = false }
     } catch (err) {
       if (!_isPreconditionError(err?.code)) throw err;
     }
-    pre = undefined;
     // The rejected PATCH may have landed after a session change: the recovery
     // pull would then read (and write for) the new account.
     if (!ctx.alive()) return stopIdle('session-changed');
@@ -1328,18 +1482,22 @@ async function _pushWithRecovery(ctx, { precondition, compareWhenClean = false }
     ctx.budget.recoveryGet -= 1;
     _syncState = 'downloading';
     _updateSyncUI();
+    // A whole PATCH round trip separates this pull from the body's §8 re-read
+    // (another tab may have signed out meanwhile), so it re-reads storage
+    // itself before landing or writing keys back.
     const pull = await _pullCore(ctx, {
-      mode: 'forced', trigger: 'upload-precondition', compareWhenClean, reuseStorageRead: true,
+      mode: 'forced', trigger: 'upload-precondition', compareWhenClean,
     });
-    const stop = _uploadStopAfterPull(pull);
-    if (stop) return stop;
+    const next = afterRecoveryPull(pull);
+    if (next.stop) return next.stop;
+    pre = next.precondition;
   }
 }
 
 // One PATCH of the current local state plus the success bookkeeping. No
 // guards: callers (task bodies) decide whether an upload may run. It never
 // reads storage: the §8 re-read and decision belong to the calling body
-// (_uploadTask; later choose-local and the choose-cloud import, whose
+// (_uploadTask, _resolveLocalTask and _resolveCloudImport, whose
 // exemptValueDiff a check here would override). Its I4 block only follows
 // that re-read and the token await.
 // precondition: explicit { updateTime } | { exists: false }; defaults to the
@@ -1407,34 +1565,25 @@ async function _pushCore(ctx, { precondition } = {}) {
   return { uploaded: true, ts: serverMs };
 }
 
-// options.force: manual upload (not mergeable, bypasses the switch-pending,
-// conflict-pending and clean guards). Otherwise an auto upload that merges
-// with a queued auto upload.
+// options.force: manual upload (not mergeable, bypasses the switch-pending
+// and clean guards; a pending conflict re-surfaces the dialog instead and
+// skips with conflict-pending). Otherwise an auto upload that merges with a
+// queued auto upload.
 // Resolves { ok: true, skipped, reason?, ts? }; rejects with CloudSyncError.
 function syncToCloud(options = {}) {
   const { force = false } = options;
-  const markError = (err) => {
-    _syncState = 'error';
-    _lastSyncError = err;
-    _updateSyncUI();
-  };
   // Checked before queueing (not only at dequeue) so a signed-out caller gets
   // an immediate rejection instead of waiting behind other tasks.
   if (!fbIsSignedIn() || !fbIsEmailVerified()) {
     const err = new CloudSyncError('not-signed-in', 0);
-    markError(err);
+    _markSyncError(err);
     return Promise.reject(err);
   }
   const manual = !!force;
   return _enqueueSync({
     kind: 'upload',
     auto: !manual,
-    // The error state is set inside the task, before it settles, so the next
-    // task's own state is never overwritten by this one's failure.
-    run: (ctx) => _uploadTask(ctx, { manual }).catch((err) => {
-      markError(err);
-      throw err;
-    }),
+    run: (ctx) => _uploadTask(ctx, { manual }).catch(_markSyncErrorAndThrow),
   }).then((r) => (r.uploaded
     ? { ok: true, skipped: false, ts: r.ts }
     : { ok: true, skipped: true, reason: r.reason }));
@@ -1444,7 +1593,11 @@ function syncToCloud(options = {}) {
 // callable from any task body. A session change after any await exits with
 // zero further writes. A detected conflict sets the pending record and
 // ctx.notifyConflict; the executor fires the hook after the task's last step.
-// Returns PullResult { applied, outcome, cloud? }.
+// While a conflict is pending (any mode but resolve-cloud) the pending rules
+// of spec §7.3 apply: see pendingRules below.
+// Returns PullResult { applied, outcome, cloud? }; cloud ('not-found' |
+// 'empty') comes with cloud-empty, and with a conflict that marked the
+// pending cloud-absent.
 // compareWhenClean: compare contents even when the local state is clean, so a
 // difference becomes a pending conflict instead of a silent landing (manual
 // upload's baseline pull, spec §5.1).
@@ -1476,6 +1629,22 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseSt
     return { applied: false, outcome: cleared };
   }
 
+  // While a conflict is pending, every pull but choose-cloud's follows the
+  // pending rules (spec §7.3): it never lands a different cloud, never moves
+  // the baseline and never marks the local state clean; only the same content
+  // resolves the conflict (through the ordinary landing below).
+  const pendingRules = !!_conflictPending && mode !== 'resolve-cloud';
+
+  // Pending + cloud without data: mark the pending cloud-absent (404 and an
+  // empty document kept apart, choose-local needs either precondition) and
+  // refresh the dialog. Choose-local's import resolves it later (§6.2).
+  const markCloudAbsent = (cloudState, cloudRaw, cloudUpdateTime) => {
+    _recordConflict(ctx, {
+      cloudCounts: { shortcuts: 0, folders: 0 }, cloudUpdateTime, cloudRaw, cloudState, trigger,
+    });
+    return { applied: false, outcome: 'conflict', cloud: cloudState };
+  };
+
   // Nothing to pull: the signed-in account's state is now considered the
   // baseline, so subsequent automatic uploads are allowed again. A 404
   // (Absent) and an existing document without fields (Known) are distinct
@@ -1488,7 +1657,9 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseSt
     return { applied: false, outcome: 'cloud-empty', cloud };
   };
 
-  if (!doc) return cloudEmpty({ kind: 'absent' }, 'not-found');
+  if (!doc) {
+    return pendingRules ? markCloudAbsent('not-found', null, 0) : cloudEmpty({ kind: 'absent' }, 'not-found');
+  }
 
   // An existing document always carries an updateTime; without a usable one
   // there is no version to base later uploads on, so treat it as a server
@@ -1500,13 +1671,17 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseSt
   }
   const cloudTsMs = _updateTimeToMs(cloudUpdateTime);
 
-  if (!doc.fields) return cloudEmpty(cloudBaseline, 'empty');
+  if (!doc.fields) {
+    return pendingRules
+      ? markCloudAbsent('empty', cloudUpdateTime, cloudTsMs)
+      : cloudEmpty(cloudBaseline, 'empty');
+  }
 
   // Cloud unchanged since the baseline (spec §4): skip, adopting the GET's raw
   // string as the baseline (this completes the §9 migration). The local state
   // is not marked clean: dirty edits are re-queued for upload. Not taken while
   // a conflict is pending; the content comparison below decides instead.
-  if (mode === 'auto' && !_conflictPending && _isCloudUnchanged(cloudUpdateTime)) {
+  if (mode === 'auto' && !pendingRules && _isCloudUnchanged(cloudUpdateTime)) {
     _syncState = 'idle';
     _updateSyncUI();
     if (!(await _adoptCloudVersion(ctx, cloudBaseline))) return sessionChanged();
@@ -1519,36 +1694,28 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseSt
   const f = doc.fields;
 
   // Conflict detection: when the local state is dirty (or compareWhenClean is
-  // set) and differs from the cloud snapshot, do not silently pick a winner — record the conflict and
-  // pause automatic uploads until the user resolves it. resolve-cloud skips
-  // detection entirely (it applies the cloud side by explicit user choice).
+  // set, or a conflict is pending) and differs from the cloud snapshot, do not
+  // silently pick a winner — record (or update) the conflict and pause
+  // automatic uploads until the user resolves it. A pending conflict is
+  // compared even over a clean local state: only choose-cloud may land a
+  // different cloud. resolve-cloud skips detection entirely (it applies the
+  // cloud side by explicit user choice).
   let skippedFields = [];
-  if (mode !== 'resolve-cloud' && (_isDirty() || compareWhenClean)) {
-    const localSnap = _buildSyncSnapshot();
+  if (mode !== 'resolve-cloud' && (pendingRules || _isDirty() || compareWhenClean)) {
     const cloudSnap = _cloudSnapshotFromFields(f);
-    const { equal, skippedFields: skipped } = _compareSnapshots(localSnap, cloudSnap);
+    const { equal, skippedFields: skipped } = _compareSnapshots(_buildSyncSnapshot(), cloudSnap);
     if (!equal) {
-      // Cancel any queued automatic upload: the local state must not be
-      // PATCHed over the cloud before the conflict is resolved.
-      clearTimeout(_syncTimer);
-      _syncTimer = null;
-      const localCounts = _countSyncItems(localSnap.items);
-      const cloudCounts = _countSyncItems(cloudSnap.items);
-      _setConflictPending({
-        isAccountSwitch: _needsSwitchPull(),
-        localShortcutCount: localCounts.shortcuts,
-        localFolderCount: localCounts.folders,
-        cloudShortcutCount: cloudCounts.shortcuts,
-        cloudFolderCount: cloudCounts.folders,
-        localEditTime: _localEditTs,
+      _recordConflict(ctx, {
+        cloudCounts: _countSyncItems(cloudSnap.items),
         cloudUpdateTime: cloudTsMs,
+        cloudRaw: cloudUpdateTime,
+        cloudState: 'doc',
         trigger,
       });
-      ctx.notifyConflict = true;
-      _syncState = 'idle';
-      _updateSyncUI();
       return { applied: false, outcome: 'conflict' };
     }
+    // Same content: land it as usual, which clears the pending conflict and
+    // closes the dialog with the revAtApply rule below (spec §6.5).
     skippedFields = skipped;
   }
 
@@ -1680,14 +1847,7 @@ function _runPullTask(options = {}) {
       _syncState = 'downloading';
       _lastSyncError = null;
       _updateSyncUI();
-      try {
-        return await _pullCore(ctx, { mode, trigger });
-      } catch (e) {
-        _syncState = 'error';
-        _lastSyncError = e;
-        _updateSyncUI();
-        throw e;
-      }
+      return _pullCore(ctx, { mode, trigger }).catch(_markSyncErrorAndThrow);
     },
   });
 }
@@ -1735,8 +1895,10 @@ async function markLocalCloudDataChanged(options = {}) {
 }
 
 // Shared "pull after sign-in" entry point for interactive login, email
-// verification and startup restore: pull the cloud snapshot and, when the
-// cloud explicitly has no data, queue an upload of the local state instead.
+// verification and startup restore: pull the cloud snapshot and, only when
+// the pull reports that the cloud has no data (cloud-empty), queue an upload
+// of the local state. Every other result — a session change, a storage-check
+// skip, a conflict — queues nothing (spec §10.2).
 // The pull is forced whenever the persisted sync baseline belongs to another
 // account (see _needsSwitchPull), so the signed-in account's document always
 // wins over whatever a previous account left on this device.
@@ -1746,9 +1908,9 @@ async function markLocalCloudDataChanged(options = {}) {
 async function _pullAfterSignIn({ trigger = 'sign-in', force = false } = {}) {
   if (!fbIsSignedIn() || !_uid) return;
   const forced = force || _needsSwitchPull();
-  let hadCloudData = false;
+  let pull;
   try {
-    hadCloudData = await syncFromCloud(forced ? { mode: 'forced', trigger } : { trigger });
+    pull = await _runPullTask(forced ? { mode: 'forced', trigger } : { trigger });
   } catch (err) {
     // Fail-safe: a failed pull says nothing about the cloud state, so it must
     // not be treated as "no cloud data". Never queue an upload here — after an
@@ -1758,7 +1920,7 @@ async function _pullAfterSignIn({ trigger = 'sign-in', force = false } = {}) {
     console.error('[firebase] initial pull failed', err);
     return;
   }
-  if (!hadCloudData && !_conflictPending) scheduleSyncToCloud();
+  if (pull.outcome === 'cloud-empty') scheduleSyncToCloud();
 }
 
 // ── UI ──────────────────────────────────────────────────────
@@ -1788,20 +1950,16 @@ async function _handleSyncBtn(direction) {
 
   try {
     if (direction === 'upload') {
-      // While a conflict is pending, the upload button re-surfaces the conflict
-      // instead of force-uploading: the local state disagrees with the cloud
-      // and must not overwrite it until the user explicitly picks a side.
-      if (fbGetSyncConflict()) {
-        _notifySyncConflict({ ..._conflictPending, trigger: 'manual-upload' });
-        return;
-      }
       // The forced upload would only be skipped silently by _uploadTask's
       // firewall guard; stop here with a user-visible explanation instead of uploading defaults.
       if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
         showToast(t('toast.syncStorageReadOnly'), 'error');
         return;
       }
-      await syncToCloud({ force: true });
+      const r = await syncToCloud({ force: true });
+      // A pending conflict (checked when the task dequeues) re-surfaces the
+      // dialog instead of uploading; the dialog takes over, no toast.
+      if (r?.skipped && r.reason === 'conflict-pending') return;
       showToast(t('toast.syncUploaded'), 'default');
     } else {
       // 关键：手动拉取前取消尚未执行的自动上传；正在执行的任务由同步队列串行等待
