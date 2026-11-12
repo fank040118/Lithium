@@ -538,6 +538,70 @@ function _getCloudBaseline() {
   return { baseline: { ..._cloudBaseline }, lastCloudTs: _lastCloudTs };
 }
 
+// ── Storage re-read (spec §8) ──
+// Another tab of this extension shares chrome.storage.local: it may have
+// signed out (auth and baseline keys removed) or uploaded (new baseline
+// written) since this page loaded its baseline into memory.
+
+// StorageRead = { ok: false }
+//             | { ok: true, authCleared, baselinePresent, stored, storedValid }
+// stored is the I1-checked baseline of the two keys; storedValid is false when
+// it is Unknown (missing raw string, invalid value, or failed I1 check).
+async function _readSyncStorage() {
+  const s = _fbStore();
+  if (!s) return { ok: false };
+  let d;
+  try {
+    d = (await s.get(['_fb_refresh', FB_CLOUD_UPDATE_TIME_KEY, FB_CLOUD_SYNC_TS_KEY])) || {};
+  } catch {
+    return { ok: false };
+  }
+  const stored = _baselineFromStorage(d[FB_CLOUD_UPDATE_TIME_KEY], d[FB_CLOUD_SYNC_TS_KEY]).baseline;
+  return {
+    ok: true,
+    authCleared: !d._fb_refresh,
+    baselinePresent: FB_CLOUD_UPDATE_TIME_KEY in d || FB_CLOUD_SYNC_TS_KEY in d,
+    stored,
+    storedValid: stored.kind !== 'unknown',
+  };
+}
+
+// Absent and Absent, or Known and Known at the same nanosecond.
+function _sameBaseline(a, b) {
+  if (a.kind === 'absent' && b.kind === 'absent') return true;
+  return a.kind === 'known' && b.kind === 'known' && a.ns === b.ns;
+}
+
+// The first two rows of the §8 table, which every task checks before it
+// lands or writes keys back. Returns the skip reason, or null to go on.
+function _checkStorageForWrite(read) {
+  if (!read.ok) return 'storage-unavailable';
+  if (read.authCleared) return 'baseline-cleared';
+  return null;
+}
+
+// The §8 table for an upload body, top to bottom, first match wins. Pure.
+// mem: the in-memory baseline. exemptValueDiff (choose-local and the import
+// of choose-cloud): only the cleared rows apply; a differing or invalid
+// stored value does not trigger a recovery pull.
+// Deviation (plan, preflight D3): with exemptValueDiff an Unknown in-memory
+// baseline returns 'proceed' instead of 'baseline-pull' — choose-local sends
+// the raw string it captured at enqueue time, so the spec's "cannot happen"
+// cell is left to its caller (which then runs the baseline pull itself when
+// it has no captured precondition) rather than decided here.
+function _decideUploadStorage(read, mem, { exemptValueDiff = false } = {}) {
+  const cleared = _checkStorageForWrite(read);
+  if (cleared) return cleared;
+  if (mem.kind === 'unknown') return exemptValueDiff ? 'proceed' : 'baseline-pull';
+  // Baseline keys gone while memory still holds one: another tab signed out.
+  // Pulling would write the keys back, so stop without any request.
+  if (!read.baselinePresent) return 'baseline-cleared';
+  if (!read.storedValid || !_sameBaseline(read.stored, mem)) {
+    return exemptValueDiff ? 'proceed' : 'recovery-pull';
+  }
+  return 'proceed';
+}
+
 // §4: the cloud is unchanged only when the GET time equals the Known baseline
 // in nanoseconds, or, in the migration state, equals the old ms value.
 function _isCloudUnchanged(raw) {
@@ -733,7 +797,9 @@ let _lastAutoUploadErrorCode = null;
 // user resolves the conflict (Tasks 4/5).
 let _conflictPending = null;
 // True while an account deletion runs: no upload may (re)create the document.
-// Set and cleared by fbDeleteAccount (Task 10); checked in _pushCore's I4 block.
+// Set and cleared by fbDeleteAccount (Task 10); checked by the dequeue guard
+// (_dequeueGuard, spec §7.3 step 2) and again in _pushCore's I4 block, since
+// a deletion can start while an upload task is already running.
 let _accountDeleting = false;
 
 function _isDirty() { return _editRev !== _syncedRev; }
@@ -947,25 +1013,29 @@ async function fbResolveSyncConflict(choice) {
     // the GET is in flight must not be treated as "empty cloud" (which would
     // queue an import upload against the new session).
     const epoch = _authEpoch;
-    let applied;
+    let pull;
     try {
-      applied = await syncFromCloud({ mode: 'resolve-cloud', trigger: 'resolve-cloud' });
+      pull = await _runPullTask({ mode: 'resolve-cloud', trigger: 'resolve-cloud' });
     } catch (e) {
       // A failed pull says nothing about the cloud state: keep the conflict
       // pending so the user can retry (or pick 'local').
       return { ok: false, code: e?.code || 'firestore' };
     }
     if (epoch !== _authEpoch) {
-      // The session changed while resolving; syncFromCloud already dropped the
+      // The session changed while resolving; the pull already dropped the
       // late response with zero writes. Not "no cloud data": no import upload.
       return { ok: false, code: 'session-changed' };
     }
-    if (!applied) {
-      // The cloud document no longer exists; syncFromCloud already cleared the
-      // conflict and set the baseline. Import the local state instead.
+    if (pull.outcome === 'cloud-empty') {
+      // The cloud document no longer exists (or is empty); the pull already
+      // cleared the conflict and set the baseline. Import the local state.
       scheduleSyncToCloud();
       return { ok: true, code: 'no-cloud-data' };
     }
+    // Any other non-landing outcome (session-changed, storage-unavailable,
+    // baseline-cleared, ...) wrote nothing and says nothing about the cloud:
+    // report it as is, never as "no cloud data".
+    if (!pull.applied) return { ok: false, code: pull.outcome };
     return { ok: true };
   }
 
@@ -1033,7 +1103,7 @@ async function _drainSyncQueue() {
     const task = _syncQueue.shift();
     _syncCurrent = task;
     if (task.epoch !== _authEpoch) {
-      task.resolve({ reason: 'session-changed' });
+      task.resolve(_skipResult(task.kind, 'session-changed'));
       continue;
     }
     const ctx = {
@@ -1044,6 +1114,11 @@ async function _drainSyncQueue() {
       storageRead: null,
     };
     try {
+      const skip = await _dequeueGuard(task, ctx);
+      if (skip) {
+        task.resolve(skip);
+        continue;
+      }
       const result = await task.run(ctx);
       // The conflict hook is the task's last step: fired, never awaited, and
       // nothing writes after it (spec §7.1).
@@ -1058,11 +1133,49 @@ async function _drainSyncQueue() {
   _syncCurrent = null;
 }
 
-// Settle every not-yet-started task with { reason } and empty the queue.
+// The skip result of a task that does not run, in its kind's result shape:
+// a PullResult for pulls, a PushResult otherwise.
+function _skipResult(kind, reason) {
+  return kind === 'pull' ? { applied: false, outcome: reason } : { uploaded: false, reason };
+}
+
+const _UPLOAD_TASK_KINDS = new Set(['upload', 'resolve-local']);
+
+// Dequeue guards shared by every task, in the fixed order of spec §7.3 (the
+// epoch check, step 1, runs before this in _drainSyncQueue). Returns the skip
+// result to settle the task with, or null to run it; throws not-signed-in for
+// upload-class tasks. Step 5 (switch, clean, firewall, Unknown baseline, §8
+// comparison) belongs to the upload body (_uploadTask).
+async function _dequeueGuard(task, ctx) {
+  const skip = (reason) => _skipResult(task.kind, reason);
+  const isUpload = _UPLOAD_TASK_KINDS.has(task.kind);
+  // 2. An account deletion in progress: nothing may (re)create the document.
+  if (isUpload && _accountDeleting) return skip('account-deleting');
+  // 3. Storage and auth, for every task: each one ends up writing keys back.
+  const read = await _readSyncStorage();
+  if (!ctx.alive()) return skip('session-changed');
+  const cleared = _checkStorageForWrite(read);
+  if (cleared) return skip(cleared);
+  ctx.storageRead = read;
+  // Second line of defence: the public entry points already reject a
+  // signed-out caller before queueing (preflight C3).
+  if (!fbIsSignedIn() || !fbIsEmailVerified()) {
+    if (isUpload) throw new CloudSyncError('not-signed-in', 0);
+    return skip('not-signed-in');
+  }
+  // 4. Pending conflict. An auto upload must not run over it; a pull is not
+  // intercepted (its landing is constrained instead). The manual upload's
+  // re-surfacing of the dialog stays at its entry point (_handleSyncBtn)
+  // until the queued form lands (Task 8).
+  if (task.kind === 'upload' && task.auto && _conflictPending) return skip('conflict-pending');
+  return null;
+}
+
+// Settle every not-yet-started task with its skip result and empty the queue.
 function _dropQueuedSyncTasks(reason) {
   const dropped = _syncQueue;
   _syncQueue = [];
-  for (const task of dropped) task.resolve({ reason });
+  for (const task of dropped) task.resolve(_skipResult(task.kind, reason));
 }
 
 // Unified session reset for sign-out, sign-in and sign-up (spec §7.4).
@@ -1104,15 +1217,21 @@ async function _adoptCloudVersion(ctx, baseline, { syncedRev = null } = {}) {
   return ctx.alive();
 }
 
-// Upload task body: the guards, a baseline pull when the baseline is Unknown,
-// then the PATCH with its recovery pull and retry (_pushWithRecovery).
+// Upload task body, after the dequeue guards (_dequeueGuard, spec §7.3 steps
+// 1–4): the step-5 guards, the §8 storage re-read, a baseline or recovery
+// pull when it calls for one, then the PATCH with its recovery pull and retry
+// (_pushWithRecovery).
 // manual: explicit user upload (manual button / choose-local), which bypasses
-// the switch-pending, conflict-pending and clean guards on purpose.
+// the switch-pending and clean guards on purpose; the firewall still applies.
 async function _uploadTask(ctx, { manual }) {
   if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
-  if (!fbIsSignedIn() || !fbIsEmailVerified()) {
-    throw new CloudSyncError('not-signed-in', 0);
-  }
+
+  // While an account switch is unresolved, automatic uploads must not run: the
+  // local state still contains the previous account's data and would be
+  // PATCHed into the signed-in account's document.
+  if (!manual && _needsSwitchPull()) return { uploaded: false, reason: 'switch-pending' };
+
+  if (!manual && !_isDirty()) return { uploaded: false, reason: 'clean' };
 
   // A failed storage load leaves default values in memory; uploading them
   // would overwrite the real cloud document — an unrecoverable direction.
@@ -1122,26 +1241,36 @@ async function _uploadTask(ctx, { manual }) {
     return { uploaded: false, reason: 'storage-read-only' };
   }
 
-  // While an account switch is unresolved, automatic uploads must not run: the
-  // local state still contains the previous account's data and would be
-  // PATCHed into the signed-in account's document.
-  if (!manual && _needsSwitchPull()) return { uploaded: false, reason: 'switch-pending' };
+  // §8: re-read storage right before any request. The dequeue read cannot be
+  // reused — other awaits may separate it from the PATCH. Internal pulls of
+  // this task reuse this read (ctx.storageRead).
+  const read = await _readSyncStorage();
+  if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
+  ctx.storageRead = read;
+  const decision = _decideUploadStorage(read, _cloudBaseline);
 
-  // While a sync conflict is pending, automatic uploads must not run: the
-  // local state is known to disagree with the cloud and would overwrite it
-  // before the user resolves the conflict.
-  if (!manual && _conflictPending) return { uploaded: false, reason: 'conflict-pending' };
-
-  if (!manual && !_isDirty()) return { uploaded: false, reason: 'clean' };
-
-  // An Unknown baseline has no precondition to send: establish it first with
-  // a baseline pull in this same hold (spec §5.3). A failure rejects with the
-  // baseline still Unknown and the local state dirty; no automatic retry.
-  if (_cloudBaseline.kind === 'unknown') {
+  if (decision === 'baseline-pull') {
+    // An Unknown baseline has no precondition to send: establish it first with
+    // a baseline pull in this same hold (spec §5.3). A failure rejects with the
+    // baseline still Unknown and the local state dirty; no automatic retry.
+    // This also covers a failed startup pull: the next upload pulls first.
     ctx.budget.baselineGet -= 1;
-    const pull = await _pullCore(ctx, { mode: 'forced', trigger: 'baseline', compareWhenClean: manual });
+    const pull = await _pullCore(ctx, {
+      mode: 'forced', trigger: 'baseline', compareWhenClean: manual, reuseStorageRead: true,
+    });
     const stop = _uploadStopAfterPull(pull);
     if (stop) return stop;
+  } else if (decision === 'recovery-pull') {
+    // Storage disagrees with memory (another tab uploaded, or wrote an invalid
+    // value): adopt neither, re-pull with the recovery budget (§8, §7.5).
+    ctx.budget.recoveryGet -= 1;
+    const pull = await _pullCore(ctx, {
+      mode: 'forced', trigger: 'upload-precondition', compareWhenClean: manual, reuseStorageRead: true,
+    });
+    const stop = _uploadStopAfterPull(pull);
+    if (stop) return stop;
+  } else if (decision !== 'proceed') {
+    return { uploaded: false, reason: decision };
   }
 
   return _pushWithRecovery(ctx, { compareWhenClean: manual });
@@ -1199,14 +1328,20 @@ async function _pushWithRecovery(ctx, { precondition, compareWhenClean = false }
     ctx.budget.recoveryGet -= 1;
     _syncState = 'downloading';
     _updateSyncUI();
-    const pull = await _pullCore(ctx, { mode: 'forced', trigger: 'upload-precondition', compareWhenClean });
+    const pull = await _pullCore(ctx, {
+      mode: 'forced', trigger: 'upload-precondition', compareWhenClean, reuseStorageRead: true,
+    });
     const stop = _uploadStopAfterPull(pull);
     if (stop) return stop;
   }
 }
 
 // One PATCH of the current local state plus the success bookkeeping. No
-// guards: callers (task bodies) decide whether an upload may run.
+// guards: callers (task bodies) decide whether an upload may run. It never
+// reads storage: the §8 re-read and decision belong to the calling body
+// (_uploadTask; later choose-local and the choose-cloud import, whose
+// exemptValueDiff a check here would override). Its I4 block only follows
+// that re-read and the token await.
 // precondition: explicit { updateTime } | { exists: false }; defaults to the
 // in-memory baseline at send time.
 async function _pushCore(ctx, { precondition } = {}) {
@@ -1313,7 +1448,10 @@ function syncToCloud(options = {}) {
 // compareWhenClean: compare contents even when the local state is clean, so a
 // difference becomes a pending conflict instead of a silent landing (manual
 // upload's baseline pull, spec §5.1).
-async function _pullCore(ctx, { mode, trigger, compareWhenClean = false }) {
+// reuseStorageRead: an internal pull of an upload task, which has just done
+// the full §8 re-read (ctx.storageRead); a standalone pull re-reads storage
+// after its GET instead.
+async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseStorageRead = false }) {
   const sessionChanged = () => {
     _syncState = 'idle';
     _updateSyncUI();
@@ -1325,6 +1463,18 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false }) {
   // The GET response landed after the identity changed (sign-out/sign-in
   // while it was in flight). Drop it with zero bookkeeping writes.
   if (!ctx.alive()) return sessionChanged();
+
+  // §8 / §7.3 step 3 before any landing or key write: storage must be
+  // readable and the auth key still present (another tab may have signed out
+  // during the GET). Only these two rows; the baseline value is not compared.
+  const read = reuseStorageRead && ctx.storageRead ? ctx.storageRead : await _readSyncStorage();
+  if (!ctx.alive()) return sessionChanged();
+  const cleared = _checkStorageForWrite(read);
+  if (cleared) {
+    _syncState = 'idle';
+    _updateSyncUI();
+    return { applied: false, outcome: cleared };
+  }
 
   // Nothing to pull: the signed-in account's state is now considered the
   // baseline, so subsequent automatic uploads are allowed again. A 404
@@ -1509,10 +1659,21 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false }) {
 // trigger: provenance label carried into the conflict info object.
 // A queued pull dropped by a session change resolves false.
 async function syncFromCloud(options = {}) {
-  const { mode = 'auto', trigger = 'auto' } = options;
-  if (!fbIsSignedIn() || !fbIsEmailVerified()) return false;
+  const r = await _runPullTask(options);
+  return !!r.applied;
+}
 
-  const r = await _enqueueSync({
+// Queue one pull task and resolve its PullResult (same options as
+// syncFromCloud). For callers that must tell the outcomes apart — "cloud is
+// empty" is not the same as "dropped by a session change" or "blocked by the
+// storage check". A signed-out caller resolves not-signed-in without queueing.
+function _runPullTask(options = {}) {
+  const { mode = 'auto', trigger = 'auto' } = options;
+  if (!fbIsSignedIn() || !fbIsEmailVerified()) {
+    return Promise.resolve({ applied: false, outcome: 'not-signed-in' });
+  }
+
+  return _enqueueSync({
     kind: 'pull',
     auto: mode === 'auto',
     run: async (ctx) => {
@@ -1529,7 +1690,6 @@ async function syncFromCloud(options = {}) {
       }
     },
   });
-  return !!r.applied;
 }
 
 function scheduleSyncToCloud() {

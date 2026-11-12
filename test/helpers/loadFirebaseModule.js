@@ -31,6 +31,8 @@ const EXPORTED_NAMES = [
   '_resetSession',
   '_pullCore',
   '_pushCore',
+  '_runPullTask',
+  '_decideUploadStorage',
   '_buildSyncSnapshot',
   '_cloudSnapshotFromFields',
   '_canonicalJson',

@@ -985,13 +985,22 @@ describe('_fsSet', () => {
     };
     await fb._loadAuth();
 
+    // _pushCore itself (no queue): no token → not-signed-in, no request.
+    const ctx = {
+      epoch: 0, alive: () => true, budget: { baselineGet: 1, recoveryGet: 1, patch: 2 },
+      notifyConflict: false, storageRead: null,
+    };
+    await expect(fb._pushCore(ctx, { precondition: { exists: false } }))
+      .rejects.toMatchObject({ code: 'not-signed-in' });
+
+    // Queued, the dequeue guard stops it first: the empty store has no auth
+    // key, which spec §7.3 step 3 reports before the sign-in state.
     const run = fb._enqueueSync({
       kind: 'upload',
       auto: false,
-      run: (ctx) => fb._pushCore(ctx, { precondition: { exists: false } }),
+      run: (c) => fb._pushCore(c, { precondition: { exists: false } }),
     });
-
-    await expect(run).rejects.toMatchObject({ code: 'not-signed-in' });
+    await expect(run).resolves.toEqual({ uploaded: false, reason: 'baseline-cleared' });
     expect(fetchCalls).toBe(0);
   });
 

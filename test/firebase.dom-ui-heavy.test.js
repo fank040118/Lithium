@@ -1611,11 +1611,14 @@ describe('_updateSyncUI conflict state', () => {
   it('prefers the conflict status over a transient downloading state', async () => {
     const fb = setup();
     const { promise, resolve } = deferred();
+    // The dequeue guard reads storage first (spec §7.3 step 3): it needs a
+    // readable store that still holds the auth key.
+    globalThis.chrome = createMockChromeStorage({ _fb_refresh: 'seed-refresh-token' });
     // Real syncFromCloud sets _syncState = 'downloading' before awaiting the GET.
     globalThis._fsGet = vi.fn(() => promise);
 
     const call = fb.syncFromCloud({ mode: 'forced' });
-    expect(globalThis._fsGet).toHaveBeenCalled();
+    await vi.waitFor(() => expect(globalThis._fsGet).toHaveBeenCalled());
     expect(statusEl().textContent).toBe('sidebar.sync.status.conflict');
 
     resolve({ updateTime: '2024-06-02T00:00:00.000000Z' });   // empty document
