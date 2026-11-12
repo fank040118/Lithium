@@ -162,8 +162,12 @@ describe('serial sync queue', () => {
     firstGate.resolve(jsonResponse(200, cloudDoc(fb, [{ id: 'cloud-item' }])));
     const results = await Promise.all([running, autoA, autoB, forced]);
 
+    // GET #1: the running forced pull. GET #2: the single merged auto pull
+    // (autoA and autoB share one queued task). GET #3: the second forced pull,
+    // which never merges. Without merging, autoA and autoB would each fetch
+    // and the count would be 4. (syncFromCloud resolves a boolean, so result
+    // identity cannot tell the merge apart; the request count does.)
     expect(count(log, 'GET')).toBe(3);
-    expect(results[1]).toBe(results[2]);
     expect(results).toEqual([true, true, true, true]);
   });
 

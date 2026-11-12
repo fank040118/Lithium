@@ -16,12 +16,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Edits made while cloud data was being applied could be marked as synced and lost
 
 ### Changed
-- All cloud operations now run through a single serial queue; network requests time out after 20 seconds
+- All cloud operations now run through a single serial queue; cloud sync requests (Firestore reads and writes, token refresh) and account deletion time out after 20 seconds; sign-in, sign-up and email requests have no timeout
 - Deleting the account is now queued on the same sync queue, and no uploads are started while the deletion runs
 - When "Use local" fails, the conflict dialog stays open with an inline error so you can retry
 - When the cloud data has been deleted or emptied, the conflict dialog now shows a matching explanation
-- The manual Upload button only reports "Uploaded" when the upload actually succeeded, and explains why otherwise
-- A manual pull now explains why nothing was pulled (for example, already up to date or storage unavailable)
+- The manual Upload button only reports "Uploaded" when the upload actually succeeded, says "Already up to date" when there was nothing to upload, and explains why otherwise
+- A manual pull now explains why nothing was pulled (for example, the cloud has no data or local storage is unavailable)
 
 ### Notes
 - New local storage key `_fb_cloud_update_time`; existing installs are migrated on the first pull without a migration script
