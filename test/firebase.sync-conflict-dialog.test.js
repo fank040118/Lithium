@@ -94,6 +94,23 @@ describe('_renderSyncConflictDialog', () => {
     expect($('sync-conflict-signout-row').classList.contains('hidden')).toBe(false);
   });
 
+  it.each(['not-found', 'empty'])('explains a cloud that was deleted or emptied (cloudState %s)', (cloudState) => {
+    const { fb } = setup();
+    fb._renderSyncConflictDialog({ ...INFO, cloudState, cloudShortcutCount: 0, cloudFolderCount: 0 });
+    const text = $('sync-conflict-text').textContent;
+    expect(text).toContain('dialog.syncConflict.text');
+    expect(text).toContain('dialog.syncConflict.cloudAbsent');
+  });
+
+  it('does not show the cloud-absent hint for a document cloud, nor after the cloud comes back', () => {
+    const { fb } = setup();
+    fb._renderSyncConflictDialog({ ...INFO, cloudState: 'doc' });
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.text');
+    fb._renderSyncConflictDialog({ ...INFO, cloudState: 'not-found' });
+    fb._renderSyncConflictDialog({ ...INFO, cloudState: 'doc' });
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.text');
+  });
+
   it('shows the unknown label when a time is 0', () => {
     const { fb } = setup();
     fb._renderSyncConflictDialog({ ...INFO, localEditTime: 0 });
@@ -181,6 +198,29 @@ describe('re-renders on langchange', () => {
     expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
   });
 
+  it('re-renders an inline cloud-changed error in the new language', () => {
+    const { fb, t } = setup();
+    fb._openSyncConflictDialog({ ...INFO });
+    fb._setConflictError('cloud-changed');
+    expect($('sync-conflict-error').textContent).toBe('dialog.syncConflict.cloudChanged');
+    $('sync-conflict-error').textContent = 'stale-language text';
+    t.mockClear();
+    fb._refreshSyncConflictDialogOnLangChange();
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.cloudChanged');
+    expect($('sync-conflict-error').textContent).toBe('dialog.syncConflict.cloudChanged');
+  });
+
+  it('re-renders the cloud-absent hint in the new language', () => {
+    const { fb, t } = setup();
+    fb._openSyncConflictDialog({ ...INFO, cloudState: 'not-found' });
+    $('sync-conflict-text').textContent = 'stale-language text';
+    t.mockClear();
+    window.dispatchEvent(new Event('lithium:langchange'));
+    fb._refreshSyncConflictDialogOnLangChange();
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.cloudAbsent');
+    expect($('sync-conflict-text').textContent).toContain('dialog.syncConflict.cloudAbsent');
+  });
+
   it('does not resurrect an error after close or re-open', () => {
     const { fb } = setup();
     fb._openSyncConflictDialog({ ...INFO });
@@ -254,11 +294,34 @@ describe('_syncErrorToastKey', () => {
     ['quota', 'toast.syncQuotaFailed'],
     ['payload-too-large', 'toast.syncPayloadTooLarge'],
     ['storage-read-only', 'toast.syncStorageReadOnly'],
+    ['storage-unavailable', 'toast.syncStorageUnavailable'],
+    ['baseline-cleared', 'toast.syncBaselineCleared'],
+    ['retry-exhausted', 'toast.syncRetryExhausted'],
+    ['cloud-changed', 'toast.syncFailed'],
     ['firestore', 'toast.syncFailed'],
     [undefined, 'toast.syncFailed'],
   ])('maps %s to %s', (code, key) => {
     const { fb } = setup();
     expect(fb._syncErrorToastKey(code)).toBe(key);
+  });
+});
+
+describe('_conflictErrorKey', () => {
+  it.each([
+    ['cloud-changed', 'dialog.syncConflict.cloudChanged'],
+    ['payload-too-large', 'dialog.syncConflict.payloadTooLarge'],
+    ['retry-exhausted', 'toast.syncRetryExhausted'],
+    ['storage-unavailable', 'toast.syncStorageUnavailable'],
+    ['baseline-cleared', 'toast.syncBaselineCleared'],
+    ['storage-read-only', 'toast.syncStorageReadOnly'],
+    ['network', 'toast.syncNetworkFailed'],
+    ['auth', 'toast.syncAuthFailed'],
+    ['quota', 'toast.syncQuotaFailed'],
+    ['firestore', 'toast.syncFailed'],
+    [undefined, 'toast.syncFailed'],
+  ])('maps %s to %s', (code, key) => {
+    const { fb } = setup();
+    expect(fb._conflictErrorKey(code)).toBe(key);
   });
 });
 
@@ -321,20 +384,61 @@ describe('_handleConflictChoice', () => {
       expect(showToast).not.toHaveBeenCalled();
     });
 
-  it('local upload failure tells user to retry', async () => {
-    const { fb, t, showToast, updateSpy } = arrange({ ok: false, code: 'network' });
+  it('local failure with the conflict still pending keeps the dialog open with an inline error', async () => {
+    const { fb, showToast, updateSpy } = arrange({ ok: false, code: 'network' }, { pendingAfter: true });
     await fb._handleConflictChoice('local');
-    expect(hidden()).toBe(true);
-    expect(t).toHaveBeenCalledWith('toast.syncConflictLocalUploadFailed', { reason: 'toast.syncNetworkFailed' });
-    expect(showToast).toHaveBeenCalledWith('toast.syncConflictLocalUploadFailed', 'error');
+    expect(hidden()).toBe(false);
+    expect($('sync-conflict-error').classList.contains('hidden')).toBe(false);
+    expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
+    expect($('sync-conflict-use-local').disabled).toBe(false);
+    expect($('sync-conflict-use-cloud').disabled).toBe(false);
+    expect($('sync-conflict-signout').disabled).toBe(false);
+    expect(showToast).not.toHaveBeenCalled();
     expect(updateSpy).toHaveBeenCalled();
   });
 
-  it('cloud failure with the conflict cleared closes with a plain error toast, not the local-upload hint', async () => {
-    const { fb, t, showToast } = arrange({ ok: false, code: 'network' });
+  it.each([
+    ['cloud-changed', 'dialog.syncConflict.cloudChanged'],
+    ['payload-too-large', 'dialog.syncConflict.payloadTooLarge'],
+    ['retry-exhausted', 'toast.syncRetryExhausted'],
+    ['storage-unavailable', 'toast.syncStorageUnavailable'],
+    ['baseline-cleared', 'toast.syncBaselineCleared'],
+    ['storage-read-only', 'toast.syncStorageReadOnly'],
+  ])('choose-local code %s shows %s inline and keeps the dialog open', async (code, key) => {
+    const { fb, showToast } = arrange({ ok: false, code }, { pendingAfter: true });
+    await fb._handleConflictChoice('local');
+    expect(hidden()).toBe(false);
+    expect($('sync-conflict-error').textContent).toBe(key);
+    expect($('sync-conflict-error').classList.contains('hidden')).toBe(false);
+    expect($('sync-conflict-use-local').disabled).toBe(false);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('session-changed closes silently even while a conflict is still reported and the user is signed in', async () => {
+    const { fb, showToast } = arrange({ ok: false, code: 'session-changed' }, { pendingAfter: true });
+    await fb._handleConflictChoice('local');
+    expect(hidden()).toBe(true);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('cloud-empty import failure (pending already cleared) closes with a plain error toast', async () => {
+    const { fb, showToast } = arrange({ ok: false, code: 'network' });
     await fb._handleConflictChoice('cloud');
     expect(hidden()).toBe(true);
-    expect(t).not.toHaveBeenCalledWith('toast.syncConflictLocalUploadFailed', expect.anything());
+    expect(showToast).toHaveBeenCalledWith('toast.syncNetworkFailed', 'error');
+  });
+
+  it('cloud-empty import hitting the size limit toasts the generic size message, not the dialog text', async () => {
+    const { fb, showToast } = arrange({ ok: false, code: 'payload-too-large' });
+    await fb._handleConflictChoice('cloud');
+    expect(hidden()).toBe(true);
+    expect(showToast).toHaveBeenCalledWith('toast.syncPayloadTooLarge', 'error');
+  });
+
+  it('cloud failure with the conflict cleared closes with a plain error toast', async () => {
+    const { fb, showToast } = arrange({ ok: false, code: 'network' });
+    await fb._handleConflictChoice('cloud');
+    expect(hidden()).toBe(true);
     expect(showToast).toHaveBeenCalledWith('toast.syncNetworkFailed', 'error');
   });
 
@@ -376,6 +480,22 @@ describe('_handleConflictChoice', () => {
     d.resolve({ ok: true });
     await Promise.all([p1, p2]);
     expect(globalThis.fbResolveSyncConflict).toHaveBeenCalledTimes(1);
+  });
+
+  it('a notification during a resolve refreshes the cloud counts but leaves the controls disabled (spec §10.3)', async () => {
+    const { fb, t } = arrange({ ok: true });
+    const d = deferred();
+    globalThis.fbResolveSyncConflict = vi.fn(() => d.promise);
+    const p = fb._handleConflictChoice('local');
+    t.mockClear();
+    fb._openSyncConflictDialog({ ...INFO, cloudShortcutCount: 99, cloudFolderCount: 5 });
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.shortcuts', { count: 99 });
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.folders', { count: 5 });
+    expect($('sync-conflict-use-local').disabled).toBe(true);
+    expect($('sync-conflict-use-cloud').disabled).toBe(true);
+    globalThis.fbGetSyncConflict = vi.fn(() => null);
+    d.resolve({ ok: true });
+    await p;
   });
 
   it('clears the resolving flag after the dialog was closed mid-resolve', async () => {
@@ -532,12 +652,17 @@ describe('real sign-out from the conflict dialog', () => {
 });
 
 describe('sync-conflict i18n keys', () => {
-  it('toast keys exist in zh and en', async () => {
+  it('conflict keys exist in zh and en; the unreachable local-upload-failed key is gone', async () => {
     const fs = await import('node:fs');
     for (const f of ['i18n.zh.js', 'i18n.en.js']) {
       const src = fs.readFileSync(`${process.cwd()}/${f}`, 'utf8');
-      expect(src).toContain('syncConflictCloudGone');
-      expect(src).toContain('syncConflictLocalUploadFailed');
+      for (const key of [
+        'syncConflictCloudGone', 'syncStorageUnavailable', 'syncBaselineCleared',
+        'syncRetryExhausted', 'syncUpToDate', 'cloudChanged', 'cloudAbsent', 'payloadTooLarge',
+      ]) {
+        expect(src).toContain(`${key}:`);
+      }
+      expect(src).not.toContain('syncConflictLocalUploadFailed');
     }
   });
 });

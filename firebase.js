@@ -2046,8 +2046,9 @@ async function _pullAfterSignIn({ trigger = 'sign-in', force = false } = {}) {
 
 // ── UI ──────────────────────────────────────────────────────
 
-// Error code -> toast i18n key, shared by the sidebar sync buttons and the
-// conflict dialog's inline error / retry hint.
+// Error code / skip reason -> toast i18n key, shared by the sidebar sync
+// buttons and (through _conflictErrorKey) the conflict dialog. `cloud-changed`
+// is dialog-only and has no toast.
 function _syncErrorToastKey(code) {
   switch (code) {
     case 'auth': return 'toast.syncAuthFailed';
@@ -2055,7 +2056,44 @@ function _syncErrorToastKey(code) {
     case 'quota': return 'toast.syncQuotaFailed';
     case 'payload-too-large': return 'toast.syncPayloadTooLarge';
     case 'storage-read-only': return 'toast.syncStorageReadOnly';
+    case 'storage-unavailable': return 'toast.syncStorageUnavailable';
+    case 'baseline-cleared': return 'toast.syncBaselineCleared';
+    case 'retry-exhausted': return 'toast.syncRetryExhausted';
     default: return 'toast.syncFailed';
+  }
+}
+
+// What a manual upload tells the user for a syncToCloud result (spec §5.4).
+// Returns { key, kind } or null for "say nothing": a conflict, a re-surfaced
+// conflict dialog, a session change, a deletion in progress and a sign-out all
+// have their own UI (or are not the user's business). Only an upload that
+// really PATCHed is reported as uploaded.
+function _manualUploadToast(r) {
+  if (r && !r.skipped) return { key: 'toast.syncUploaded', kind: 'default' };
+  switch (r?.reason) {
+    case 'up-to-date': return { key: 'toast.syncUpToDate', kind: 'default' };
+    case 'conflict':
+    case 'conflict-pending':
+    case 'session-changed':
+    case 'account-deleting':
+    case 'not-signed-in':
+      return null;
+    default: return { key: _syncErrorToastKey(r?.reason), kind: 'error' };
+  }
+}
+
+// What a manual pull tells the user for a PullResult. Same shape as
+// _manualUploadToast. An unknown outcome is reported as a failure, never as
+// success.
+function _manualPullToast(pull) {
+  if (pull?.applied) return { key: 'toast.syncDownloaded', kind: 'default' };
+  switch (pull?.outcome) {
+    case 'cloud-empty': return { key: 'toast.syncNoCloudData', kind: 'default' };
+    case 'conflict':
+    case 'session-changed':
+    case 'not-signed-in':
+      return null;
+    default: return { key: _syncErrorToastKey(pull?.outcome), kind: 'error' };
   }
 }
 
@@ -2071,27 +2109,18 @@ async function _handleSyncBtn(direction) {
 
   try {
     if (direction === 'upload') {
-      // The forced upload would only be skipped silently by _uploadTask's
-      // firewall guard; stop here with a user-visible explanation instead of uploading defaults.
-      if (typeof globalThis.isStorageLoadFailed === 'function' && globalThis.isStorageLoadFailed()) {
-        showToast(t('toast.syncStorageReadOnly'), 'error');
-        return;
-      }
-      const r = await syncToCloud({ force: true });
-      // A pending conflict (checked when the task dequeues) re-surfaces the
-      // dialog instead of uploading; the dialog takes over, no toast.
-      if (r?.skipped && r.reason === 'conflict-pending') return;
-      showToast(t('toast.syncUploaded'), 'default');
+      // Every outcome, the storage firewall and a pending conflict (which
+      // re-surfaces the dialog) included, comes back as a skip reason.
+      const outcome = _manualUploadToast(await syncToCloud({ force: true }));
+      if (outcome) showToast(t(outcome.key), outcome.kind);
     } else {
       // 关键：手动拉取前取消尚未执行的自动上传；正在执行的任务由同步队列串行等待
       clearTimeout(_syncTimer);
       _syncTimer = null;
 
-      const pulled = await syncFromCloud({ mode: 'forced', trigger: 'manual-pull' });
-      // A detected conflict leaves the local/cloud states unresolved; do not
-      // toast "no cloud data" (or "downloaded") while it is pending.
-      if (fbGetSyncConflict()) return;
-      showToast(pulled ? t('toast.syncDownloaded') : t('toast.syncNoCloudData'), 'default');
+      // A detected conflict (outcome 'conflict') is left to the dialog.
+      const outcome = _manualPullToast(await _runPullTask({ mode: 'forced', trigger: 'manual-pull' }));
+      if (outcome) showToast(t(outcome.key), outcome.kind);
     }
   } catch (e) {
     showToast(t(_syncErrorToastKey(e?.code)), 'error');
@@ -2222,8 +2251,15 @@ function _handleSyncLoginClick() {
   _showLoginConsentOverlay();
 }
 
-function _friendlyAuthError(msg) {
+// msg: the error message; code: the CloudSyncError code when there is one. A
+// network failure's message is the browser's own text, so it is told apart by
+// code. The two storage reasons are what a failed account deletion throws
+// (its task result's reason becomes the message).
+function _friendlyAuthError(msg, code) {
+  if (code === 'network') return t('toast.syncNetworkFailed');
   if (!msg) return t('error.unknown');
+  if (msg === 'baseline-cleared') return t('toast.syncBaselineCleared');
+  if (msg === 'storage-unavailable') return t('toast.syncStorageUnavailable');
   if (msg.includes('EMAIL_NOT_FOUND')) return t('error.emailNotFound');
   if (msg.includes('INVALID_LOGIN_CREDENTIALS') || msg.includes('INVALID_PASSWORD')) return t('error.invalidLoginCredentials');
   if (msg.includes('EMAIL_EXISTS')) return t('error.emailExists');
@@ -2500,7 +2536,15 @@ function _renderSyncConflictDialog(info) {
   if (!info) return;
   const isSwitch = !!info.isAccountSwitch;
   const textEl = document.getElementById('sync-conflict-text');
-  if (textEl) textEl.textContent = t(isSwitch ? 'dialog.syncConflict.textSwitch' : 'dialog.syncConflict.text');
+  if (textEl) {
+    let text = t(isSwitch ? 'dialog.syncConflict.textSwitch' : 'dialog.syncConflict.text');
+    // The pending conflict was re-marked cloud-absent (the cloud document was
+    // deleted or emptied since the conflict first appeared, spec §7.3): say so.
+    if (info.cloudState === 'not-found' || info.cloudState === 'empty') {
+      text += ` ${t('dialog.syncConflict.cloudAbsent')}`;
+    }
+    textEl.textContent = text;
+  }
 
   const warnEl = document.getElementById('sync-conflict-account-warn');
   if (warnEl) {
@@ -2538,13 +2582,25 @@ function _openSyncConflictDialog(info) {
   document.getElementById('sync-conflict-use-local')?.focus();
 }
 
+// Error code -> i18n key of the dialog's inline error line. Two codes only
+// make sense inside the dialog: the cloud changed again while choosing local,
+// and a local state too large to upload (permanent for this choice, so it
+// points at the way out). Everything else reads like the matching toast.
+function _conflictErrorKey(code) {
+  switch (code) {
+    case 'cloud-changed': return 'dialog.syncConflict.cloudChanged';
+    case 'payload-too-large': return 'dialog.syncConflict.payloadTooLarge';
+    default: return _syncErrorToastKey(code);
+  }
+}
+
 // Shows (or clears, with null) the inline error line. The code is remembered
 // so a language change can re-render the line in the new language.
 function _setConflictError(code) {
   _conflictErrorCode = code || null;
   const errEl = document.getElementById('sync-conflict-error');
   if (!errEl) return;
-  errEl.textContent = code ? t(_syncErrorToastKey(code)) : '';
+  errEl.textContent = code ? t(_conflictErrorKey(code)) : '';
   errEl.classList.toggle('hidden', !code);
 }
 
@@ -2556,9 +2612,11 @@ function _setConflictControlsDisabled(disabled) {
 }
 
 // Applies the user's choice. Result rules (in order): success -> close + toast;
-// no-conflict or signed-out -> close silently; conflict already cleared (only a
-// failed local upload leaves that state) -> close + retry hint; otherwise keep
-// the dialog open with an inline error.
+// cloud had no data (local imported) -> close + notice; no-conflict, session
+// change or signed-out -> close silently; conflict already cleared (only a
+// failed import after "cloud is empty" leaves that state) -> close + error
+// toast; otherwise keep the dialog open with an inline error — a failed
+// choose-local always lands here, since it keeps the conflict pending (§6.4).
 async function _handleConflictChoice(choice) {
   if (_conflictResolving) return;
   _conflictResolving = true;
@@ -2577,16 +2635,11 @@ async function _handleConflictChoice(choice) {
     } else if (r?.ok && r.code === 'no-cloud-data') {
       _closeSyncConflictDialog();
       showToast(t('toast.syncConflictCloudGone'), 'default');
-    } else if (r?.code === 'no-conflict' || !fbIsSignedIn()) {
+    } else if (r?.code === 'no-conflict' || r?.code === 'session-changed' || !fbIsSignedIn()) {
       _closeSyncConflictDialog();
     } else if (!fbGetSyncConflict()) {
       _closeSyncConflictDialog();
-      const reason = t(_syncErrorToastKey(r?.code));
-      if (choice === 'local') {
-        showToast(t('toast.syncConflictLocalUploadFailed', { reason }), 'error');
-      } else {
-        showToast(reason, 'error');
-      }
+      showToast(t(_syncErrorToastKey(r?.code)), 'error');
     } else {
       _setConflictError(r?.code);
       _setConflictControlsDisabled(false);
@@ -2652,7 +2705,7 @@ async function _handleDeleteAccount() {
     _updateSyncUI();
   } catch (e) {
     if (typeof showToast === 'function') {
-      showToast(t('auth.deleteAccountError', { detail: _friendlyAuthError(e.message) }), 'error');
+      showToast(t('auth.deleteAccountError', { detail: _friendlyAuthError(e.message, e.code) }), 'error');
     }
     if (btn) {
       btn.disabled = false;

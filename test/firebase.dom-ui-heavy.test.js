@@ -201,47 +201,51 @@ describe('_handleSyncBtn', () => {
     expect(document.getElementById('sync-upload-btn').disabled).toBe(true);
     expect(document.getElementById('sync-download-btn').disabled).toBe(true);
 
-    resolve();
+    resolve({ ok: true, skipped: false, ts: 1 });
     await callPromise;
 
     expect(globalThis.syncToCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis.syncToCloud).toHaveBeenCalledWith({ force: true });
     expect(showToast).toHaveBeenCalledWith('toast.syncUploaded', 'default');
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
     expect(document.getElementById('sync-upload-btn').disabled).toBe(false);
     expect(document.getElementById('sync-download-btn').disabled).toBe(false);
   });
 
-  it('toasts downloaded and updates UI when download returns true', async () => {
+  it('toasts downloaded and updates UI when the pull applies', async () => {
     const { showToast } = installUiMocks();
     const fb = loadFirebaseModule();
     mountAuthDom();
     globalThis.fbIsEmailVerified = vi.fn(() => true);
     globalThis._updateSyncUI = vi.fn();
     const { promise, resolve } = deferred();
-    globalThis.syncFromCloud = vi.fn(() => promise);
+    globalThis._runPullTask = vi.fn(() => promise);
+    globalThis.syncFromCloud = vi.fn();
     globalThis.syncToCloud = vi.fn();
 
     const callPromise = fb._handleSyncBtn('download');
     expect(document.getElementById('sync-upload-btn').disabled).toBe(true);
     expect(document.getElementById('sync-download-btn').disabled).toBe(true);
 
-    resolve(true);
+    resolve({ applied: true, outcome: 'applied' });
     await callPromise;
 
-    expect(globalThis.syncFromCloud).toHaveBeenCalledTimes(1);
+    expect(globalThis._runPullTask).toHaveBeenCalledTimes(1);
+    expect(globalThis._runPullTask).toHaveBeenCalledWith({ mode: 'forced', trigger: 'manual-pull' });
+    expect(globalThis.syncFromCloud).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledWith('toast.syncDownloaded', 'default');
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
     expect(document.getElementById('sync-upload-btn').disabled).toBe(false);
     expect(document.getElementById('sync-download-btn').disabled).toBe(false);
   });
 
-  it('toasts noCloudData when download returns false', async () => {
+  it('toasts noCloudData when the pull finds an empty cloud', async () => {
     const { showToast } = installUiMocks();
     const fb = loadFirebaseModule();
     mountAuthDom();
     globalThis.fbIsEmailVerified = vi.fn(() => true);
     globalThis._updateSyncUI = vi.fn();
-    globalThis.syncFromCloud = vi.fn(() => Promise.resolve(false));
+    globalThis._runPullTask = vi.fn(() => Promise.resolve({ applied: false, outcome: 'cloud-empty', cloud: 'not-found' }));
     globalThis.syncToCloud = vi.fn();
 
     await fb._handleSyncBtn('download');
@@ -374,6 +378,86 @@ describe('_handleSyncBtn', () => {
 
     expect(showToast).toHaveBeenCalledWith('toast.syncFailed', 'error');
     expect(globalThis._updateSyncUI).toHaveBeenCalled();
+  });
+});
+
+describe('_handleSyncBtn result mapping (spec §5.4)', () => {
+  function arrange() {
+    const { showToast } = installUiMocks();
+    const fb = loadFirebaseModule();
+    mountAuthDom();
+    globalThis.fbIsEmailVerified = vi.fn(() => true);
+    globalThis._updateSyncUI = vi.fn();
+    return { fb, showToast };
+  }
+  const skipped = (reason) => ({ ok: true, skipped: true, reason });
+
+  it.each([
+    [{ ok: true, skipped: false, ts: 5 }, 'toast.syncUploaded', 'default'],
+    [skipped('up-to-date'), 'toast.syncUpToDate', 'default'],
+    [skipped('storage-read-only'), 'toast.syncStorageReadOnly', 'error'],
+    [skipped('storage-unavailable'), 'toast.syncStorageUnavailable', 'error'],
+    [skipped('baseline-cleared'), 'toast.syncBaselineCleared', 'error'],
+    [skipped('retry-exhausted'), 'toast.syncRetryExhausted', 'error'],
+    [skipped('some-future-reason'), 'toast.syncFailed', 'error'],
+  ])('manual upload result %j toasts %s', async (result, key, kind) => {
+    const { fb, showToast } = arrange();
+    globalThis.syncToCloud = vi.fn(async () => result);
+
+    await fb._handleSyncBtn('upload');
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(key, kind);
+  });
+
+  it.each(['conflict', 'conflict-pending', 'session-changed', 'account-deleting', 'not-signed-in'])(
+    'manual upload skipped with %s shows no toast and never claims "uploaded"', async (reason) => {
+      const { fb, showToast } = arrange();
+      globalThis.syncToCloud = vi.fn(async () => skipped(reason));
+
+      await fb._handleSyncBtn('upload');
+
+      expect(showToast).not.toHaveBeenCalled();
+      expect(globalThis._updateSyncUI).toHaveBeenCalled();
+      expect(document.getElementById('sync-upload-btn').disabled).toBe(false);
+    });
+
+  it.each([
+    [{ applied: true, outcome: 'applied' }, 'toast.syncDownloaded', 'default'],
+    [{ applied: true, outcome: 'unchanged' }, 'toast.syncDownloaded', 'default'],
+    [{ applied: true, outcome: 'adopted' }, 'toast.syncDownloaded', 'default'],
+    [{ applied: false, outcome: 'cloud-empty', cloud: 'empty' }, 'toast.syncNoCloudData', 'default'],
+    [{ applied: false, outcome: 'storage-unavailable' }, 'toast.syncStorageUnavailable', 'error'],
+    [{ applied: false, outcome: 'baseline-cleared' }, 'toast.syncBaselineCleared', 'error'],
+    [{ applied: false, outcome: 'some-future-outcome' }, 'toast.syncFailed', 'error'],
+  ])('manual pull result %j toasts %s', async (pull, key, kind) => {
+    const { fb, showToast } = arrange();
+    globalThis._runPullTask = vi.fn(async () => pull);
+
+    await fb._handleSyncBtn('download');
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(key, kind);
+  });
+
+  it.each(['conflict', 'session-changed', 'not-signed-in'])(
+    'manual pull ending in %s shows no toast', async (outcome) => {
+      const { fb, showToast } = arrange();
+      globalThis._runPullTask = vi.fn(async () => ({ applied: false, outcome }));
+
+      await fb._handleSyncBtn('download');
+
+      expect(showToast).not.toHaveBeenCalled();
+      expect(document.getElementById('sync-download-btn').disabled).toBe(false);
+    });
+
+  it('manual pull rejection maps through the error code', async () => {
+    const { fb, showToast } = arrange();
+    globalThis._runPullTask = vi.fn(() => Promise.reject({ code: 'network' }));
+
+    await fb._handleSyncBtn('download');
+
+    expect(showToast).toHaveBeenCalledWith('toast.syncNetworkFailed', 'error');
   });
 });
 

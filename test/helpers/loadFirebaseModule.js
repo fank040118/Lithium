@@ -78,6 +78,7 @@ const EXPORTED_NAMES = [
   '_bindSyncActionButtons',
   '_handleSyncBtn',
   '_syncErrorToastKey',
+  '_conflictErrorKey',
   '_handleConflictChoice',
   '_showAuthMode',
   '_handleSyncLoginClick',
