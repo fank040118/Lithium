@@ -1437,10 +1437,11 @@ body {
 }
 .login-consent-card .dialog-actions { gap: 8px; }
 
-/* Sync-conflict dialog — no close affordance by design; user must choose a side.
+/* Sync-conflict dialog — the only way out besides choosing a side is the
+   "Decide later" link (or Esc), which just hides it while the conflict stays pending.
    Amber is reserved for the conflict state (see --warning-* in :root). */
 /* Above every other overlay (max 60, incl. the later-in-DOM icon-crop overlay);
-   below the toast (70). The dialog has no close affordance, so it must never be covered. */
+   below the toast (70). It must never be covered by another dialog. */
 .sync-conflict-overlay { z-index: 65; }
 
 .dialog-card.sync-conflict-card {
@@ -1504,6 +1505,25 @@ body {
   font-weight: 600;
   color: var(--text-primary);
 }
+/* Cloud absent: the cloud card drops its time and counts for one empty line. */
+.sync-conflict-side.is-empty [data-field="timeLabel"],
+.sync-conflict-side.is-empty [data-field="time"],
+.sync-conflict-side.is-empty [data-field="shortcuts"],
+.sync-conflict-side.is-empty [data-field="folders"] {
+  display: none;
+}
+.sync-conflict-side-empty {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+/* Persistent note while the local data is over the upload limit (explains the
+   disabled "Use local"); the inline error line below is the transient one. */
+.sync-conflict-limit {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-warning);
+}
 .sync-conflict-error {
   margin: 0;
   font-size: 13px;
@@ -1511,6 +1531,27 @@ body {
 }
 .sync-conflict-actions { gap: 8px; }
 .sync-conflict-actions button { flex: 1; }
+.sync-conflict-actions .btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed; /* same as the disabled links (.forgot-password-btn:disabled) */
+}
+/* Footer row under the buttons. Same account: "Decide later" alone, centred.
+   Account switch: "Decide later" on the left, "Wrong account? Sign out" on the
+   right (Penpot 04 Dialogs). Both links are underlined, disabled or not. */
+.sync-conflict-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 6px 16px;
+}
+.sync-conflict-footer:has(> .sync-conflict-signout:not(.hidden)) {
+  justify-content: space-between;
+}
+.sync-conflict-footer .forgot-password-btn {
+  align-self: auto;
+  text-decoration: underline;
+}
 .sync-conflict-signout {
   display: flex;
   justify-content: center;
@@ -1518,10 +1559,6 @@ body {
   gap: 6px;
   font-size: 13px;
   color: var(--text-quaternary);
-}
-.sync-conflict-signout .forgot-password-btn {
-  align-self: auto;
-  text-decoration: underline;
 }
 /* Semantic danger signal — kept red even inside .dialog-title where text
    otherwise inherits --text-primary. */
@@ -1549,7 +1586,7 @@ body {
   color: var(--text-tertiary);
   background: var(--action-secondary);
 }
-.btn-secondary:hover { background: var(--action-secondary-hover); }
+.btn-secondary:not(:disabled):hover { background: var(--action-secondary-hover); }
 
 .btn-danger {
   background: var(--action-danger);

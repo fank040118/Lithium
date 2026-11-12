@@ -1,5 +1,6 @@
 export function mountAuthDom() {
   document.body.innerHTML = `
+    <button type="button" id="left-sidebar-handle"></button>
     <div id="sync-status-text" class="sidebar-sync-status"></div>
     <p id="sync-conflict-hint" class="sidebar-sync-hint hidden"></p>
     <div id="sync-login-section"></div>
@@ -39,16 +40,21 @@ export function mountAuthDom() {
           <div class="sync-conflict-side-time" data-field="time"></div>
           <div class="sync-conflict-side-count" data-field="shortcuts"></div>
           <div class="sync-conflict-side-count" data-field="folders"></div>
+          <div id="sync-conflict-cloud-empty" class="sync-conflict-side-empty hidden" data-field="empty"></div>
         </div>
       </div>
+      <p id="sync-conflict-limit" class="sync-conflict-limit hidden"></p>
       <p id="sync-conflict-error" class="sync-conflict-error hidden" role="alert"></p>
       <div class="dialog-actions sync-conflict-actions">
         <button type="button" id="sync-conflict-use-local" class="btn-secondary" data-i18n="dialog.syncConflict.useLocal">使用本地</button>
         <button type="button" id="sync-conflict-use-cloud" class="btn-secondary" data-i18n="dialog.syncConflict.useCloud">使用云端</button>
       </div>
-      <div id="sync-conflict-signout-row" class="sync-conflict-signout hidden">
-        <span data-i18n="dialog.syncConflict.wrongAccount">登错账号？</span>
-        <button type="button" id="sync-conflict-signout" class="forgot-password-btn" data-i18n="dialog.syncConflict.signOut">退出登录</button>
+      <div class="sync-conflict-footer">
+        <button type="button" id="sync-conflict-defer" class="forgot-password-btn sync-conflict-defer" data-i18n="dialog.syncConflict.defer">稍后处理</button>
+        <div id="sync-conflict-signout-row" class="sync-conflict-signout hidden">
+          <span data-i18n="dialog.syncConflict.wrongAccount">登错账号？</span>
+          <button type="button" id="sync-conflict-signout" class="forgot-password-btn" data-i18n="dialog.syncConflict.signOut">退出登录</button>
+        </div>
       </div>
     </div>
   </div>

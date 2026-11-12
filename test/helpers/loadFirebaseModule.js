@@ -59,6 +59,8 @@ const EXPORTED_NAMES = [
   '_preconditionFromBaseline',
   '_preconditionQuery',
   '_buildUploadBody',
+  '_isPayloadTooLarge',
+  '_localPayloadTooLarge',
   '_isPreconditionError',
   '_timedFetch',
   '_parseFirestoreError',
@@ -98,6 +100,9 @@ const EXPORTED_NAMES = [
   '_setConflictError',
   '_bindSyncConflictButtons',
   '_refreshSyncConflictDialogOnLangChange',
+  '_applyConflictControls',
+  '_deferSyncConflictDialog',
+  '_handleFirebaseDialogsEscape',
   'fbInit',
 ];
 

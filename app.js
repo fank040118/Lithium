@@ -1685,7 +1685,9 @@ function openDeleteConfirm(id) {
   $('#delete-overlay').classList.remove('hidden');
 }
 
-// Modals that must not be dismissed with Escape (the user has to choose).
+// Modals whose Escape is handled by firebase.js, so the central handler must
+// stay out: on the sync-conflict dialog Escape means "Decide later" (it only
+// hides the dialog; see _handleFirebaseDialogsEscape there).
 function isEscapeBlockedByModal() {
   const el = document.getElementById('sync-conflict-overlay');
   return !!el && !el.classList.contains('hidden');
@@ -2529,9 +2531,10 @@ function setupEventListeners() {
 
   // Centralized Escape handler. Walks dialogs top-down (highest z-index
   // first); the first open one is closed and we stop. Sidebar is the
-  // lowest-priority fallback. The delete-account modal owns its own Esc
-  // handler in firebase.js (it resolves a pending Promise on close), so
-  // we skip it here to avoid double-firing.
+  // lowest-priority fallback. The sync-conflict dialog and the
+  // delete-account modal are handled by firebase.js's own Esc dispatcher
+  // (conflict first, then delete-account), so we skip both here to avoid
+  // double-firing.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (isEscapeBlockedByModal()) return;

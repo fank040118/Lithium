@@ -714,6 +714,13 @@ function _buildUploadBody(snap, now) {
   return JSON.stringify({ fields });
 }
 
+// Pure size check of an upload body, shared by _pushCore (before any request)
+// and the conflict dialog's early warning. Counts characters, not bytes, with
+// the same limit the push has always used.
+function _isPayloadTooLarge(body) {
+  return body.length > FB_PAYLOAD_MAX_BYTES;
+}
+
 // Codes of a PATCH rejected by its precondition (spec §6.1).
 function _isPreconditionError(code) {
   return code === 'precondition-failed' || code === 'already-exists' || code === 'not-found';
@@ -1591,7 +1598,7 @@ async function _pushCore(ctx, { precondition } = {}) {
   const body = _buildUploadBody(snap, Date.now());
   // Oversized uploads are rejected before any network request so the user
   // gets the actionable toast instead of the server's generic rule 403.
-  if (body.length > FB_PAYLOAD_MAX_BYTES) {
+  if (_isPayloadTooLarge(body)) {
     throw new CloudSyncError('payload-too-large', 413);
   }
   ctx.budget.patch -= 1;
@@ -2498,14 +2505,27 @@ function _showDeleteAccountConfirm() {
 }
 
 // ── Sync-conflict choice dialog ─────────────────────────────
-// Opened through the `onSyncConflict` hook (installed by fbInit). Has no close
-// affordance: the user must pick a side (or sign out on account switch).
-// `_conflictInfo` is remembered so language changes can re-render in place;
-// `_conflictResolving` is owned by the choice handler (true while a choice is
-// being applied) and keeps late notifications from re-enabling the buttons.
+// Opened through the `onSyncConflict` hook (installed by fbInit). The user
+// picks a side, signs out (account switch only), or puts the choice off with
+// "Decide later" / Escape: that only hides the dialog — the conflict stays
+// pending, automatic uploads stay paused, and the next conflict notification
+// (e.g. the sidebar Upload button) shows the dialog again. There is no
+// "deferred" flag on purpose.
+// `_conflictInfo` is remembered so language changes can re-render in place.
+// The inputs of _applyConflictControls are module state only, so every render
+// recomputes the controls from them: `_conflictResolving` (a choice is being
+// applied), `_conflictSigningOut` (the dialog's sign-out link is running), the
+// cloud-absent state of `_conflictInfo` (nothing to take from the cloud) and
+// `_conflictLocalTooLarge` (the local data cannot be uploaded; recomputed by
+// every render, display only — choose-local still checks for itself).
 let _conflictInfo = null;
 let _conflictResolving = false;
+let _conflictSigningOut = false;
+let _conflictLocalTooLarge = false;
 let _conflictErrorCode = null;
+// Element focused when the dialog went from hidden to visible (D7); null when
+// it was not worth returning to (body, or a control disabled at that moment).
+let _conflictReturnFocus = null;
 
 function _formatConflictTime(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return t('dialog.syncConflict.unknownTime');
@@ -2532,19 +2552,60 @@ function _renderSyncConflictSide(sideId, labelKey, timeLabelKey, ms, shortcuts, 
   set('folders', t('dialog.syncConflict.folders', { count: folders }));
 }
 
+// The local side of the dialog, recounted from the current state on every
+// render (the user may have edited while the dialog was put off). Display
+// only: the pending record keeps what it was recorded with. Falls back to the
+// recorded values when the local state cannot be read.
+function _currentLocalConflictSide(info) {
+  const recorded = {
+    shortcuts: info.localShortcutCount,
+    folders: info.localFolderCount,
+    editTime: info.localEditTime,
+  };
+  try {
+    if (typeof items === 'undefined') return recorded;
+    const counts = _countSyncItems(items);
+    return { shortcuts: counts.shortcuts, folders: counts.folders, editTime: _localEditTs };
+  } catch {
+    return recorded;
+  }
+}
+
+// The pending conflict was re-marked cloud-absent: the cloud document was
+// deleted or emptied since the conflict first appeared (spec §7.3).
+function _isConflictCloudAbsent(info) {
+  return info?.cloudState === 'not-found' || info?.cloudState === 'empty';
+}
+
+// Would uploading the current in-memory state be refused for its size? Reads
+// the snapshot only, never the network. Any failure reads as "not too large"
+// so the dialog still opens (choose-local then reports the real outcome).
+function _localPayloadTooLarge() {
+  try {
+    return _isPayloadTooLarge(_buildUploadBody(_buildSyncSnapshot(), Date.now()));
+  } catch {
+    return false;
+  }
+}
+
 function _renderSyncConflictDialog(info) {
   if (!info) return;
   const isSwitch = !!info.isAccountSwitch;
+  const cloudAbsent = _isConflictCloudAbsent(info);
+  _conflictLocalTooLarge = _localPayloadTooLarge();
   const textEl = document.getElementById('sync-conflict-text');
   if (textEl) {
-    // The pending conflict was re-marked cloud-absent (the cloud document was
-    // deleted or emptied since the conflict first appeared, spec §7.3): the
-    // usual "the other copy will be overwritten" text no longer holds, so this
-    // text replaces it instead of being appended to it.
-    const cloudAbsent = info.cloudState === 'not-found' || info.cloudState === 'empty';
-    textEl.textContent = t(cloudAbsent
-      ? 'dialog.syncConflict.cloudAbsent'
-      : (isSwitch ? 'dialog.syncConflict.textSwitch' : 'dialog.syncConflict.text'));
+    // Cloud absent: the usual "the other copy will be overwritten" text no
+    // longer holds, so this text replaces it instead of being appended to it.
+    // With the local data too large as well, one text explains both (the
+    // separate limit note stays hidden).
+    let key = isSwitch ? 'dialog.syncConflict.textSwitch' : 'dialog.syncConflict.text';
+    if (cloudAbsent) {
+      key = _conflictLocalTooLarge
+        ? 'dialog.syncConflict.cloudAbsentTooLarge'
+        : 'dialog.syncConflict.cloudAbsent';
+    }
+    textEl.textContent = t(key);
   }
 
   const warnEl = document.getElementById('sync-conflict-account-warn');
@@ -2561,26 +2622,131 @@ function _renderSyncConflictDialog(info) {
   }
   document.getElementById('sync-conflict-signout-row')?.classList.toggle('hidden', !isSwitch);
 
+  const local = _currentLocalConflictSide(info);
   _renderSyncConflictSide('sync-conflict-local', 'dialog.syncConflict.localLabel',
-    'dialog.syncConflict.localTimeLabel', info.localEditTime,
-    info.localShortcutCount, info.localFolderCount);
+    'dialog.syncConflict.localTimeLabel', local.editTime,
+    local.shortcuts, local.folders);
   _renderSyncConflictSide('sync-conflict-cloud',
     isSwitch ? 'dialog.syncConflict.cloudLabelCurrent' : 'dialog.syncConflict.cloudLabel',
     'dialog.syncConflict.cloudTimeLabel', info.cloudUpdateTime,
     info.cloudShortcutCount, info.cloudFolderCount);
+  // Cloud absent: the cloud card shows an empty state instead of its time and
+  // counts (hidden by .is-empty).
+  document.getElementById('sync-conflict-cloud')?.classList.toggle('is-empty', cloudAbsent);
+  const emptyEl = document.getElementById('sync-conflict-cloud-empty');
+  if (emptyEl) {
+    emptyEl.textContent = cloudAbsent ? t('dialog.syncConflict.cloudEmpty') : '';
+    emptyEl.classList.toggle('hidden', !cloudAbsent);
+  }
+  // Persistent size note (not an alert; separate from the inline error line).
+  const showLimit = _conflictLocalTooLarge && !cloudAbsent;
+  const limitEl = document.getElementById('sync-conflict-limit');
+  if (limitEl) {
+    limitEl.textContent = showLimit ? t('dialog.syncConflict.payloadTooLarge') : '';
+    limitEl.classList.toggle('hidden', !showLimit);
+  }
+
+  _applyConflictControls();
+}
+
+// Recomputes which dialog controls are usable from module state only. Safe
+// with no conflict info and with any control missing from the DOM.
+// A choice the dialog state rules out (cloud absent, local too large) is also
+// marked aria-disabled and described by the element that says why; a choice
+// only busy-disabled (a choice or sign-out in flight) is just disabled.
+function _applyConflictControls() {
+  const busy = _conflictResolving || _conflictSigningOut;
+  const cloudAbsent = _isConflictCloudAbsent(_conflictInfo);
+  const tooLarge = !!_conflictInfo && _conflictLocalTooLarge;
+  const set = (id, disabled) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  };
+  const setChoice = (id, stateReason) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = busy || !!stateReason;
+    if (stateReason) {
+      el.setAttribute('aria-disabled', 'true');
+      el.setAttribute('aria-describedby', stateReason);
+    } else {
+      el.removeAttribute('aria-disabled');
+      el.removeAttribute('aria-describedby');
+    }
+  };
+  // With both states the limit note is hidden and the body text explains.
+  setChoice('sync-conflict-use-local',
+    tooLarge ? (cloudAbsent ? 'sync-conflict-text' : 'sync-conflict-limit') : null);
+  setChoice('sync-conflict-use-cloud', cloudAbsent ? 'sync-conflict-cloud-empty' : null);
+  set('sync-conflict-signout', busy);
+  set('sync-conflict-defer', _conflictResolving);
+}
+
+// Focus the first usable choice; without one, the defer link; with neither
+// (a choice is in flight), leave focus alone.
+function _focusFirstConflictControl() {
+  for (const id of ['sync-conflict-use-local', 'sync-conflict-use-cloud', 'sync-conflict-defer']) {
+    const el = document.getElementById(id);
+    if (el && !el.disabled) {
+      el.focus();
+      return;
+    }
+  }
+}
+
+// An element focus can go back to: still in the document, enabled and not
+// inside a hidden subtree. Never the body.
+function _isFocusReturnTarget(el) {
+  if (!el || el === document.body || el === document.documentElement) return false;
+  if (!el.isConnected || el.disabled) return false;
+  return !el.closest('.hidden, [hidden]');
 }
 
 // Idempotent: a second notification while open only re-renders the content.
 function _openSyncConflictDialog(info) {
   const overlay = document.getElementById('sync-conflict-overlay');
   if (!overlay || !info) return;
+  if (overlay.classList.contains('hidden')) {
+    // Remember where focus was before the dialog takes it. A control disabled
+    // at this moment (the sidebar Upload button disables itself while it
+    // runs) is not remembered: the browser has already dropped its focus.
+    const active = document.activeElement;
+    _conflictReturnFocus = _isFocusReturnTarget(active) ? active : null;
+  }
   _conflictInfo = info;
   _renderSyncConflictDialog(info);
   overlay.classList.remove('hidden');
+  // While a choice is in flight, keep its result line and the focus as they
+  // are; the controls were already recomputed by the render.
   if (_conflictResolving) return;
   _setConflictError(null);
-  _setConflictControlsDisabled(false);
-  document.getElementById('sync-conflict-use-local')?.focus();
+  _focusFirstConflictControl();
+}
+
+// "Decide later" / Escape: hide the dialog and nothing else. The conflict stays
+// pending and auto-upload stays paused; no sync function is called. Refused
+// while a choice is in flight (its result lands as the user's choice).
+function _deferSyncConflictDialog() {
+  if (_conflictResolving) return;
+  const returnTo = _conflictReturnFocus;
+  _conflictReturnFocus = null;
+  _closeSyncConflictDialog();
+  if (_isFocusReturnTarget(returnTo)) returnTo.focus();
+  else document.getElementById('left-sidebar-handle')?.focus();
+}
+
+// Document-level Escape for the dialogs owned by this file, topmost first:
+// the conflict dialog (deferred; the key goes no further), then the
+// delete-account dialog. app.js's central handler steps aside for both.
+function _handleFirebaseDialogsEscape(e) {
+  if (e.key !== 'Escape') return;
+  const conflictOverlay = document.getElementById('sync-conflict-overlay');
+  if (conflictOverlay && !conflictOverlay.classList.contains('hidden')) {
+    _deferSyncConflictDialog();
+    e.stopImmediatePropagation();
+    return;
+  }
+  if (_deleteAccountResolve) _closeDeleteAccountModal(false);
 }
 
 // Error code -> i18n key of the dialog's inline error line. Two codes only
@@ -2605,13 +2771,6 @@ function _setConflictError(code) {
   errEl.classList.toggle('hidden', !code);
 }
 
-function _setConflictControlsDisabled(disabled) {
-  for (const id of ['sync-conflict-use-local', 'sync-conflict-use-cloud', 'sync-conflict-signout']) {
-    const el = document.getElementById(id);
-    if (el) el.disabled = disabled;
-  }
-}
-
 // Applies the user's choice. Result rules (in order): success -> close + toast;
 // cloud had no data (local imported) -> close + notice; no-conflict, session
 // change or signed-out -> close silently; conflict already cleared (only a
@@ -2620,9 +2779,12 @@ function _setConflictControlsDisabled(disabled) {
 // choose-local always lands here, since it keeps the conflict pending (§6.4).
 async function _handleConflictChoice(choice) {
   if (_conflictResolving) return;
-  _conflictResolving = true;
-  _setConflictControlsDisabled(true);
+  // Second line of defence behind the disabled buttons: no choice while the
+  // dialog's sign-out is running.
+  if (_conflictSigningOut) return;
   try {
+    _conflictResolving = true;
+    _applyConflictControls();
     let r;
     try {
       r = await fbResolveSyncConflict(choice);
@@ -2641,14 +2803,36 @@ async function _handleConflictChoice(choice) {
     } else if (!fbGetSyncConflict()) {
       _closeSyncConflictDialog();
       showToast(t(_syncErrorToastKey(r?.code)), 'error');
+    } else if (r?.code === 'payload-too-large' && _conflictInfo) {
+      // The local data grew past the limit after the dialog opened (D6
+      // fallback). Re-render so the size is rechecked: when it now reads too
+      // large, the persistent note explains and use-local turns disabled;
+      // otherwise the inline error does, so the failure is never silent.
+      _renderSyncConflictDialog(_conflictInfo);
+      _setConflictError(_conflictLocalTooLarge ? null : r.code);
     } else {
       _setConflictError(r?.code);
-      _setConflictControlsDisabled(false);
     }
   } finally {
+    // Controls are recomputed only after the flag is cleared (re-enabling them
+    // in the branch above would still see it set).
     _conflictResolving = false;
     _updateSyncUI();
+    _applyConflictControls();
+    _refocusConflictDialogIfLost();
   }
+}
+
+// After a failed choice the dialog stays open, but the focused control may
+// have just been disabled (or the browser dropped focus to the body while the
+// buttons were busy): hand focus to the first usable control again. Leaves
+// focus alone when it is on a usable element or the dialog is closed.
+function _refocusConflictDialogIfLost() {
+  const overlay = document.getElementById('sync-conflict-overlay');
+  if (!overlay || overlay.classList.contains('hidden')) return;
+  const active = document.activeElement;
+  if (active && active !== document.body && !active.disabled) return;
+  _focusFirstConflictControl();
 }
 
 function _bindSyncConflictButtons() {
@@ -2661,23 +2845,26 @@ function _bindSyncConflictButtons() {
   bind('sync-conflict-use-local', () => _handleConflictChoice('local'));
   bind('sync-conflict-use-cloud', () => _handleConflictChoice('cloud'));
   bind('sync-conflict-signout', async () => {
-    if (_conflictResolving) return;
-    const link = document.getElementById('sync-conflict-signout');
-    if (link) link.disabled = true;
+    if (_conflictResolving || _conflictSigningOut) return;
     try {
+      _conflictSigningOut = true;
+      _applyConflictControls();
       await fbSignOut();
     } catch (e) {
       console.warn('[firebase] sign out from conflict dialog failed', e);
       showToast(t('toast.syncFailed'), 'error');
     } finally {
-      if (link) link.disabled = false;
+      _conflictSigningOut = false;
+      _applyConflictControls();
     }
   });
+  bind('sync-conflict-defer', () => _deferSyncConflictDialog());
 }
 
 function _closeSyncConflictDialog() {
   document.getElementById('sync-conflict-overlay')?.classList.add('hidden');
   _conflictInfo = null;
+  _conflictLocalTooLarge = false;
   _setConflictError(null);
 }
 
@@ -2803,9 +2990,7 @@ async function fbInit() {
     if (_deleteAccountSeconds > 0) return;
     _closeDeleteAccountModal(true);
   });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && _deleteAccountResolve) _closeDeleteAccountModal(false);
-  });
+  document.addEventListener('keydown', (e) => _handleFirebaseDialogsEscape(e));
   _bindSyncActionButtons();
   _bindSyncConflictButtons();
 

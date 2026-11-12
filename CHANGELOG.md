@@ -9,6 +9,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- The conflict dialog can now be put off with "Decide later" (or Esc). It only closes the dialog: the conflict stays unresolved and automatic sync stays paused; click "Upload" in the sidebar to reopen it. Reloading the page or opening a new tab checks again and shows the dialog again; if the cloud has no data by then, the reload uploads the local data to the empty cloud instead (nothing is lost). When reopened, the local side shows your latest data
+
 ### Fixed
 - A long-open tab could silently overwrite newer cloud data written by another device; uploads now carry a Firestore precondition and fall back to conflict detection when the cloud has changed
 - An upload could be sent while a pull was still in flight
@@ -20,6 +23,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Deleting the account is now queued on the same sync queue, and no uploads are started while the deletion runs
 - When "Use local" fails, the conflict dialog stays open with an inline error so you can retry
 - When the cloud data has been deleted or emptied, the conflict dialog now shows a matching explanation
+- In the conflict dialog, "Use cloud" is greyed out and the cloud side shows as empty when the cloud has no data; "Use local" is greyed out when the local data is over the upload limit, with the reason shown as soon as the dialog opens
 - The manual Upload button only reports "Uploaded" when the upload actually succeeded, says "Already up to date" when there was nothing to upload, and explains why otherwise
 - A manual pull now explains why nothing was pulled (for example, the cloud has no data or local storage is unavailable)
 
