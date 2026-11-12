@@ -2498,14 +2498,23 @@ function _showDeleteAccountConfirm() {
 }
 
 // ── Sync-conflict choice dialog ─────────────────────────────
-// Opened through the `onSyncConflict` hook (installed by fbInit). Has no close
-// affordance: the user must pick a side (or sign out on account switch).
-// `_conflictInfo` is remembered so language changes can re-render in place;
-// `_conflictResolving` is owned by the choice handler (true while a choice is
-// being applied) and keeps late notifications from re-enabling the buttons.
+// Opened through the `onSyncConflict` hook (installed by fbInit). The user
+// picks a side, signs out (account switch only), or puts the choice off with
+// "Decide later" / Escape: that only hides the dialog — the conflict stays
+// pending, automatic uploads stay paused, and the next conflict notification
+// (e.g. the sidebar Upload button) shows the dialog again. There is no
+// "deferred" flag on purpose.
+// `_conflictInfo` is remembered so language changes can re-render in place.
+// `_conflictResolving` (a choice is being applied) and `_conflictSigningOut`
+// (the dialog's sign-out link is running) are the only inputs of
+// _applyConflictControls, so every render recomputes the controls from them.
 let _conflictInfo = null;
 let _conflictResolving = false;
+let _conflictSigningOut = false;
 let _conflictErrorCode = null;
+// Element focused when the dialog went from hidden to visible (D7); null when
+// it was not worth returning to (body, or a control disabled at that moment).
+let _conflictReturnFocus = null;
 
 function _formatConflictTime(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return t('dialog.syncConflict.unknownTime');
@@ -2530,6 +2539,25 @@ function _renderSyncConflictSide(sideId, labelKey, timeLabelKey, ms, shortcuts, 
   set('time', _formatConflictTime(ms));
   set('shortcuts', t('dialog.syncConflict.shortcuts', { count: shortcuts }));
   set('folders', t('dialog.syncConflict.folders', { count: folders }));
+}
+
+// The local side of the dialog, recounted from the current state on every
+// render (the user may have edited while the dialog was put off). Display
+// only: the pending record keeps what it was recorded with. Falls back to the
+// recorded values when the local state cannot be read.
+function _currentLocalConflictSide(info) {
+  const recorded = {
+    shortcuts: info.localShortcutCount,
+    folders: info.localFolderCount,
+    editTime: info.localEditTime,
+  };
+  try {
+    if (typeof items === 'undefined') return recorded;
+    const counts = _countSyncItems(items);
+    return { shortcuts: counts.shortcuts, folders: counts.folders, editTime: _localEditTs };
+  } catch {
+    return recorded;
+  }
 }
 
 function _renderSyncConflictDialog(info) {
@@ -2561,26 +2589,97 @@ function _renderSyncConflictDialog(info) {
   }
   document.getElementById('sync-conflict-signout-row')?.classList.toggle('hidden', !isSwitch);
 
+  const local = _currentLocalConflictSide(info);
   _renderSyncConflictSide('sync-conflict-local', 'dialog.syncConflict.localLabel',
-    'dialog.syncConflict.localTimeLabel', info.localEditTime,
-    info.localShortcutCount, info.localFolderCount);
+    'dialog.syncConflict.localTimeLabel', local.editTime,
+    local.shortcuts, local.folders);
   _renderSyncConflictSide('sync-conflict-cloud',
     isSwitch ? 'dialog.syncConflict.cloudLabelCurrent' : 'dialog.syncConflict.cloudLabel',
     'dialog.syncConflict.cloudTimeLabel', info.cloudUpdateTime,
     info.cloudShortcutCount, info.cloudFolderCount);
+
+  _applyConflictControls();
+}
+
+// Recomputes which dialog controls are usable from module state only. Safe
+// with no conflict info and with any control missing from the DOM.
+function _applyConflictControls() {
+  const busy = _conflictResolving || _conflictSigningOut;
+  const set = (id, disabled) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  };
+  set('sync-conflict-use-local', busy);
+  set('sync-conflict-use-cloud', busy);
+  set('sync-conflict-signout', busy);
+  set('sync-conflict-defer', _conflictResolving);
+}
+
+// Focus the first usable choice; without one, the defer link; with neither
+// (a choice is in flight), leave focus alone.
+function _focusFirstConflictControl() {
+  for (const id of ['sync-conflict-use-local', 'sync-conflict-use-cloud', 'sync-conflict-defer']) {
+    const el = document.getElementById(id);
+    if (el && !el.disabled) {
+      el.focus();
+      return;
+    }
+  }
+}
+
+// An element focus can go back to: still in the document, enabled and not
+// inside a hidden subtree. Never the body.
+function _isFocusReturnTarget(el) {
+  if (!el || el === document.body || el === document.documentElement) return false;
+  if (!el.isConnected || el.disabled) return false;
+  return !el.closest('.hidden, [hidden]');
 }
 
 // Idempotent: a second notification while open only re-renders the content.
 function _openSyncConflictDialog(info) {
   const overlay = document.getElementById('sync-conflict-overlay');
   if (!overlay || !info) return;
+  if (overlay.classList.contains('hidden')) {
+    // Remember where focus was before the dialog takes it. A control disabled
+    // at this moment (the sidebar Upload button disables itself while it
+    // runs) is not remembered: the browser has already dropped its focus.
+    const active = document.activeElement;
+    _conflictReturnFocus = _isFocusReturnTarget(active) ? active : null;
+  }
   _conflictInfo = info;
   _renderSyncConflictDialog(info);
   overlay.classList.remove('hidden');
+  // While a choice is in flight, keep its result line and the focus as they
+  // are; the controls were already recomputed by the render.
   if (_conflictResolving) return;
   _setConflictError(null);
-  _setConflictControlsDisabled(false);
-  document.getElementById('sync-conflict-use-local')?.focus();
+  _focusFirstConflictControl();
+}
+
+// "Decide later" / Escape: hide the dialog and nothing else. The conflict stays
+// pending and auto-upload stays paused; no sync function is called. Refused
+// while a choice is in flight (its result lands as the user's choice).
+function _deferSyncConflictDialog() {
+  if (_conflictResolving) return;
+  const returnTo = _conflictReturnFocus;
+  _conflictReturnFocus = null;
+  _closeSyncConflictDialog();
+  if (_isFocusReturnTarget(returnTo)) returnTo.focus();
+  else document.getElementById('left-sidebar-handle')?.focus();
+}
+
+// Document-level Escape for the dialogs owned by this file, topmost first:
+// the conflict dialog (deferred; the key goes no further), then the
+// delete-account dialog. app.js's central handler steps aside for both.
+function _handleConflictDialogEscape(e) {
+  if (e.key !== 'Escape') return;
+  const conflictOverlay = document.getElementById('sync-conflict-overlay');
+  if (conflictOverlay && !conflictOverlay.classList.contains('hidden')) {
+    _deferSyncConflictDialog();
+    e.stopImmediatePropagation();
+    return;
+  }
+  if (_deleteAccountResolve) _closeDeleteAccountModal(false);
 }
 
 // Error code -> i18n key of the dialog's inline error line. Two codes only
@@ -2605,13 +2704,6 @@ function _setConflictError(code) {
   errEl.classList.toggle('hidden', !code);
 }
 
-function _setConflictControlsDisabled(disabled) {
-  for (const id of ['sync-conflict-use-local', 'sync-conflict-use-cloud', 'sync-conflict-signout']) {
-    const el = document.getElementById(id);
-    if (el) el.disabled = disabled;
-  }
-}
-
 // Applies the user's choice. Result rules (in order): success -> close + toast;
 // cloud had no data (local imported) -> close + notice; no-conflict, session
 // change or signed-out -> close silently; conflict already cleared (only a
@@ -2620,9 +2712,12 @@ function _setConflictControlsDisabled(disabled) {
 // choose-local always lands here, since it keeps the conflict pending (§6.4).
 async function _handleConflictChoice(choice) {
   if (_conflictResolving) return;
-  _conflictResolving = true;
-  _setConflictControlsDisabled(true);
+  // Second line of defence behind the disabled buttons: no choice while the
+  // dialog's sign-out is running.
+  if (_conflictSigningOut) return;
   try {
+    _conflictResolving = true;
+    _applyConflictControls();
     let r;
     try {
       r = await fbResolveSyncConflict(choice);
@@ -2643,11 +2738,13 @@ async function _handleConflictChoice(choice) {
       showToast(t(_syncErrorToastKey(r?.code)), 'error');
     } else {
       _setConflictError(r?.code);
-      _setConflictControlsDisabled(false);
     }
   } finally {
+    // Controls are recomputed only after the flag is cleared (re-enabling them
+    // in the branch above would still see it set).
     _conflictResolving = false;
     _updateSyncUI();
+    _applyConflictControls();
   }
 }
 
@@ -2661,18 +2758,20 @@ function _bindSyncConflictButtons() {
   bind('sync-conflict-use-local', () => _handleConflictChoice('local'));
   bind('sync-conflict-use-cloud', () => _handleConflictChoice('cloud'));
   bind('sync-conflict-signout', async () => {
-    if (_conflictResolving) return;
-    const link = document.getElementById('sync-conflict-signout');
-    if (link) link.disabled = true;
+    if (_conflictResolving || _conflictSigningOut) return;
     try {
+      _conflictSigningOut = true;
+      _applyConflictControls();
       await fbSignOut();
     } catch (e) {
       console.warn('[firebase] sign out from conflict dialog failed', e);
       showToast(t('toast.syncFailed'), 'error');
     } finally {
-      if (link) link.disabled = false;
+      _conflictSigningOut = false;
+      _applyConflictControls();
     }
   });
+  bind('sync-conflict-defer', () => _deferSyncConflictDialog());
 }
 
 function _closeSyncConflictDialog() {
@@ -2803,9 +2902,7 @@ async function fbInit() {
     if (_deleteAccountSeconds > 0) return;
     _closeDeleteAccountModal(true);
   });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && _deleteAccountResolve) _closeDeleteAccountModal(false);
-  });
+  document.addEventListener('keydown', (e) => _handleConflictDialogEscape(e));
   _bindSyncActionButtons();
   _bindSyncConflictButtons();
 

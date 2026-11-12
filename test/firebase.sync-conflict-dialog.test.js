@@ -3,7 +3,11 @@ import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { mountAuthDom } from './helpers/authDomFixture.js';
 import { installUiMocks } from './helpers/uiMocks.js';
 import { jsonResponse } from './helpers/mockFetch.js';
-import { setupSignedInFirebase, firestoreGetRoute } from './helpers/setupSignedInFirebase.js';
+import {
+  setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute, TEST_UID,
+} from './helpers/setupSignedInFirebase.js';
+import { loadAppModule } from './helpers/loadAppModule.js';
+import { installAppDomFixture } from './helpers/appDomFixture.js';
 import { cleanupFbInitIntercepts, installFbInitEventTracking } from './helpers/fbInitIntercepts.js';
 
 const INFO = {
@@ -17,10 +21,36 @@ const INFO = {
   trigger: 'sign-in',
 };
 
+// Local state with `shortcuts` links at the top level and `folders` empty
+// folders: the dialog recounts the local side from `items` on every render (D4).
+function localItems(shortcuts, folders) {
+  const list = [];
+  for (let i = 0; i < shortcuts; i += 1) list.push({ id: `s${i}`, type: 'link' });
+  for (let i = 0; i < folders; i += 1) list.push({ id: `f${i}`, type: 'folder', children: [] });
+  return list;
+}
+
+// The free variables _buildSyncSnapshot / the local recount read (app.js
+// owns them in production).
+function installSyncGlobals() {
+  globalThis.items = localItems(INFO.localShortcutCount, INFO.localFolderCount);
+  globalThis.customEngines = [];
+  globalThis.selectedEngineId = 'google';
+  globalThis.clocks = [];
+  globalThis.mainGridColumns = 4;
+}
+
+function deleteSyncGlobals() {
+  for (const k of ['items', 'customEngines', 'selectedEngineId', 'clocks', 'mainGridColumns']) {
+    delete globalThis[k];
+  }
+}
+
 function setup() {
   const mocks = installUiMocks();
   const fb = loadFirebaseModule();
   mountAuthDom();
+  installSyncGlobals();
   globalThis.fbGetEmail = vi.fn(() => 'user@example.com');
   globalThis.fbGetSyncConflict = vi.fn(() => ({ ...INFO }));
   return { fb, ...mocks };
@@ -37,6 +67,7 @@ afterEach(() => {
   delete globalThis.fbResolveSyncConflict;
   delete globalThis.fbIsSignedIn;
   delete globalThis.fbSignOut;
+  deleteSyncGlobals();
   document.body.innerHTML = '';
 });
 
@@ -118,19 +149,22 @@ describe('_renderSyncConflictDialog', () => {
 
   it('shows the unknown label when a time is 0', () => {
     const { fb } = setup();
-    fb._renderSyncConflictDialog({ ...INFO, localEditTime: 0 });
+    // The local time comes from the module's last-edit time (0 in a fresh load).
+    fb._renderSyncConflictDialog({ ...INFO });
     expect(field('local', 'time').textContent).toBe('dialog.syncConflict.unknownTime');
+    fb._renderSyncConflictDialog({ ...INFO, cloudUpdateTime: 0 });
+    expect(field('cloud', 'time').textContent).toBe('dialog.syncConflict.unknownTime');
   });
 });
 
 describe('_openSyncConflictDialog', () => {
   it('open twice re-renders a single overlay', () => {
     const { fb, t } = setup();
-    fb._openSyncConflictDialog({ ...INFO, localShortcutCount: 36 });
-    fb._openSyncConflictDialog({ ...INFO, localShortcutCount: 7 });
+    fb._openSyncConflictDialog({ ...INFO, cloudShortcutCount: 12 });
+    fb._openSyncConflictDialog({ ...INFO, cloudShortcutCount: 7 });
     expect(document.querySelectorAll('#sync-conflict-overlay').length).toBe(1);
     expect($('sync-conflict-overlay').classList.contains('hidden')).toBe(false);
-    const lastShortcuts = t.mock.calls.filter(c => c[0] === 'dialog.syncConflict.shortcuts' && c[1].count !== 12);
+    const lastShortcuts = t.mock.calls.filter(c => c[0] === 'dialog.syncConflict.shortcuts' && c[1].count !== 36);
     expect(lastShortcuts[lastShortcuts.length - 1][1]).toEqual({ count: 7 });
   });
 
@@ -398,13 +432,17 @@ describe('_handleConflictChoice', () => {
     expect($('sync-conflict-use-local').disabled).toBe(false);
     expect($('sync-conflict-use-cloud').disabled).toBe(false);
     expect($('sync-conflict-signout').disabled).toBe(false);
+    // (I1) the defer link comes back too: the controls are recomputed after
+    // the resolving flag was cleared, not re-enabled while it is still set.
+    expect($('sync-conflict-defer').disabled).toBe(false);
     expect(showToast).not.toHaveBeenCalled();
     expect(updateSpy).toHaveBeenCalled();
   });
 
+  // payload-too-large is left out on purpose: its inline handling depends on
+  // the size recheck (D6) and is covered separately (stage 3).
   it.each([
     ['cloud-changed', 'dialog.syncConflict.cloudChanged'],
-    ['payload-too-large', 'dialog.syncConflict.payloadTooLarge'],
     ['retry-exhausted', 'toast.syncRetryExhausted'],
     ['storage-unavailable', 'toast.syncStorageUnavailable'],
     ['baseline-cleared', 'toast.syncBaselineCleared'],
@@ -656,6 +694,447 @@ describe('real sign-out from the conflict dialog', () => {
   });
 });
 
+// ── Stage 2: "Decide later" (defer), Escape, local recount ───────────────
+const isHidden = (id) => $(id).classList.contains('hidden');
+const pressEscape = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+// fbInit with its storage/auth dependencies stubbed: installs the hook, the
+// button bindings and the document-level Escape dispatcher.
+async function initStubbed(fb, { signedIn = true } = {}) {
+  installFbInitEventTracking();
+  globalThis._loadAuth = vi.fn(async () => {});
+  globalThis._loadRevState = vi.fn(async () => {});
+  globalThis._loadCloudBaseline = vi.fn(async () => {});
+  globalThis._bindSyncActionButtons = vi.fn();
+  globalThis.fbIsSignedIn = vi.fn(() => signedIn);
+  window.showSigninNotice = vi.fn();
+  await fb.fbInit();
+}
+
+const CLOUD_UPDATE_TIME = '2024-06-02T00:00:00.000000000Z';
+
+// Real module, signed in, local dirty, cloud different: the real fbInit's
+// startup pull records the conflict and opens the dialog through the default
+// hook. Every PATCH is recorded (none may be sent while the conflict is open).
+async function realConflict({ extraRoutes = [] } = {}) {
+  const mocks = installUiMocks();
+  const fb = loadFirebaseModule();
+  const patches = [];
+  const { storage } = await setupSignedInFirebase(fb, {
+    extraRoutes: [
+      ...extraRoutes,
+      firestoreGetRoute(async () => jsonResponse(200, {
+        updateTime: CLOUD_UPDATE_TIME,
+        fields: {
+          items: fb._toFV(JSON.stringify([{ id: 'cloud' }])),
+          engines: fb._toFV(JSON.stringify([])),
+          selected_engine: fb._toFV('google'),
+          clocks: fb._toFV(JSON.stringify([])),
+          grid_columns: fb._toFV(4),
+        },
+      })),
+      firestorePatchRoute(async (url) => {
+        patches.push(url);
+        return jsonResponse(200, { updateTime: '2024-06-03T00:00:00.000000Z' });
+      }),
+    ],
+  });
+  mountAuthDom();
+  globalThis.items = [{ id: 'local-only' }];
+  storage._data._fb_edit_rev = 3;
+  storage._data._fb_synced_rev = 2;
+  installFbInitEventTracking();
+  delete globalThis.onSyncConflict;
+  window.showSigninNotice = vi.fn();
+  await fb.fbInit();
+  return { fb, storage, patches, ...mocks };
+}
+
+function cleanupRealModule() {
+  for (const k of ['chrome', 'fetch', 'applyWallpaper', 'applyMainGridColumns', 'render',
+    'getSelectedEngine', 'isStorageLoadFailed', '_showDeleteAccountConfirm']) {
+    delete globalThis[k];
+  }
+  delete window.showSigninNotice;
+}
+
+describe('defer ("Decide later")', () => {
+  afterEach(cleanupRealModule);
+
+  it('(1) hides the dialog and keeps the conflict pending; hint, status and the auto-upload pause stay', async () => {
+    const { fb } = await realConflict();
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    $('sync-conflict-defer').click();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+    // Regression: these never depended on the dialog being visible.
+    expect(isHidden('sync-conflict-hint')).toBe(false);
+    expect($('sync-status-text').classList.contains('is-conflict')).toBe(true);
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      fb.scheduleSyncToCloud();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it.each(['manual-upload', 'manual-pull', 'startup', 'sign-in'])(
+    '(2) a later notification (trigger %s) reopens a deferred dialog', (trigger) => {
+      const { fb } = setup();
+      fb._bindSyncConflictButtons();
+      fb._openSyncConflictDialog({ ...INFO });
+      $('sync-conflict-defer').click();
+      expect(isHidden('sync-conflict-overlay')).toBe(true);
+      fb._openSyncConflictDialog({ ...INFO, trigger });
+      expect(isHidden('sync-conflict-overlay')).toBe(false);
+    });
+
+  it('(2) after a defer, the sidebar Upload reopens the dialog without sending a PATCH (real fbInit)', async () => {
+    const { fb, patches } = await realConflict();
+    $('sync-conflict-defer').click();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+    await fb._handleSyncBtn('upload');
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    expect(patches).toEqual([]);
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+  });
+
+  it('(3, I2) reopening shows the current local counts and edit time; the cloud side is unchanged', async () => {
+    const { fb } = await realConflict();
+    globalThis.t = vi.fn((key, vars) => (vars ? `${key}|${JSON.stringify(vars)}` : key));
+    $('sync-conflict-defer').click();
+
+    globalThis.items = [
+      { id: 'a' }, { id: 'b' },
+      { id: 'f', type: 'folder', children: [{ id: 'c' }] },
+    ];
+    const editTs = new Date(2026, 10, 12, 8, 5).getTime();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(editTs);
+    try {
+      await fb.markLocalCloudDataChanged();
+    } finally {
+      nowSpy.mockRestore();
+    }
+    await fb._handleSyncBtn('upload');
+
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    expect(field('local', 'shortcuts').textContent).toBe('dialog.syncConflict.shortcuts|{"count":3}');
+    expect(field('local', 'folders').textContent).toBe('dialog.syncConflict.folders|{"count":1}');
+    expect(field('local', 'time').textContent)
+      .toBe('dialog.syncConflict.timeFormat|{"month":"11","day":"12","time":"08:05"}');
+    expect(field('cloud', 'shortcuts').textContent).toBe('dialog.syncConflict.shortcuts|{"count":1}');
+    expect(field('cloud', 'folders').textContent).toBe('dialog.syncConflict.folders|{"count":0}');
+    expect(field('cloud', 'time').textContent)
+      .toBe(fb._formatConflictTime(Date.parse('2024-06-02T00:00:00Z')));
+    // UI only: the pending record keeps the counts it was recorded with.
+    expect(fb.fbGetSyncConflict().localShortcutCount).toBe(1);
+  });
+
+  it('(3, N-e) falls back to the recorded local side when items is not available', () => {
+    const { fb, t } = setup();
+    delete globalThis.items;
+    fb._openSyncConflictDialog({ ...INFO });
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.shortcuts', { count: 36 });
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.folders', { count: 4 });
+    expect(t).toHaveBeenCalledWith('dialog.syncConflict.timeFormat', { month: '01', day: '05', time: '09:07' });
+  });
+
+  it('(5) while a choice is resolving the link is disabled and neither it nor Escape closes the dialog', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    fb._openSyncConflictDialog({ ...INFO });
+    const d = deferred();
+    globalThis.fbResolveSyncConflict = vi.fn(() => d.promise);
+    $('sync-conflict-use-local').click();
+    expect($('sync-conflict-defer').disabled).toBe(true);
+    $('sync-conflict-defer').click();
+    fb._deferSyncConflictDialog(); // the handler itself refuses too, not only the disabled button
+    pressEscape();
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    // The choice lands as usual; here it fails and keeps the conflict pending.
+    d.resolve({ ok: false, code: 'network' });
+    await vi.waitFor(() => expect($('sync-conflict-defer').disabled).toBe(false));
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    expect($('sync-conflict-use-local').disabled).toBe(false);
+    $('sync-conflict-defer').click();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+  });
+
+  it('(6, M4) a re-render during the sign-out await keeps the link disabled; it comes back afterwards', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    const d = deferred();
+    globalThis.fbSignOut = vi.fn(() => d.promise);
+    $('sync-conflict-signout').click();
+    expect($('sync-conflict-signout').disabled).toBe(true);
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    fb._refreshSyncConflictDialogOnLangChange();
+    expect($('sync-conflict-signout').disabled).toBe(true);
+    d.resolve();
+    await vi.waitFor(() => expect($('sync-conflict-signout').disabled).toBe(false));
+  });
+
+  it('(6b, B1) while signing out both choices are disabled and a choice is refused even when called directly', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    const d = deferred();
+    globalThis.fbSignOut = vi.fn(() => d.promise);
+    globalThis.fbResolveSyncConflict = vi.fn(async () => ({ ok: true }));
+    $('sync-conflict-signout').click();
+    expect($('sync-conflict-use-local').disabled).toBe(true);
+    expect($('sync-conflict-use-cloud').disabled).toBe(true);
+    // The defer link stays usable: signing out is not a choice in flight.
+    expect($('sync-conflict-defer').disabled).toBe(false);
+    $('sync-conflict-use-local').click();
+    await fb._handleConflictChoice('local'); // N-c: the second line of defence
+    expect(globalThis.fbResolveSyncConflict).not.toHaveBeenCalled();
+    d.resolve();
+    await vi.waitFor(() => expect($('sync-conflict-use-local').disabled).toBe(false));
+    expect($('sync-conflict-use-cloud').disabled).toBe(false);
+  });
+
+  it('(6b, N-b) while a choice is resolving the sign-out link stays disabled across a re-render and does nothing', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    const d = deferred();
+    globalThis.fbResolveSyncConflict = vi.fn(() => d.promise);
+    globalThis.fbSignOut = vi.fn(async () => {});
+    $('sync-conflict-use-local').click();
+    fb._openSyncConflictDialog({ ...INFO, isAccountSwitch: true });
+    expect($('sync-conflict-signout').disabled).toBe(true);
+    $('sync-conflict-signout').click();
+    expect(globalThis.fbSignOut).not.toHaveBeenCalled();
+    globalThis.fbGetSyncConflict = vi.fn(() => null);
+    d.resolve({ ok: false, code: 'no-conflict' });
+    await vi.waitFor(() => expect(isHidden('sync-conflict-overlay')).toBe(true));
+  });
+
+  it('(7) defer after an inline error closes the dialog; reopening shows no error', () => {
+    const { fb } = setup();
+    fb._bindSyncConflictButtons();
+    fb._openSyncConflictDialog({ ...INFO });
+    fb._setConflictError('network');
+    expect(isHidden('sync-conflict-error')).toBe(false);
+    $('sync-conflict-defer').click();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+    fb._openSyncConflictDialog({ ...INFO });
+    expect($('sync-conflict-error').textContent).toBe('');
+    expect(isHidden('sync-conflict-error')).toBe(true);
+  });
+});
+
+describe('Escape on the conflict dialog', () => {
+  afterEach(cleanupRealModule);
+
+  it('(8) defers a visible dialog, keeps the conflict pending and stops later keydown listeners', async () => {
+    const { fb } = await realConflict();
+    const sentinel = vi.fn();
+    document.addEventListener('keydown', sentinel);
+    pressEscape();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+    expect(sentinel).not.toHaveBeenCalled();
+  });
+
+  it('(8) does not defer (nor swallow the key) while the dialog is closed', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    const deferSpy = vi.fn();
+    globalThis._deferSyncConflictDialog = deferSpy;
+    const sentinel = vi.fn();
+    document.addEventListener('keydown', sentinel);
+    pressEscape();
+    expect(deferSpy).not.toHaveBeenCalled();
+    expect(sentinel).toHaveBeenCalledTimes(1);
+  });
+
+  it('(8) with the delete-account dialog also open, one Escape only defers the conflict dialog', async () => {
+    const { fb } = setup();
+    await initStubbed(fb);
+    const confirm = fb._showDeleteAccountConfirm();
+    fb._openSyncConflictDialog({ ...INFO });
+    pressEscape();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+    expect(isHidden('delete-account-overlay')).toBe(false);
+    // The next Escape reaches the delete-account dialog as before.
+    pressEscape();
+    expect(isHidden('delete-account-overlay')).toBe(true);
+    await expect(confirm).resolves.toBe(false);
+  });
+
+  it('(10c, N5) real order — app.js central handler first, firebase.js dispatcher second: one Escape defers only the conflict dialog', async () => {
+    vi.useFakeTimers();
+    try {
+      installAppDomFixture();
+      installUiMocks();
+      installFbInitEventTracking(); // also removes app.js's keydown listener afterwards
+      loadAppModule();
+      globalThis.setupEventListeners();
+      const fb = loadFirebaseModule();
+      installSyncGlobals();
+      globalThis.fbGetEmail = vi.fn(() => 'user@example.com');
+      globalThis.fbGetSyncConflict = vi.fn(() => ({ ...INFO }));
+      globalThis._loadAuth = vi.fn(async () => {});
+      globalThis._loadRevState = vi.fn(async () => {});
+      globalThis._loadCloudBaseline = vi.fn(async () => {});
+      globalThis._bindSyncActionButtons = vi.fn();
+      globalThis.fbIsSignedIn = vi.fn(() => false);
+      window.showSigninNotice = vi.fn();
+      await fb.fbInit();
+
+      $('edit-overlay').classList.remove('hidden');
+      fb._openSyncConflictDialog({ ...INFO });
+      pressEscape();
+      expect(isHidden('sync-conflict-overlay')).toBe(true);
+      expect(isHidden('edit-overlay')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('focus after a defer (D7, M3)', () => {
+  afterEach(cleanupRealModule);
+
+  it('(9) opened from the sidebar Upload button: focus falls back to the sidebar handle', async () => {
+    const { fb } = await realConflict();
+    $('sync-conflict-defer').click();
+    $('sync-upload-btn').focus();
+    await fb._handleSyncBtn('upload');
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+    $('sync-conflict-defer').click();
+    expect(document.activeElement.id).toBe('left-sidebar-handle');
+  });
+
+  it('(9) returns focus to the element focused before opening while it is still usable', () => {
+    const { fb } = setup();
+    fb._bindSyncConflictButtons();
+    const probe = document.createElement('button');
+    probe.id = 'probe';
+    document.body.appendChild(probe);
+    probe.focus();
+    fb._openSyncConflictDialog({ ...INFO });
+    expect(document.activeElement.id).toBe('sync-conflict-use-local');
+    // A re-notification while open must not overwrite the remembered element.
+    fb._openSyncConflictDialog({ ...INFO });
+    $('sync-conflict-defer').click();
+    expect(document.activeElement.id).toBe('probe');
+  });
+
+  it('(9) falls back to the sidebar handle when the remembered element is gone or disabled', () => {
+    const { fb } = setup();
+    fb._bindSyncConflictButtons();
+    const probe = document.createElement('button');
+    document.body.appendChild(probe);
+    probe.focus();
+    fb._openSyncConflictDialog({ ...INFO });
+    probe.remove();
+    $('sync-conflict-defer').click();
+    expect(document.activeElement.id).toBe('left-sidebar-handle');
+
+    const probe2 = document.createElement('button');
+    document.body.appendChild(probe2);
+    probe2.focus();
+    fb._openSyncConflictDialog({ ...INFO });
+    probe2.disabled = true;
+    $('left-sidebar-handle').blur();
+    $('sync-conflict-defer').click();
+    expect(document.activeElement.id).toBe('left-sidebar-handle');
+  });
+});
+
+describe('ways out after a defer', () => {
+  afterEach(cleanupRealModule);
+
+  it('(10, M5) deleting the account clears the conflict; the dialog stays closed and the hint hides', async () => {
+    const { fb, showToast } = await realConflict({
+      extraRoutes: [
+        {
+          match: (url, options = {}) => url.includes(`/documents/users/${TEST_UID}/data/settings`) && options.method === 'DELETE',
+          respond: async () => jsonResponse(200, {}),
+        },
+        { match: (url) => url.includes('accounts:delete'), respond: async () => jsonResponse(200, {}) },
+      ],
+    });
+    $('sync-conflict-defer').click();
+    globalThis._showDeleteAccountConfirm = vi.fn(async () => true);
+    await fb._handleDeleteAccount();
+    expect(showToast).toHaveBeenCalledWith('toast.accountDeleted', 'default');
+    expect(fb.fbGetSyncConflict()).toBeNull();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+    expect(isHidden('sync-conflict-hint')).toBe(true);
+  });
+
+  it('(10b, N5) defer, sign out, sign in again, new conflict: the dialog reappears', async () => {
+    const { fb, storage } = await realConflict();
+    $('sync-conflict-defer').click();
+    await fb.fbSignOut();
+    expect(fb.fbGetSyncConflict()).toBeNull();
+    expect(isHidden('sync-conflict-overlay')).toBe(true);
+
+    Object.assign(storage._data, {
+      _fb_refresh: 'seed-refresh-token',
+      _fb_uid: TEST_UID,
+      _fb_email_verified: true,
+      _fb_email: 'user@example.com',
+    });
+    await fb._loadAuth();
+    await fb._pullAfterSignIn({ trigger: 'sign-in' });
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+    expect(isHidden('sync-conflict-overlay')).toBe(false);
+  });
+});
+
+describe('defer i18n', () => {
+  afterEach(() => {
+    delete window.I18N;
+  });
+
+  function loadDict(fs, file) {
+    const store = {};
+    const prev = window.I18N;
+    window.I18N = { register: (lang, dict) => { store[lang] = dict; } };
+    try {
+      new Function(fs.readFileSync(`${process.cwd()}/${file}`, 'utf8'))();
+    } finally {
+      if (prev === undefined) delete window.I18N; else window.I18N = prev;
+    }
+    return Object.values(store)[0];
+  }
+
+  it('(12) defer and the revised conflict hint use the approved wording; the page placeholder matches zh', async () => {
+    const fs = await import('node:fs');
+    const zh = loadDict(fs, 'i18n.zh.js');
+    const en = loadDict(fs, 'i18n.en.js');
+    expect(zh.dialog.syncConflict.defer).toBe('稍后处理');
+    expect(en.dialog.syncConflict.defer).toBe('Decide later');
+    expect(zh.sidebar.sync.conflictHint).toBe('本地与云端不一致，自动同步已暂停。点「上传」重新打开选择窗口。');
+    expect(en.sidebar.sync.conflictHint).toBe('Local and cloud data differ, so auto-sync is paused. Click Upload to choose again.');
+    const html = fs.readFileSync(`${process.cwd()}/newtab.html`, 'utf8');
+    expect(html).toContain(
+      '<button type="button" id="sync-conflict-defer" class="forgot-password-btn sync-conflict-defer" data-i18n="dialog.syncConflict.defer">稍后处理</button>');
+    expect(html).toContain(
+      'data-i18n="sidebar.sync.conflictHint">本地与云端不一致，自动同步已暂停。点「上传」重新打开选择窗口。</p>');
+  });
+
+  it('(12) the defer link text follows a language change', async () => {
+    const fs = await import('node:fs');
+    mountAuthDom();
+    for (const f of ['i18n.js', 'i18n.zh.js', 'i18n.en.js']) {
+      new Function(fs.readFileSync(`${process.cwd()}/${f}`, 'utf8'))();
+    }
+    window.I18N.setLang('en');
+    expect($('sync-conflict-defer').textContent).toBe('Decide later');
+    window.I18N.setLang('zh-CN');
+    expect($('sync-conflict-defer').textContent).toBe('稍后处理');
+  });
+});
+
 describe('sync-conflict i18n keys', () => {
   it('conflict keys exist in zh and en; the unreachable local-upload-failed key is gone', async () => {
     const fs = await import('node:fs');
@@ -664,6 +1143,7 @@ describe('sync-conflict i18n keys', () => {
       for (const key of [
         'syncConflictCloudGone', 'syncStorageUnavailable', 'syncBaselineCleared',
         'syncRetryExhausted', 'syncUpToDate', 'cloudChanged', 'cloudAbsent', 'payloadTooLarge',
+        'defer',
       ]) {
         expect(src).toContain(`${key}:`);
       }

@@ -1,5 +1,6 @@
 export function mountAuthDom() {
   document.body.innerHTML = `
+    <button type="button" id="left-sidebar-handle"></button>
     <div id="sync-status-text" class="sidebar-sync-status"></div>
     <p id="sync-conflict-hint" class="sidebar-sync-hint hidden"></p>
     <div id="sync-login-section"></div>
@@ -46,9 +47,12 @@ export function mountAuthDom() {
         <button type="button" id="sync-conflict-use-local" class="btn-secondary" data-i18n="dialog.syncConflict.useLocal">使用本地</button>
         <button type="button" id="sync-conflict-use-cloud" class="btn-secondary" data-i18n="dialog.syncConflict.useCloud">使用云端</button>
       </div>
-      <div id="sync-conflict-signout-row" class="sync-conflict-signout hidden">
-        <span data-i18n="dialog.syncConflict.wrongAccount">登错账号？</span>
-        <button type="button" id="sync-conflict-signout" class="forgot-password-btn" data-i18n="dialog.syncConflict.signOut">退出登录</button>
+      <div class="sync-conflict-footer">
+        <div id="sync-conflict-signout-row" class="sync-conflict-signout hidden">
+          <span data-i18n="dialog.syncConflict.wrongAccount">登错账号？</span>
+          <button type="button" id="sync-conflict-signout" class="forgot-password-btn" data-i18n="dialog.syncConflict.signOut">退出登录</button>
+        </div>
+        <button type="button" id="sync-conflict-defer" class="forgot-password-btn sync-conflict-defer" data-i18n="dialog.syncConflict.defer">稍后处理</button>
       </div>
     </div>
   </div>

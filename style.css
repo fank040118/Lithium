@@ -1437,10 +1437,11 @@ body {
 }
 .login-consent-card .dialog-actions { gap: 8px; }
 
-/* Sync-conflict dialog — no close affordance by design; user must choose a side.
+/* Sync-conflict dialog — the only way out besides choosing a side is the
+   "Decide later" link (or Esc), which just hides it while the conflict stays pending.
    Amber is reserved for the conflict state (see --warning-* in :root). */
 /* Above every other overlay (max 60, incl. the later-in-DOM icon-crop overlay);
-   below the toast (70). The dialog has no close affordance, so it must never be covered. */
+   below the toast (70). It must never be covered by another dialog. */
 .sync-conflict-overlay { z-index: 65; }
 
 .dialog-card.sync-conflict-card {
@@ -1511,6 +1512,20 @@ body {
 }
 .sync-conflict-actions { gap: 8px; }
 .sync-conflict-actions button { flex: 1; }
+.sync-conflict-actions .btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Footer row under the buttons: "Decide later" alone (same account), or
+   next to "Wrong account? Sign out" on one line (account switch). */
+.sync-conflict-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 6px 16px;
+}
+.sync-conflict-footer .sync-conflict-defer { align-self: auto; }
 .sync-conflict-signout {
   display: flex;
   justify-content: center;
@@ -1549,7 +1564,7 @@ body {
   color: var(--text-tertiary);
   background: var(--action-secondary);
 }
-.btn-secondary:hover { background: var(--action-secondary-hover); }
+.btn-secondary:not(:disabled):hover { background: var(--action-secondary-hover); }
 
 .btn-danger {
   background: var(--action-danger);

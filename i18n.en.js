@@ -65,7 +65,7 @@
           syncedAt: 'Synced at {time}',
           conflict: 'Unresolved conflict',
         },
-        conflictHint: 'Local and cloud data differ, so auto-sync is paused. Click Upload or Download to choose again.',
+        conflictHint: 'Local and cloud data differ, so auto-sync is paused. Click Upload to choose again.',
       },
     },
 
@@ -139,6 +139,7 @@
         useCloud: 'Use cloud',
         wrongAccount: 'Wrong account?',
         signOut: 'Sign out',
+        defer: 'Decide later',
         cloudChanged: 'The cloud data just changed again. The details above have been updated; please review and choose again.',
         cloudAbsent: 'The cloud data has been deleted or cleared. Either choice will normally refill the cloud with the local data.',
         payloadTooLarge: 'Local data exceeds the 100 KB upload limit, so it can\'t be kept. Trim custom icons and retry, or choose "Use cloud".',

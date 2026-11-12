@@ -98,6 +98,9 @@ const EXPORTED_NAMES = [
   '_setConflictError',
   '_bindSyncConflictButtons',
   '_refreshSyncConflictDialogOnLangChange',
+  '_applyConflictControls',
+  '_deferSyncConflictDialog',
+  '_handleConflictDialogEscape',
   'fbInit',
 ];
 
