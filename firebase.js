@@ -817,6 +817,16 @@ let _conflictPending = null;
 // (_dequeueGuard, spec §7.3 step 2) and again in _pushCore's I4 block, since
 // a deletion can start while an upload task is already running.
 let _accountDeleting = false;
+// In-flight snapshot (spec §3.2, §6.3): the payload of the latest PATCH whose
+// outcome is unknown (network failure, timeout, malformed response), with the
+// edit rev it started from: { snap, revAtStart } | null. A later pull that
+// finds exactly this content in the cloud adopts it as our own write instead
+// of treating it as a conflict. Only the latest one is kept: if two uploads
+// fail in a row and the earlier one is what actually landed, that pull falls
+// back to an ordinary comparison and may surface one extra conflict — the
+// accepted safe direction (§6.3), never an overwrite. Lost on reload, too.
+// Cleared by a successful PATCH, any landing and _resetSession.
+let _inflightUpload = null;
 
 function _isDirty() { return _editRev !== _syncedRev; }
 
@@ -853,6 +863,14 @@ function _buildSyncSnapshot() {
     clocks,
     grid_columns: mainGridColumns,
   };
+}
+
+// True when the cloud snapshot is exactly the in-flight upload's payload: every
+// field compared (none skipped) and equal.
+function _matchesInflight(cloudSnap) {
+  if (!_inflightUpload) return false;
+  const { equal, skippedFields } = _compareSnapshots(_inflightUpload.snap, cloudSnap);
+  return equal && skippedFields.length === 0;
 }
 
 // Recursively count shortcuts and folders in a sync snapshot's items for the
@@ -1331,6 +1349,8 @@ function _resetSession() {
   // so the next session starts clean (the conflict is re-detected on the next
   // pull from its own persisted state, not from a stale pending record).
   _clearConflictPending();
+  // So is an upload of unknown outcome: it was written for the old account.
+  _inflightUpload = null;
   // The cloud baseline belongs to the previous session: the new one must
   // re-establish it with a pull. Persisted keys are only removed by _clearAuth.
   _cloudBaseline = { kind: 'unknown' };
@@ -1523,8 +1543,8 @@ async function _pushCore(ctx, { precondition } = {}) {
   const pre = precondition ?? _preconditionFromBaseline(_cloudBaseline);
   const uid = _uid;
   // Edits made after this point (while the request is in flight) stay dirty
-  // and get picked up by a follow-up upload. snap and revAtStart are also the
-  // in-flight snapshot of spec §6.3 (Task 9).
+  // and get picked up by a follow-up upload. The body (from snap) and revAtStart
+  // are also the in-flight snapshot of spec §6.3.
   const revAtStart = _editRev;
   const snap = _buildSyncSnapshot();
   const body = _buildUploadBody(snap, Date.now());
@@ -1534,7 +1554,28 @@ async function _pushCore(ctx, { precondition } = {}) {
     throw new CloudSyncError('payload-too-large', 413);
   }
   ctx.budget.patch -= 1;
-  const cloudUpdateTime = await _fsSet({ url: _docUrl(uid) + _preconditionQuery(pre), token, body });
+  // The outcome of this PATCH is unknown (spec §6.3): the cloud may or may not
+  // hold `snap` now. Remember it so a later pull can recognise our own write.
+  // The baseline is left as it was and the local state stays dirty. Not for a
+  // previous session's request (_resetSession has cleared the record).
+  // The snapshot is decoded from the body actually sent, not kept as `snap`:
+  // `snap` references the live arrays, which later edits mutate in place.
+  const recordUnknownOutcome = () => {
+    if (ctx.alive()) {
+      _inflightUpload = { snap: _cloudSnapshotFromFields(JSON.parse(body).fields), revAtStart };
+    }
+  };
+  let cloudUpdateTime;
+  try {
+    cloudUpdateTime = await _fsSet({ url: _docUrl(uid) + _preconditionQuery(pre), token, body });
+  } catch (err) {
+    // Network failure or timeout (_timedFetch: network, status 0). A definite
+    // rejection did not write and is not recorded: precondition, rules, any
+    // other HTTP error — including a 401/403 whose token refresh then failed
+    // on the network (network with the HTTP status).
+    if (err?.code === 'network' && !err.status) recordUnknownOutcome();
+    throw err;
+  }
 
   // The response landed after the identity changed (sign-out/sign-in while the
   // request was in flight). This upload belongs to the previous session: drop
@@ -1543,11 +1584,17 @@ async function _pushCore(ctx, { precondition } = {}) {
   // signal and let the old account's local items be uploaded to the new one.
   if (!ctx.alive()) return { uploaded: false, reason: 'session-changed' };
 
-  if (!cloudUpdateTime) throw new CloudSyncError('firestore', 0, new Error('No updateTime in response'));
-  const cloudBaseline = _knownBaseline(cloudUpdateTime);
+  // A 2xx without a usable updateTime: the write probably happened, but there
+  // is no version to base on.
+  const cloudBaseline = cloudUpdateTime ? _knownBaseline(cloudUpdateTime) : null;
   if (!cloudBaseline) {
-    throw new CloudSyncError('firestore', 0, new Error('Invalid updateTime from server'));
+    recordUnknownOutcome();
+    throw new CloudSyncError('firestore', 0, new Error(cloudUpdateTime
+      ? 'Invalid updateTime from server' : 'No updateTime in response'));
   }
+  // The outcome is known: this payload (not an earlier unknown one) is what
+  // the cloud holds now.
+  _inflightUpload = null;
   const serverMs = _updateTimeToMs(cloudUpdateTime);
   // The cloud now holds this local state, so it becomes the sync baseline. A
   // session change during the bookkeeping stops it with the local state still
@@ -1657,6 +1704,28 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseSt
     return { applied: false, outcome: 'cloud-empty', cloud };
   };
 
+  // An in-flight snapshot hit: adopt the GET's raw string as the baseline
+  // without landing anything (the cloud content is our own payload). Clean
+  // when no edit was made since that upload started, otherwise dirty with a
+  // follow-up upload. A pending conflict is resolved silently (§7.3).
+  const adoptInflight = async (baseline) => {
+    // Decided in one synchronous block with the adoption's syncedRev capture
+    // (spec §6.5): an edit during the awaits below stays dirty.
+    const { revAtStart } = _inflightUpload;
+    const clean = _editRev === revAtStart;
+    _inflightUpload = null;
+    _syncState = 'idle';
+    _updateSyncUI();
+    if (!(await _adoptCloudVersion(ctx, baseline, { syncedRev: clean ? revAtStart : null }))) {
+      return sessionChanged();
+    }
+    _clearConflictPending();
+    _updateSyncUI(_updateTimeToMs(baseline.raw));
+    // After the pending is cleared: scheduleSyncToCloud is a no-op while one is.
+    if (_isDirty()) scheduleSyncToCloud();
+    return { applied: true, outcome: 'adopted' };
+  };
+
   if (!doc) {
     return pendingRules ? markCloudAbsent('not-found', null, 0) : cloudEmpty({ kind: 'absent' }, 'not-found');
   }
@@ -1675,6 +1744,14 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseSt
     return pendingRules
       ? markCloudAbsent('empty', cloudUpdateTime, cloudTsMs)
       : cloudEmpty(cloudBaseline, 'empty');
+  }
+
+  // The cloud holds exactly the payload of our upload of unknown outcome
+  // (spec §6.3): that write succeeded. Checked before the fast path and, while
+  // a conflict is pending, before the content comparison (a hit counts as
+  // "same content", §7.3). Not for choose-cloud, which lands unconditionally.
+  if (mode !== 'resolve-cloud' && _matchesInflight(_cloudSnapshotFromFields(doc.fields))) {
+    return adoptInflight(cloudBaseline);
   }
 
   // Cloud unchanged since the baseline (spec §4): skip, adopting the GET's raw
@@ -1780,6 +1857,9 @@ async function _pullCore(ctx, { mode, trigger, compareWhenClean = false, reuseSt
     return sessionChanged();
   }
   _clearConflictPending();
+  // The local state is now the landed cloud content: an earlier upload of
+  // unknown outcome no longer describes anything to recognise.
+  _inflightUpload = null;
 
   applyWallpaper();
   applyMainGridColumns();
@@ -2006,7 +2086,11 @@ let _lastSyncDisplayTs = 0;
 // Read-only snapshot of internal sync flags that tests cannot reach otherwise
 // (top-level `let` bindings are not visible through the test loader).
 function _getSyncDebugState() {
-  return { lastSyncDisplayTs: _lastSyncDisplayTs, accountDeleting: _accountDeleting };
+  return {
+    lastSyncDisplayTs: _lastSyncDisplayTs,
+    accountDeleting: _accountDeleting,
+    inflightUpload: _inflightUpload,
+  };
 }
 
 function _updateSyncUI(ts) {
