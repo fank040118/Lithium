@@ -13,3 +13,20 @@ export function createRoutedFetch(routes) {
     return route.respond(url, options);
   };
 }
+
+// A promise whose settlement the test controls.
+export function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+// A response whose headers arrived but whose body never finishes reading.
+export function hangingFetchResponse(status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => new Promise(() => {}),
+  };
+}

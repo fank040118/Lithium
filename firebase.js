@@ -26,6 +26,9 @@ const FB_BASELINE_UID_KEY = '_fb_sync_baseline_uid';
 // payloads may under-count bytes and then fall through to the server's 403,
 // which keeps the session and shows the dedicated toast as a backstop.
 const FB_PAYLOAD_MAX_BYTES = 90000;
+// Upper bound for one cloud request, measured until the response body has
+// been read. A hung request would otherwise block every later sync step.
+const FB_FETCH_TIMEOUT_MS = 20000;
 
 const _fbStore = () =>
   globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local || null;
@@ -52,6 +55,36 @@ class CloudSyncError extends Error {
     this.code = code; // 'network' | 'auth' | 'quota' | 'firestore' | 'not-signed-in' | 'payload-too-large'
     this.status = status;
     this.original = original;
+  }
+}
+
+// Runs one cloud request and reads its JSON body under a single deadline.
+// Resolves to { res, data } with data = null when the body is not valid JSON.
+// A timeout or a fetch failure rejects with a `network` CloudSyncError. The
+// deadline is raced instead of relying on the abort alone, because a response
+// body (or a test double) that ignores the signal must not hang the caller.
+async function _timedFetch(url, options = {}) {
+  const controller = new AbortController();
+  let timer = null;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`Request timed out after ${FB_FETCH_TIMEOUT_MS}ms`));
+      controller.abort();
+    }, FB_FETCH_TIMEOUT_MS);
+  });
+  const request = (async () => {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    return { res, data };
+  })();
+
+  try {
+    return await Promise.race([request, deadline]);
+  } catch (err) {
+    throw new CloudSyncError('network', 0, err);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -135,23 +168,18 @@ async function _doRefreshToken() {
   // late refresh would revive the signed-out account (and its uid).
   const epoch = _authEpoch;
 
-  let res;
-  try {
-    res = await fetch(
-      `https://securetoken.googleapis.com/v1/token?key=${FB_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: _refreshToken }),
-        cache: 'no-store',
-      }
-    );
-  } catch (err) {
-    throw new CloudSyncError('network', 0, err);
-  }
-
-  let data = {};
-  try { data = await res.json(); } catch {}
+  // A timeout rejects with `network` before any auth state is touched, so a
+  // hung refresh never signs the user out.
+  const { res, data: body } = await _timedFetch(
+    `https://securetoken.googleapis.com/v1/token?key=${FB_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: _refreshToken }),
+      cache: 'no-store',
+    }
+  );
+  const data = body || {};
 
   if (!res.ok) {
     const msg = data.error?.message || '';
@@ -446,27 +474,25 @@ async function _fsGet() {
   const token = await _getToken();
   if (!token) throw new CloudSyncError('not-signed-in', 0);
 
-  let res;
-  try {
-    res = await fetch(_docUrl(), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-      },
-      cache: 'no-store',
-    });
-  } catch (err) {
-    throw new CloudSyncError('network', 0, err);
-  }
+  const { res, data } = await _timedFetch(_docUrl(), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+    },
+    cache: 'no-store',
+  });
 
   if (res.status === 404) return null;
 
   if (!res.ok) {
-    const { code, status } = await _parseFirestoreError(res);
+    const { code, status } = await _parseFirestoreError(res, data);
     throw new CloudSyncError(code, status);
   }
-  return await res.json();
+  // A 200 whose body cannot be parsed says nothing about the document; it
+  // must never be mistaken for "document absent" (null).
+  if (data === null) throw new CloudSyncError('firestore', res.status);
+  return data;
 }
 
 async function _fsSet(data) {
@@ -482,36 +508,30 @@ async function _fsSet(data) {
     throw new CloudSyncError('payload-too-large', 413);
   }
 
-  let res;
-  try {
-    res = await fetch(_docUrl(), {
-      method: 'PATCH',
-      cache: 'no-store',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-      },
-      body,
-    });
-  } catch (err) {
-    throw new CloudSyncError('network', 0, err);
-  }
+  const { res, data: doc } = await _timedFetch(_docUrl(), {
+    method: 'PATCH',
+    cache: 'no-store',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+    },
+    body,
+  });
 
   if (!res.ok) {
-    const { code, status } = await _parseFirestoreError(res);
+    const { code, status } = await _parseFirestoreError(res, doc);
     throw new CloudSyncError(code, status);
   }
 
-  let doc = null;
-  try { doc = await res.json(); } catch { return null; }
   return doc?.updateTime || null;
 }
 
-async function _parseFirestoreError(res) {
-  let data = {};
-  try { data = await res.json(); } catch {}
+// `body` is the already-read error body (null when unparsable): reading it is
+// part of the request's timed window, see _timedFetch.
+async function _parseFirestoreError(res, body) {
+  const data = body || {};
   const msg = data.error?.message || '';
   const errStatus = data.error?.status || '';
   const status = res.status;

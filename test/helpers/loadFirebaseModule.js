@@ -42,6 +42,7 @@ const EXPORTED_NAMES = [
   'fbSendEmailVerification',
   '_fsGet',
   '_fsSet',
+  '_timedFetch',
   '_parseFirestoreError',
   'fbRefreshEmailVerifiedStatus',
   'fbSignOut',

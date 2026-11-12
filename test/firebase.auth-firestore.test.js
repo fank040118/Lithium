@@ -628,7 +628,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(401, { error: { message: 'UNAUTHENTICATED' } }));
+    const body = { error: { message: 'UNAUTHENTICATED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(401, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 401 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -639,7 +641,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 403 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -650,7 +654,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(200, { error: { status: 'UNAUTHENTICATED', message: 'nope' } }));
+    const body = { error: { status: 'UNAUTHENTICATED', message: 'nope' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(200, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 200 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -661,7 +667,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: '... PERMISSION_DENIED ...' } }));
+    const body = { error: { message: '... PERMISSION_DENIED ...' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 400 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -677,7 +685,9 @@ describe('_parseFirestoreError', () => {
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, body), body);
 
     expect(result).toEqual({ code: 'auth', status: 403 });
     expect(fb.fbIsSignedIn()).toBe(false);
@@ -690,7 +700,9 @@ describe('_parseFirestoreError', () => {
     await fb._loadAuth();
     expect(fb.fbIsSignedIn()).toBe(false);
 
-    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, body), body);
 
     expect(result).toEqual({ code: 'auth', status: 403 });
     expect(fb.fbIsSignedIn()).toBe(false);
@@ -725,7 +737,9 @@ describe('_parseFirestoreError', () => {
       ],
     });
 
-    const parsePromise = fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const parsePromise = fb._parseFirestoreError(jsonResponse(403, body), body);
     await refreshStarted;                                  // the refresh captured the old epoch
     await fb.fbSignOut();                                  // old session ends
     await fb.fbSignIn('new@example.com', 'password123');   // new session takes over
@@ -745,7 +759,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(429, { error: { message: 'rate limited' } }));
+    const body = { error: { message: 'rate limited' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(429, body), body);
 
     expect(result).toEqual({ code: 'quota', status: 429 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -756,7 +772,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { status: 'RESOURCE_EXHAUSTED' } }));
+    const body = { error: { status: 'RESOURCE_EXHAUSTED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, body), body);
 
     expect(result).toEqual({ code: 'quota', status: 400 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -767,7 +785,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: 'QUOTA_EXCEEDED' } }));
+    const body = { error: { message: 'QUOTA_EXCEEDED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, body), body);
 
     expect(result).toEqual({ code: 'quota', status: 400 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -778,7 +798,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(500, {}));
+    const body = {};
+
+    const result = await fb._parseFirestoreError(jsonResponse(500, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 500 });
     expect(fb.fbIsSignedIn()).toBe(true);
