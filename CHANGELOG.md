@@ -23,6 +23,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Deleting the account is now queued on the same sync queue, and no uploads are started while the deletion runs
 - When "Use local" fails, the conflict dialog stays open with an inline error so you can retry
 - When the cloud data has been deleted or emptied, the conflict dialog now shows a matching explanation
+- In the conflict dialog, "Use cloud" is greyed out and the cloud side shows as empty when the cloud has no data; "Use local" is greyed out when the local data is over the upload limit, with the reason shown as soon as the dialog opens
 - The manual Upload button only reports "Uploaded" when the upload actually succeeded, says "Already up to date" when there was nothing to upload, and explains why otherwise
 - A manual pull now explains why nothing was pulled (for example, the cloud has no data or local storage is unavailable)
 
