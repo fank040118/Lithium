@@ -24,11 +24,41 @@ export function firestoreGetRoute(responder) {
   };
 }
 
-export function firestorePatchRoute(responder) {
+// I3 guard (spec §3.1): every PATCH must carry a Firestore precondition. A
+// violation is recorded rather than thrown — a throw inside the fetch double
+// would surface as a `network` error and be swallowed by the sync paths — and
+// asserted by the global afterEach in test/setup/preconditionGuard.js.
+export const preconditionViolations = [];
+
+export function assertNoPreconditionViolations() {
+  const found = preconditionViolations.splice(0);
+  if (found.length > 0) {
+    throw new Error(`PATCH without a precondition: ${found.map((v) => v.url).join(', ')}`);
+  }
+}
+
+// The precondition query parameters of a PATCH url (absent ones are omitted).
+export function preconditionOf(url) {
+  const params = new URL(url).searchParams;
+  const pre = {};
+  if (params.has('currentDocument.updateTime')) pre.updateTime = params.get('currentDocument.updateTime');
+  if (params.has('currentDocument.exists')) pre.exists = params.get('currentDocument.exists');
+  return pre;
+}
+
+export function firestorePatchRoute(responder, { requirePrecondition = true } = {}) {
   return {
     match: (url, options = {}) =>
       url.includes(FIRESTORE_DOC_URL_PART) && options.method === 'PATCH',
-    respond: (url, options) => responder(url, options),
+    respond: (url, options) => {
+      if (requirePrecondition) {
+        const pre = preconditionOf(url);
+        if (pre.updateTime === undefined && pre.exists === undefined) {
+          preconditionViolations.push({ url });
+        }
+      }
+      return responder(url, options);
+    },
   };
 }
 

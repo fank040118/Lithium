@@ -95,7 +95,11 @@ describe('cloud request timeout', () => {
       extraRoutes: [firestorePatchRoute(() => { patchCalls++; return never(); })],
     });
 
-    const state = track(fb._fsSet({ items: '[]' }));
+    const state = track(fb._fsSet({
+      url: fb._docUrl() + fb._preconditionQuery({ exists: false }),
+      token: 'id-token',
+      body: '{"fields":{}}',
+    }));
     await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
 
     expect(patchCalls).toBe(1);

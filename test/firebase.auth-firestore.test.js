@@ -883,6 +883,16 @@ describe('_fsGet', () => {
   });
 });
 
+// _fsSet sends one prepared PATCH: the caller passes the url (with its
+// precondition), the token and the body (see _pushCore's I4 block).
+function fsSetArgs(fb, body = '{"fields":{}}') {
+  return {
+    url: fb._docUrl() + fb._preconditionQuery({ updateTime: '2023-12-31T00:00:00.000000Z' }),
+    token: 'id-token',
+    body,
+  };
+}
+
 describe('_fsSet', () => {
   it('returns updateTime on 200 with updateTime', async () => {
     const fb = loadFirebaseModule();
@@ -892,7 +902,7 @@ describe('_fsSet', () => {
       )],
     });
 
-    const result = await fb._fsSet({ items: '[]' });
+    const result = await fb._fsSet(fsSetArgs(fb));
 
     expect(result).toBe('2024-01-01T00:00:00.000000000Z');
   });
@@ -903,7 +913,7 @@ describe('_fsSet', () => {
       extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, {}))],
     });
 
-    const result = await fb._fsSet({ items: '[]' });
+    const result = await fb._fsSet(fsSetArgs(fb));
 
     expect(result).toBeNull();
   });
@@ -918,7 +928,7 @@ describe('_fsSet', () => {
       }))],
     });
 
-    const result = await fb._fsSet({ items: '[]' });
+    const result = await fb._fsSet(fsSetArgs(fb));
 
     expect(result).toBeNull();
   });
@@ -932,7 +942,7 @@ describe('_fsSet', () => {
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'firestore', status: 401 });
+    await expect(fb._fsSet(fsSetArgs(fb))).rejects.toMatchObject({ code: 'firestore', status: 401 });
     expect(fb.fbIsSignedIn()).toBe(true);
   });
 
@@ -943,7 +953,7 @@ describe('_fsSet', () => {
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'network' });
+    await expect(fb._fsSet(fsSetArgs(fb))).rejects.toMatchObject({ code: 'network' });
     expect(fb.fbIsSignedIn()).toBe(true);
   });
 
@@ -958,27 +968,61 @@ describe('_fsSet', () => {
 
     await fb._loadAuth();
     expect(fb.fbIsSignedIn()).toBe(false);
-    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'not-signed-in' });
+    // Signed out: _getToken has no token to give, and _fsSet refuses it.
+    const token = await fb._getToken();
+    expect(token).toBeNull();
+    await expect(fb._fsSet({ ...fsSetArgs(fb), token })).rejects.toMatchObject({ code: 'not-signed-in' });
     expect(fetchCalls).toBe(0);
   });
 
-  it('encodes data fields with _toFV in the PATCH body', async () => {
+  it('a signed-out upload rejects not-signed-in without fetching', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      throw new Error('should not be called');
+    };
+    await fb._loadAuth();
+
+    const run = fb._enqueueSync({
+      kind: 'upload',
+      auto: false,
+      run: (ctx) => fb._pushCore(ctx, { precondition: { exists: false } }),
+    });
+
+    await expect(run).rejects.toMatchObject({ code: 'not-signed-in' });
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('sends the body verbatim, with every upload field encoded by _toFV', async () => {
     const fb = loadFirebaseModule();
     let capturedBody;
     await setupSignedInFirebase(fb, {
       extraRoutes: [firestorePatchRoute(async (url, options) => {
-        capturedBody = JSON.parse(options.body);
+        capturedBody = options.body;
         return jsonResponse(200, { updateTime: '2024-02-02T00:00:00.000000000Z' });
       })],
     });
+    const snap = {
+      items: [{ id: 'a' }],
+      engines: [{ id: 'e' }],
+      selected_engine: 'google',
+      clocks: [],
+      grid_columns: 5,
+    };
+    const body = fb._buildUploadBody(snap, 123);
 
-    await fb._fsSet({ n: 123, s: 'str', o: { a: 1 }, n2: null });
+    await fb._fsSet(fsSetArgs(fb, body));
 
-    expect(capturedBody.fields).toEqual({
-      n: fb._toFV(123),
-      s: fb._toFV('str'),
-      o: fb._toFV({ a: 1 }),
-      n2: fb._toFV(null),
+    expect(capturedBody).toBe(body);
+    expect(JSON.parse(capturedBody).fields).toEqual({
+      items: fb._toFV(JSON.stringify(snap.items)),
+      engines: fb._toFV(JSON.stringify(snap.engines)),
+      selected_engine: fb._toFV('google'),
+      clocks: fb._toFV(JSON.stringify(snap.clocks)),
+      grid_columns: fb._toFV(5),
+      updated_at: fb._toFV(123),
     });
   });
 });

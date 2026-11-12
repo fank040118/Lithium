@@ -59,7 +59,9 @@ class CloudSyncError extends Error {
   constructor(code, status = 0, original = null) {
     super(original?.message || code);
     this.name = 'CloudSyncError';
-    this.code = code; // 'network' | 'auth' | 'quota' | 'firestore' | 'not-signed-in' | 'payload-too-large'
+    // 'network' | 'auth' | 'quota' | 'firestore' | 'not-signed-in' | 'payload-too-large'
+    // | 'precondition-failed' | 'already-exists' | 'not-found' (see _isPreconditionError)
+    this.code = code;
     this.status = status;
     this.original = original;
   }
@@ -564,8 +566,45 @@ function _fromFV(fv) {
   return null;
 }
 
-const _docUrl = () =>
-  `https://firestore.googleapis.com/v1/projects/${FB_PROJECT_ID}/databases/(default)/documents/users/${_uid}/data/settings`;
+function _docUrl(uid = _uid) {
+  return `https://firestore.googleapis.com/v1/projects/${FB_PROJECT_ID}/databases/(default)/documents/users/${uid}/data/settings`;
+}
+
+// ── Upload preconditions (spec §3.1 I3, §5.2) ──
+
+// The Firestore precondition for a PATCH based on `baseline`. An Unknown
+// baseline has no precondition: callers establish it first (§5.3), so reaching
+// this with Unknown is a programming error.
+function _preconditionFromBaseline(b) {
+  if (b.kind === 'known') return { updateTime: b.raw };
+  if (b.kind === 'absent') return { exists: false };
+  throw new Error('precondition requested for unknown baseline');
+}
+
+// Query string carrying a precondition; the raw updateTime is sent verbatim.
+function _preconditionQuery(pre) {
+  if ('updateTime' in pre) return '?currentDocument.updateTime=' + encodeURIComponent(pre.updateTime);
+  return '?currentDocument.exists=false';
+}
+
+// PATCH body for a sync snapshot (whole-document replace, no updateMask).
+function _buildUploadBody(snap, now) {
+  const data = {
+    items: JSON.stringify(snap.items),
+    engines: JSON.stringify(snap.engines),
+    selected_engine: snap.selected_engine,
+    clocks: JSON.stringify(snap.clocks),
+    grid_columns: snap.grid_columns,
+    updated_at: now, // 兼容旧客户端/UI 显示，不作为冲突判断依据
+  };
+  const fields = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, _toFV(v)]));
+  return JSON.stringify({ fields });
+}
+
+// Codes of a PATCH rejected by its precondition (spec §6.1).
+function _isPreconditionError(code) {
+  return code === 'precondition-failed' || code === 'already-exists' || code === 'not-found';
+}
 
 async function _fsGet() {
   const token = await _getToken();
@@ -583,7 +622,7 @@ async function _fsGet() {
   if (res.status === 404) return null;
 
   if (!res.ok) {
-    const { code, status } = await _parseFirestoreError(res, data);
+    const { code, status } = await _parseFirestoreError(res, data, { op: 'get' });
     throw new CloudSyncError(code, status);
   }
   // A 200 whose body cannot be parsed says nothing about the document; it
@@ -592,20 +631,13 @@ async function _fsGet() {
   return data;
 }
 
-async function _fsSet(data) {
-  const token = await _getToken();
+// Sends one prepared PATCH. The caller supplies the url (document plus
+// precondition query), the token and the body, all taken in its I4 block
+// (spec §3.1), so nothing here awaits before the request goes out.
+async function _fsSet({ url, token, body }) {
   if (!token) throw new CloudSyncError('not-signed-in', 0);
 
-  const fields = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, _toFV(v)]));
-  // Build the body once: the same string is length-checked here and sent
-  // below. Oversized uploads are rejected before any network request so the
-  // user gets the actionable toast instead of the server's generic rule 403.
-  const body = JSON.stringify({ fields });
-  if (body.length > FB_PAYLOAD_MAX_BYTES) {
-    throw new CloudSyncError('payload-too-large', 413);
-  }
-
-  const { res, data: doc } = await _timedFetch(_docUrl(), {
+  const { res, data: doc } = await _timedFetch(url, {
     method: 'PATCH',
     cache: 'no-store',
     headers: {
@@ -618,7 +650,7 @@ async function _fsSet(data) {
   });
 
   if (!res.ok) {
-    const { code, status } = await _parseFirestoreError(res, doc);
+    const { code, status } = await _parseFirestoreError(res, doc, { op: 'patch' });
     throw new CloudSyncError(code, status);
   }
 
@@ -626,8 +658,9 @@ async function _fsSet(data) {
 }
 
 // `body` is the already-read error body (null when unparsable): reading it is
-// part of the request's timed window, see _timedFetch.
-async function _parseFirestoreError(res, body) {
+// part of the request's timed window, see _timedFetch. `op` is the failed
+// request ('get' | 'patch'): only a PATCH's NOT_FOUND is a precondition error.
+async function _parseFirestoreError(res, body, { op } = {}) {
   const data = body || {};
   const msg = data.error?.message || '';
   const errStatus = data.error?.status || '';
@@ -668,6 +701,11 @@ async function _parseFirestoreError(res, body) {
       msg.includes('RESOURCE_EXHAUSTED')) {
     return { code: 'quota', status };
   }
+  // Precondition failures (spec §6.1) are told apart by error.status only:
+  // HTTP 400 is also INVALID_ARGUMENT, and 409 is also ABORTED.
+  if (errStatus === 'FAILED_PRECONDITION') return { code: 'precondition-failed', status };
+  if (errStatus === 'ALREADY_EXISTS') return { code: 'already-exists', status };
+  if (op === 'patch' && errStatus === 'NOT_FOUND') return { code: 'not-found', status };
   return { code: 'firestore', status };
 }
 
@@ -694,6 +732,9 @@ let _lastAutoUploadErrorCode = null;
 // paused so the stale local state is never PATCHed over the cloud until the
 // user resolves the conflict (Tasks 4/5).
 let _conflictPending = null;
+// True while an account deletion runs: no upload may (re)create the document.
+// Set and cleared by fbDeleteAccount (Task 10); checked in _pushCore's I4 block.
+let _accountDeleting = false;
 
 function _isDirty() { return _editRev !== _syncedRev; }
 
@@ -1063,7 +1104,8 @@ async function _adoptCloudVersion(ctx, baseline, { syncedRev = null } = {}) {
   return ctx.alive();
 }
 
-// Upload task body: the guards, then one PATCH via _pushCore.
+// Upload task body: the guards, a baseline pull when the baseline is Unknown,
+// then one PATCH via _pushCore.
 // manual: explicit user upload (manual button / choose-local), which bypasses
 // the switch-pending, conflict-pending and clean guards on purpose.
 async function _uploadTask(ctx, { manual }) {
@@ -1092,6 +1134,23 @@ async function _uploadTask(ctx, { manual }) {
 
   if (!manual && !_isDirty()) return { uploaded: false, reason: 'clean' };
 
+  // An Unknown baseline has no precondition to send: establish it first with
+  // a baseline pull in this same hold (spec §5.3). A failure rejects with the
+  // baseline still Unknown and the local state dirty; no automatic retry.
+  if (_cloudBaseline.kind === 'unknown') {
+    ctx.budget.baselineGet -= 1;
+    const pull = await _pullCore(ctx, { mode: 'forced', trigger: 'baseline', compareWhenClean: manual });
+    if (pull.outcome === 'conflict') return { uploaded: false, reason: 'conflict' };
+    if (pull.outcome !== 'cloud-empty') {
+      if (pull.outcome !== 'applied' && pull.outcome !== 'unchanged' && pull.outcome !== 'adopted') {
+        return { uploaded: false, reason: pull.outcome };
+      }
+      // The pull landed or adopted the cloud version: only edits it did not
+      // cover are left to upload.
+      if (_conflictPending || !_isDirty()) return { uploaded: false, reason: 'up-to-date' };
+    }
+  }
+
   _syncState = 'uploading';
   _lastSyncError = null;
   _updateSyncUI();
@@ -1100,27 +1159,41 @@ async function _uploadTask(ctx, { manual }) {
 
 // One PATCH of the current local state plus the success bookkeeping. No
 // guards: callers (task bodies) decide whether an upload may run.
-async function _pushCore(ctx) {
-  // Snapshot the edit rev at upload start so edits made while this request is
-  // in flight stay dirty and get picked up by a follow-up upload.
-  const revAtStart = _editRev;
-  const now = Date.now();
-  // Re-check right before the request: if the identity changed after this task
-  // was accepted, do not PATCH the new account's document.
+// precondition: explicit { updateTime } | { exists: false }; defaults to the
+// in-memory baseline at send time.
+async function _pushCore(ctx, { precondition } = {}) {
+  const token = await _getToken();
+
+  // I4 (spec §3.1): from here to the request is one synchronous block — no
+  // await. The epoch, precondition, uid, token, revAtStart and the payload
+  // snapshot all describe the same instant, so a sign-out/sign-in or an edit
+  // during the token await cannot slip between them.
   if (!ctx.alive()) {
     _syncState = 'idle';
     _updateSyncUI();
     return { uploaded: false, reason: 'session-changed' };
   }
+  if (_accountDeleting) {
+    _syncState = 'idle';
+    _updateSyncUI();
+    return { uploaded: false, reason: 'account-deleting' };
+  }
+  if (!token) throw new CloudSyncError('not-signed-in', 0);
+  const pre = precondition ?? _preconditionFromBaseline(_cloudBaseline);
+  const uid = _uid;
+  // Edits made after this point (while the request is in flight) stay dirty
+  // and get picked up by a follow-up upload. snap and revAtStart are also the
+  // in-flight snapshot of spec §6.3 (Task 9).
+  const revAtStart = _editRev;
   const snap = _buildSyncSnapshot();
-  const cloudUpdateTime = await _fsSet({
-    items: JSON.stringify(snap.items),
-    engines: JSON.stringify(snap.engines),
-    selected_engine: snap.selected_engine,
-    clocks: JSON.stringify(snap.clocks),
-    grid_columns: snap.grid_columns,
-    updated_at: now, // 兼容旧客户端/UI 显示，不作为冲突判断依据
-  });
+  const body = _buildUploadBody(snap, Date.now());
+  // Oversized uploads are rejected before any network request so the user
+  // gets the actionable toast instead of the server's generic rule 403.
+  if (body.length > FB_PAYLOAD_MAX_BYTES) {
+    throw new CloudSyncError('payload-too-large', 413);
+  }
+  ctx.budget.patch -= 1;
+  const cloudUpdateTime = await _fsSet({ url: _docUrl(uid) + _preconditionQuery(pre), token, body });
 
   // The response landed after the identity changed (sign-out/sign-in while the
   // request was in flight). This upload belongs to the previous session: drop
@@ -1189,7 +1262,10 @@ function syncToCloud(options = {}) {
 // zero further writes. A detected conflict sets the pending record and
 // ctx.notifyConflict; the executor fires the hook after the task's last step.
 // Returns PullResult { applied, outcome, cloud? }.
-async function _pullCore(ctx, { mode, trigger }) {
+// compareWhenClean: compare contents even when the local state is clean, so a
+// difference becomes a pending conflict instead of a silent landing (manual
+// upload's baseline pull, spec §5.1).
+async function _pullCore(ctx, { mode, trigger, compareWhenClean = false }) {
   const sessionChanged = () => {
     _syncState = 'idle';
     _updateSyncUI();
@@ -1244,12 +1320,12 @@ async function _pullCore(ctx, { mode, trigger }) {
 
   const f = doc.fields;
 
-  // Conflict detection: when the local state is dirty and differs from the
-  // cloud snapshot, do not silently pick a winner — record the conflict and
+  // Conflict detection: when the local state is dirty (or compareWhenClean is
+  // set) and differs from the cloud snapshot, do not silently pick a winner — record the conflict and
   // pause automatic uploads until the user resolves it. resolve-cloud skips
   // detection entirely (it applies the cloud side by explicit user choice).
   let skippedFields = [];
-  if (mode !== 'resolve-cloud' && _isDirty()) {
+  if (mode !== 'resolve-cloud' && (_isDirty() || compareWhenClean)) {
     const localSnap = _buildSyncSnapshot();
     const cloudSnap = _cloudSnapshotFromFields(f);
     const { equal, skippedFields: skipped } = _compareSnapshots(localSnap, cloudSnap);
@@ -1564,7 +1640,7 @@ let _lastSyncDisplayTs = 0;
 // Read-only snapshot of internal sync flags that tests cannot reach otherwise
 // (top-level `let` bindings are not visible through the test loader).
 function _getSyncDebugState() {
-  return { lastSyncDisplayTs: _lastSyncDisplayTs };
+  return { lastSyncDisplayTs: _lastSyncDisplayTs, accountDeleting: _accountDeleting };
 }
 
 function _updateSyncUI(ts) {
