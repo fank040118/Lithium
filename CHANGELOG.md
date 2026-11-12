@@ -7,6 +7,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- A long-open tab could silently overwrite newer cloud data written by another device; uploads now carry a Firestore precondition and fall back to conflict detection when the cloud has changed
+- An upload could be sent while a pull was still in flight
+- Choosing "Use local" and then hitting an upload error no longer resumes automatic uploads over the cloud copy
+- Edits made while cloud data was being applied could be marked as synced and lost
+
+### Changed
+- All cloud operations now run through a single serial queue; network requests time out after 20 seconds
+- Deleting the account is now queued on the same sync queue, and no uploads are started while the deletion runs
+- When "Use local" fails, the conflict dialog stays open with an inline error so you can retry
+- When the cloud data has been deleted or emptied, the conflict dialog now shows a matching explanation
+- The manual Upload button only reports "Uploaded" when the upload actually succeeded, and explains why otherwise
+- A manual pull now explains why nothing was pulled (for example, already up to date or storage unavailable)
+
+### Notes
+- New local storage key `_fb_cloud_update_time`; existing installs are migrated on the first pull without a migration script
+- Using several tabs on the same device may show the conflict dialog more often until cross-tab sync signalling lands
+
 ## [1.0.4] - 2026-10-18
 
 ### Added
