@@ -117,6 +117,7 @@ afterEach(() => {
   delete globalThis.render;
   delete globalThis.getSelectedEngine;
   delete globalThis.onSyncConflict;
+  delete globalThis.showToast;
   document.body.innerHTML = '';
 });
 
@@ -340,19 +341,6 @@ describe('§6.1 error classification', () => {
     await expect(fb._parseFirestoreError(res, body, { op: 'patch' }))
       .resolves.toEqual({ code: 'not-found', status: 400 });
   });
-
-  it('a failed precondition rejects for now and leaves baseline and dirty state intact', async () => {
-    const fb = loadFirebaseModule();
-    const { routes } = recordingRoutes({ patch: firestoreError(400, 'FAILED_PRECONDITION') });
-    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
-    await seedDirty(fb, storage);
-
-    await expect(fb.syncToCloud()).rejects.toMatchObject({ code: 'precondition-failed' });
-
-    expect(fb._getCloudBaseline().baseline).toMatchObject({ kind: 'known', raw: SEED_UPDATE_TIME });
-    expect(storage._data[RAW_KEY]).toBe(SEED_UPDATE_TIME);
-    expect(fb._isDirty()).toBe(true);
-  });
 });
 
 describe('I4: the synchronous block after the last await', () => {
@@ -460,5 +448,290 @@ describe('Review Focus 4: an unpersisted baseline is never used as a preconditio
 
     expect(patches).toHaveLength(2);
     expect(preconditionOf(patches[1].url)).toEqual({ updateTime: SEED_UPDATE_TIME });
+  });
+});
+
+// Responders that answer call n with the n-th entry (the last one repeats).
+function inSequence(...responders) {
+  let n = 0;
+  return (...args) => responders[Math.min(n++, responders.length - 1)](...args);
+}
+
+const preconditionFailed = firestoreError(400, 'FAILED_PRECONDITION');
+const getDoc = (doc) => async () => jsonResponse(200, doc);
+const get404 = async () => jsonResponse(404, {});
+
+// Counts storage writes and records, at hook time, how many had happened.
+function watchHookAfterWrites(storage) {
+  const local = storage.storage.local;
+  const realSet = local.set;
+  const state = { setCalls: 0, setCallsAtHook: [], hookCalls: 0 };
+  local.set = async (values) => { state.setCalls += 1; return realSet(values); };
+  globalThis.onSyncConflict = () => {
+    state.hookCalls += 1;
+    state.setCallsAtHook.push(state.setCalls);
+  };
+  return state;
+}
+
+describe('§6.2 recovery pull after a failed precondition', () => {
+  it('auto upload, cloud differs and local is dirty → conflict, hook last, no toast', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.showToast = vi.fn();
+    const { log, routes } = recordingRoutes({
+      get: getDoc(cloudDoc(fb, [{ id: 'cloud' }])),
+      patch: preconditionFailed,
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+    const hook = watchHookAfterWrites(storage);
+
+    await expect(fb.syncToCloud()).resolves.toEqual({ ok: true, skipped: true, reason: 'conflict' });
+    await flush();
+
+    expect(log).toEqual(['PATCH', 'GET']);
+    expect(fb.fbGetSyncConflict()).toMatchObject({ trigger: 'upload-precondition' });
+    expect(hook.hookCalls).toBe(1);
+    expect(hook.setCallsAtHook).toEqual([hook.setCalls]);
+    expect(fb._isDirty()).toBe(true);
+    expect(globalThis.showToast).not.toHaveBeenCalled();
+  });
+
+  it('auto upload, cloud has the same content → up-to-date, clean, baseline = recovery GET', async () => {
+    const fb = loadFirebaseModule();
+    const { log, routes } = recordingRoutes({
+      get: getDoc(cloudDoc(fb, [{ id: 'local' }])),
+      patch: preconditionFailed,
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+
+    await expect(fb.syncToCloud()).resolves.toEqual({ ok: true, skipped: true, reason: 'up-to-date' });
+
+    expect(log).toEqual(['PATCH', 'GET']);
+    expect(fb._isDirty()).toBe(false);
+    expect(fb.fbGetSyncConflict()).toBeNull();
+    expect(fb._getCloudBaseline().baseline).toMatchObject({ kind: 'known', raw: CLOUD_TS });
+    expect(storage._data[RAW_KEY]).toBe(CLOUD_TS);
+  });
+
+  it('recovery GET 404 → Absent baseline persisted, retry PATCH with exists=false, then clean', async () => {
+    const fb = loadFirebaseModule();
+    let storage;
+    const atRetry = {};
+    const { log, patches, routes } = recordingRoutes({
+      get: get404,
+      patch: inSequence(preconditionFailed, async () => {
+        atRetry.raw = storage._data[RAW_KEY];
+        atRetry.uid = storage._data._fb_sync_baseline_uid;
+        return okPatch();
+      }),
+    });
+    ({ storage } = await setupSignedInFirebase(fb, { extraRoutes: routes }));
+    await seedDirty(fb, storage);
+
+    await expect(fb.syncToCloud()).resolves.toMatchObject({ ok: true, skipped: false });
+
+    expect(log).toEqual(['PATCH', 'GET', 'PATCH']);
+    expect(atRetry).toEqual({ raw: 'absent', uid: TEST_UID });
+    expect(preconditionOf(patches[1].url)).toEqual({ exists: 'false' });
+    expect(patchedItems(patches[1])).toEqual([{ id: 'local' }]);
+    expect(fb._isDirty()).toBe(false);
+    expect(fb._getCloudBaseline().baseline).toMatchObject({ kind: 'known', raw: PATCH_TS });
+  });
+
+  it('recovery GET empty document → retry PATCH with that document\'s raw updateTime', async () => {
+    const fb = loadFirebaseModule();
+    const { log, patches, routes } = recordingRoutes({
+      get: getDoc({ updateTime: EMPTY_TS }),
+      patch: inSequence(preconditionFailed, okPatch),
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+
+    await expect(fb.syncToCloud()).resolves.toMatchObject({ ok: true, skipped: false });
+
+    expect(log).toEqual(['PATCH', 'GET', 'PATCH']);
+    expect(preconditionOf(patches[1].url)).toEqual({ updateTime: EMPTY_TS });
+    expect(fb._isDirty()).toBe(false);
+  });
+
+  it.each([
+    ['409 ALREADY_EXISTS on an Absent baseline', 'absent', firestoreError(409, 'ALREADY_EXISTS')],
+    ['404 NOT_FOUND on a Known baseline', SEED_UPDATE_TIME, firestoreError(404, 'NOT_FOUND')],
+  ])('%s also goes through the recovery pull', async (_name, baseline, firstPatch) => {
+    const fb = loadFirebaseModule();
+    const { log, routes } = recordingRoutes({
+      get: getDoc(cloudDoc(fb, [{ id: 'local' }])),
+      patch: firstPatch,
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes, baseline });
+    await seedDirty(fb, storage);
+
+    await expect(fb.syncToCloud()).resolves.toEqual({ ok: true, skipped: true, reason: 'up-to-date' });
+
+    expect(log).toEqual(['PATCH', 'GET']);
+    expect(fb._getCloudBaseline().baseline).toMatchObject({ kind: 'known', raw: CLOUD_TS });
+  });
+
+  it('manual upload with a clean local state still compares: different → conflict', async () => {
+    const fb = loadFirebaseModule();
+    const { log, routes } = recordingRoutes({
+      get: getDoc(cloudDoc(fb, [{ id: 'cloud' }])),
+      patch: preconditionFailed,
+    });
+    await setupSignedInFirebase(fb, { extraRoutes: routes });
+    globalThis.items = [{ id: 'local' }];
+    expect(fb._isDirty()).toBe(false);
+
+    await expect(fb.syncToCloud({ force: true }))
+      .resolves.toEqual({ ok: true, skipped: true, reason: 'conflict' });
+
+    expect(log).toEqual(['PATCH', 'GET']);
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+    expect(globalThis.items).toEqual([{ id: 'local' }]); // nothing landed
+  });
+
+  it('manual upload with a clean local state and the same content → up-to-date', async () => {
+    const fb = loadFirebaseModule();
+    const { log, routes } = recordingRoutes({
+      get: getDoc(cloudDoc(fb, [{ id: 'local' }])),
+      patch: preconditionFailed,
+    });
+    await setupSignedInFirebase(fb, { extraRoutes: routes });
+    globalThis.items = [{ id: 'local' }];
+
+    await expect(fb.syncToCloud({ force: true }))
+      .resolves.toEqual({ ok: true, skipped: true, reason: 'up-to-date' });
+
+    expect(log).toEqual(['PATCH', 'GET']);
+    expect(fb.fbGetSyncConflict()).toBeNull();
+    expect(fb._getCloudBaseline().baseline).toMatchObject({ raw: CLOUD_TS });
+  });
+
+  it('cloud-empty imports even when the local state is clean (manual upload)', async () => {
+    const fb = loadFirebaseModule();
+    const { log, patches, routes } = recordingRoutes({
+      get: get404,
+      patch: inSequence(preconditionFailed, okPatch),
+    });
+    await setupSignedInFirebase(fb, { extraRoutes: routes });
+    globalThis.items = [{ id: 'local' }];
+    expect(fb._isDirty()).toBe(false);
+
+    await expect(fb.syncToCloud({ force: true })).resolves.toMatchObject({ ok: true, skipped: false });
+
+    expect(log).toEqual(['PATCH', 'GET', 'PATCH']);
+    expect(preconditionOf(patches[1].url)).toEqual({ exists: 'false' });
+    expect(patchedItems(patches[1])).toEqual([{ id: 'local' }]);
+  });
+  it('a session change during the rejected PATCH skips the recovery pull', async () => {
+    const fb = loadFirebaseModule();
+    const { log, routes } = recordingRoutes({
+      get: get404,
+      patch: async () => { await fb._clearAuth(); return preconditionFailed(); },
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+
+    await expect(fb.syncToCloud())
+      .resolves.toEqual({ ok: true, skipped: true, reason: 'session-changed' });
+    expect(log).toEqual(['PATCH']);
+  });
+});
+
+describe('§7.5 round limits within one hold', () => {
+  it('worst path: baseline GET, PATCH, recovery GET, retry PATCH → retry-exhausted', async () => {
+    const fb = loadFirebaseModule();
+    const EMPTY_TS_2 = '2024-06-02T13:00:00.111111Z';
+    const { log, patches, routes } = recordingRoutes({
+      get: inSequence(getDoc({ updateTime: EMPTY_TS }), getDoc({ updateTime: EMPTY_TS_2 })),
+      patch: preconditionFailed,
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes, baseline: null });
+    await seedDirty(fb, storage);
+
+    await expect(fb.syncToCloud())
+      .resolves.toEqual({ ok: true, skipped: true, reason: 'retry-exhausted' });
+
+    expect(log).toEqual(['GET', 'PATCH', 'GET', 'PATCH']);
+    expect(preconditionOf(patches[0].url)).toEqual({ updateTime: EMPTY_TS });
+    expect(preconditionOf(patches[1].url)).toEqual({ updateTime: EMPTY_TS_2 });
+    expect(fb._isDirty()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('failure → recovery → retry completes within one hold (no self-wait)', async () => {
+    const fb = loadFirebaseModule();
+    const { log, routes } = recordingRoutes({
+      get: get404,
+      patch: inSequence(preconditionFailed, okPatch),
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+
+    const raced = Promise.race([
+      fb.syncToCloud(),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+    ]);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(raced).resolves.toMatchObject({ ok: true, skipped: false });
+    expect(log).toEqual(['PATCH', 'GET', 'PATCH']);
+  });
+
+  it('a manual pull queued during the recovery GET runs only after the upload task', async () => {
+    const fb = loadFirebaseModule();
+    const recoveryGate = deferred();
+    const { log, routes } = recordingRoutes({
+      get: inSequence(() => recoveryGate.promise, getDoc(cloudDoc(fb, [{ id: 'local' }], PATCH_TS))),
+      patch: inSequence(preconditionFailed, okPatch),
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+
+    const upload = fb.syncToCloud();
+    await flush();
+    expect(log).toEqual(['PATCH', 'GET']);
+
+    const pull = fb.syncFromCloud({ mode: 'forced' });
+    await flush();
+    expect(log).toEqual(['PATCH', 'GET']);
+
+    recoveryGate.resolve(jsonResponse(404, {}));
+    await expect(upload).resolves.toMatchObject({ ok: true, skipped: false });
+    await expect(pull).resolves.toBe(true);
+    expect(log).toEqual(['PATCH', 'GET', 'PATCH', 'GET']);
+  });
+
+  it('precondition errors from scheduled uploads never toast', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.showToast = vi.fn();
+    const EMPTY_TS_2 = '2024-06-02T13:00:00.111111Z';
+    const { log, routes } = recordingRoutes({
+      get: inSequence(
+        getDoc(cloudDoc(fb, [{ id: 'cloud' }])), // path 1: conflict
+        getDoc({ updateTime: EMPTY_TS }), // path 7: baseline pull
+        getDoc({ updateTime: EMPTY_TS_2 }), // path 7: recovery pull
+      ),
+      patch: preconditionFailed,
+    });
+    const { storage } = await setupSignedInFirebase(fb, { extraRoutes: routes });
+    await seedDirty(fb, storage);
+
+    fb.scheduleSyncToCloud();
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    expect(log).toEqual(['PATCH', 'GET']);
+    expect(fb.fbGetSyncConflict()).not.toBeNull();
+
+    // Path 7 from a fresh session state: Unknown baseline, no pending conflict.
+    fb._resetSession();
+    fb.scheduleSyncToCloud();
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    expect(log).toEqual(['PATCH', 'GET', 'GET', 'PATCH', 'GET', 'PATCH']);
+    expect(fb._isDirty()).toBe(true);
+    expect(globalThis.showToast).not.toHaveBeenCalled();
   });
 });

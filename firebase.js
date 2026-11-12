@@ -1105,7 +1105,7 @@ async function _adoptCloudVersion(ctx, baseline, { syncedRev = null } = {}) {
 }
 
 // Upload task body: the guards, a baseline pull when the baseline is Unknown,
-// then one PATCH via _pushCore.
+// then the PATCH with its recovery pull and retry (_pushWithRecovery).
 // manual: explicit user upload (manual button / choose-local), which bypasses
 // the switch-pending, conflict-pending and clean guards on purpose.
 async function _uploadTask(ctx, { manual }) {
@@ -1140,21 +1140,69 @@ async function _uploadTask(ctx, { manual }) {
   if (_cloudBaseline.kind === 'unknown') {
     ctx.budget.baselineGet -= 1;
     const pull = await _pullCore(ctx, { mode: 'forced', trigger: 'baseline', compareWhenClean: manual });
-    if (pull.outcome === 'conflict') return { uploaded: false, reason: 'conflict' };
-    if (pull.outcome !== 'cloud-empty') {
-      if (pull.outcome !== 'applied' && pull.outcome !== 'unchanged' && pull.outcome !== 'adopted') {
-        return { uploaded: false, reason: pull.outcome };
-      }
-      // The pull landed or adopted the cloud version: only edits it did not
-      // cover are left to upload.
-      if (_conflictPending || !_isDirty()) return { uploaded: false, reason: 'up-to-date' };
-    }
+    const stop = _uploadStopAfterPull(pull);
+    if (stop) return stop;
   }
 
-  _syncState = 'uploading';
-  _lastSyncError = null;
-  _updateSyncUI();
-  return _pushCore(ctx);
+  return _pushWithRecovery(ctx, { compareWhenClean: manual });
+}
+
+// What an upload does after one of its internal pulls (baseline or recovery).
+// Returns a PushResult skip to stop with, or null to go on and PATCH.
+//   cloud-empty: the pull set the Absent / empty-document baseline; the PATCH
+//     that follows is the import, whether or not the local state is dirty
+//     (spec §5.3, §6.2).
+//   conflict / any non-landing outcome: stop with that reason.
+//   landed or adopted: only edits the pull did not cover are left to upload.
+function _uploadStopAfterPull(pull) {
+  if (pull.outcome === 'cloud-empty') return null;
+  if (pull.outcome === 'conflict') return { uploaded: false, reason: 'conflict' };
+  if (pull.outcome !== 'applied' && pull.outcome !== 'unchanged' && pull.outcome !== 'adopted') {
+    return { uploaded: false, reason: pull.outcome };
+  }
+  if (_conflictPending) return { uploaded: false, reason: 'conflict' };
+  if (!_isDirty()) return { uploaded: false, reason: 'up-to-date' };
+  return null;
+}
+
+// PATCH with recovery (spec §6.2, §7.5), shared by every task that uploads.
+// A precondition-class rejection is handled here, never thrown and never
+// toasted: one forced recovery pull in this same hold, then, when its outcome
+// still calls for an upload, one retry PATCH against the baseline that pull
+// wrote. Each step is bounded by ctx.budget; running out returns
+// retry-exhausted with the local state left dirty. Other errors propagate.
+// precondition: explicit precondition for the first PATCH only (later
+// attempts always use the baseline the recovery pull established).
+// compareWhenClean: passed to the recovery pull (manual upload, choose-local).
+async function _pushWithRecovery(ctx, { precondition, compareWhenClean = false } = {}) {
+  const stopIdle = (reason) => {
+    _syncState = 'idle';
+    _updateSyncUI();
+    return { uploaded: false, reason };
+  };
+  let pre = precondition;
+  for (;;) {
+    if (ctx.budget.patch <= 0) return stopIdle('retry-exhausted');
+    _syncState = 'uploading';
+    _lastSyncError = null;
+    _updateSyncUI();
+    try {
+      return await _pushCore(ctx, { precondition: pre });
+    } catch (err) {
+      if (!_isPreconditionError(err?.code)) throw err;
+    }
+    pre = undefined;
+    // The rejected PATCH may have landed after a session change: the recovery
+    // pull would then read (and write for) the new account.
+    if (!ctx.alive()) return stopIdle('session-changed');
+    if (ctx.budget.recoveryGet <= 0) return stopIdle('retry-exhausted');
+    ctx.budget.recoveryGet -= 1;
+    _syncState = 'downloading';
+    _updateSyncUI();
+    const pull = await _pullCore(ctx, { mode: 'forced', trigger: 'upload-precondition', compareWhenClean });
+    const stop = _uploadStopAfterPull(pull);
+    if (stop) return stop;
+  }
 }
 
 // One PATCH of the current local state plus the success bookkeeping. No

@@ -224,3 +224,44 @@ describe('syncFromCloud revAtApply capture', () => {
     expect(patches).toHaveLength(0);
   });
 });
+
+describe('recovery pull (internal pull inside an upload task) revAtApply capture', () => {
+  it('edit during the recovery landing stays dirty and is re-uploaded', async () => {
+    vi.useFakeTimers();
+    const fb = loadFirebaseModule();
+    const patches = [];
+    let patchCalls = 0;
+    const patchRoute = firestorePatchRoute(async (url, options) => {
+      patchCalls += 1;
+      if (patchCalls === 1) {
+        return jsonResponse(400, { error: { status: 'FAILED_PRECONDITION' } });
+      }
+      patches.push({ items: JSON.parse(JSON.parse(options.body).fields.items.stringValue) });
+      return jsonResponse(200, { updateTime: PATCH_TS });
+    });
+    const { storage } = await setupSignedInFirebase(fb, {
+      extraRoutes: [
+        // Same content as the local state: the recovery pull lands it.
+        firestoreGetRoute(async () => jsonResponse(200, cloudDoc(fb, [{ id: 'local' }]))),
+        patchRoute,
+      ],
+    });
+    globalThis.items = [{ id: 'local' }];
+    storage._data._fb_edit_rev = 3;
+    storage._data._fb_synced_rev = 2;
+    await fb._loadRevState();
+    const hold = holdLandingWrite(storage);
+
+    const upload = fb.syncToCloud();
+    await editDuringLanding(fb, hold);
+    await expect(upload).resolves.toMatchObject({ ok: true, skipped: false });
+
+    // The landing did not mark the edit clean: the retry PATCH in the same
+    // hold carried it.
+    expect(patches).toHaveLength(1);
+    expect(patches[0].items).toEqual([{ id: 'local' }, { id: 'edit-during-landing' }]);
+    expect(fb._isDirty()).toBe(false);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(patches).toHaveLength(1);
+  });
+});
