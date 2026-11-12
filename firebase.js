@@ -350,17 +350,48 @@ async function fbSignOut() {
   _updateSyncUI();
 }
 
-// Delete the user's cloud data and Firebase account permanently.
-// Best-effort on the Firestore side: if the document doesn't exist or rules
-// reject it (e.g. unverified email), proceed to delete the auth account anyway.
+// Delete the user's cloud data and Firebase account permanently, as an
+// executor task (spec §5.1). Queueing it drops every not-started task
+// (session-changed) and sets the deleting flag; while the flag is set no task
+// may upload, above all no exists=false import that would recreate the
+// document before it is deleted (the dequeue guard, step 2, and _pushCore's
+// I4 block). Any task result other than a completed run rejects.
 async function fbDeleteAccount() {
+  // From the signed-in check to setting the flag is one synchronous block
+  // (no await): a signed-out caller never sets the flag or queues anything.
+  if (!fbIsSignedIn()) throw new Error('NOT_SIGNED_IN');
+  _accountDeleting = true;
+  _dropQueuedSyncTasks('session-changed');
+  clearTimeout(_syncTimer);
+  _syncTimer = null;
+  try {
+    const r = await _enqueueSync({ kind: 'delete-account', auto: false, run: _deleteAccountTask });
+    if (r?.reason) throw new Error(r.reason === 'session-changed' ? 'DELETE_ACCOUNT_FAILED' : r.reason);
+  } finally {
+    // Cleared on success and on failure. Tasks queued behind the deletion are
+    // dequeued synchronously as it settles, before this runs, so they still
+    // see the flag (they were requested while the deletion was in progress).
+    // After a partial failure (document deleted, account kept) a later upload
+    // imports along the normal Absent path: the data comes back, the safe
+    // direction (spec §5.1).
+    _accountDeleting = false;
+  }
+}
+
+// Deletion task body. Firestore side is best-effort: a missing document,
+// rejecting rules (e.g. unverified email) or a timeout only warn, and the
+// auth account is deleted anyway. Continuing after a DELETE timeout can at
+// worst leave an orphaned document behind; it never overwrites any data.
+// Resolves {} on success; errors reject (the UI shows the message).
+async function _deleteAccountTask(ctx) {
   const token = await _getToken();
+  if (!ctx.alive()) return { reason: 'session-changed' };
   if (!token) throw new Error('NOT_SIGNED_IN');
 
   // 1. Delete Firestore data (best-effort)
   if (_uid) {
     try {
-      await fetch(_docUrl(), {
+      await _timedFetch(_docUrl(), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -369,8 +400,9 @@ async function fbDeleteAccount() {
     }
   }
 
-  // 2. Delete the Auth account
-  const res = await fetch(
+  // 2. Delete the Auth account; the body is read inside the request's
+  // timeout (a timeout rejects with `network`).
+  const { res, data } = await _timedFetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${FB_API_KEY}`,
     {
       method: 'POST',
@@ -378,13 +410,12 @@ async function fbDeleteAccount() {
       body: JSON.stringify({ idToken: token }),
     }
   );
-  if (!res.ok) {
-    const d = await res.json().catch(() => ({}));
-    throw new Error(d.error?.message || 'DELETE_ACCOUNT_FAILED');
-  }
+  if (!res.ok) throw new Error(data?.error?.message || 'DELETE_ACCOUNT_FAILED');
 
-  // 3. Clear local auth state
-  await _clearAuth();
+  // 3. Clear local auth state, unless the session already ended meanwhile
+  // (a sign-out, or a sign-in this must not tear down).
+  if (ctx.alive()) await _clearAuth();
+  return {};
 }
 
 function fbIsSignedIn() { return !!_refreshToken; }
@@ -813,7 +844,7 @@ let _lastAutoUploadErrorCode = null;
 // user resolves the conflict (Tasks 4/5).
 let _conflictPending = null;
 // True while an account deletion runs: no upload may (re)create the document.
-// Set and cleared by fbDeleteAccount (Task 10); checked by the dequeue guard
+// Set and cleared by fbDeleteAccount; checked by the dequeue guard
 // (_dequeueGuard, spec §7.3 step 2) and again in _pushCore's I4 block, since
 // a deletion can start while an upload task is already running.
 let _accountDeleting = false;
@@ -1272,7 +1303,8 @@ async function _drainSyncQueue() {
 
 // The skip result of a task that does not run, in its kind's result shape:
 // a PullResult for pulls, a resolve result for the conflict choices, a
-// PushResult otherwise.
+// PushResult otherwise (uploads, and the account deletion, which only reads
+// `reason`).
 function _skipResult(kind, reason) {
   if (kind === 'pull') return { applied: false, outcome: reason };
   if (kind === 'resolve-local' || kind === 'resolve-cloud') return { resolved: false, reason };
@@ -1291,7 +1323,11 @@ async function _dequeueGuard(task, ctx) {
   const skip = (reason) => _skipResult(task.kind, reason);
   const isUpload = _UPLOAD_TASK_KINDS.has(task.kind);
   // 2. An account deletion in progress: nothing may (re)create the document.
-  if (isUpload && _accountDeleting) return skip('account-deleting');
+  // Pulls and choose-cloud (which may import) are dropped as session-changed:
+  // their session is ending, and they must neither write back nor import.
+  if (_accountDeleting && task.kind !== 'delete-account') {
+    return skip(isUpload ? 'account-deleting' : 'session-changed');
+  }
   // 3. Storage and auth, for every task: each one ends up writing keys back.
   const read = await _readSyncStorage();
   if (!ctx.alive()) return skip('session-changed');
@@ -1300,7 +1336,10 @@ async function _dequeueGuard(task, ctx) {
   ctx.storageRead = read;
   // Second line of defence: the public entry points already reject a
   // signed-out caller before queueing (preflight C3).
-  if (!fbIsSignedIn() || !fbIsEmailVerified()) {
+  // Deleting an account does not need a verified email (its Firestore DELETE
+  // is best-effort for exactly that case).
+  const verified = task.kind === 'delete-account' || fbIsEmailVerified();
+  if (!fbIsSignedIn() || !verified) {
     if (isUpload) throw new CloudSyncError('not-signed-in', 0);
     return skip('not-signed-in');
   }
