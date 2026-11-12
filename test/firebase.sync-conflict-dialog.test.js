@@ -541,6 +541,22 @@ describe('_handleConflictChoice', () => {
     await p;
   });
 
+  it('(m-1) a notification during a resolve keeps the inline error line as it is', async () => {
+    const { fb } = arrange({ ok: true });
+    fb._setConflictError('network');
+    const d = deferred();
+    globalThis.fbResolveSyncConflict = vi.fn(() => d.promise);
+    const p = fb._handleConflictChoice('local');
+    fb._openSyncConflictDialog({ ...INFO, cloudShortcutCount: 99 });
+    // The open path skips clearing the error (and grabbing focus) while a
+    // choice is in flight; its outcome decides what the line shows next.
+    expect($('sync-conflict-error').classList.contains('hidden')).toBe(false);
+    expect($('sync-conflict-error').textContent).toBe('toast.syncNetworkFailed');
+    globalThis.fbGetSyncConflict = vi.fn(() => null);
+    d.resolve({ ok: true });
+    await p;
+  });
+
   it('clears the resolving flag after the dialog was closed mid-resolve', async () => {
     const { fb } = arrange({ ok: true });
     await fb._handleConflictChoice('local');
