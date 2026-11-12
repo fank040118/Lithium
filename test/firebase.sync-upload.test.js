@@ -10,11 +10,11 @@ function firestoreDoc(fb, { items, updateTime }) {
   };
 }
 
-describe('_doSyncToCloud / syncToCloud', () => {
+describe('syncToCloud', () => {
   it('throws not-signed-in when there is no authenticated user', async () => {
     const fb = loadFirebaseModule();
 
-    await expect(fb._doSyncToCloud()).rejects.toMatchObject({ code: 'not-signed-in' });
+    await expect(fb.syncToCloud()).rejects.toMatchObject({ code: 'not-signed-in' });
   });
 
   it('skips the upload when there are no local changes and force is not set', async () => {
@@ -27,9 +27,9 @@ describe('_doSyncToCloud / syncToCloud', () => {
       })],
     });
 
-    const result = await fb._doSyncToCloud();
+    const result = await fb.syncToCloud();
 
-    expect(result).toEqual({ ok: true, skipped: true });
+    expect(result).toEqual({ ok: true, skipped: true, reason: 'clean' });
     expect(patchCalls).toBe(0);
   });
 
@@ -40,12 +40,14 @@ describe('_doSyncToCloud / syncToCloud', () => {
         jsonResponse(200, { updateTime: '2024-06-01T12:00:00.500000000Z' }))],
     });
 
-    const result = await fb._doSyncToCloud({ force: true });
+    const result = await fb.syncToCloud({ force: true });
 
     const expectedMs = new Date('2024-06-01T12:00:00.500Z').getTime();
     expect(result).toEqual({ ok: true, skipped: false, ts: expectedMs });
     expect(await fb._loadRevState()).toEqual({ editRev: 0, syncedRev: 0 });
-    expect(await fb._loadCloudSyncTs()).toBe(expectedMs);
+    expect(storage._data._fb_cloud_update_time).toBe('2024-06-01T12:00:00.500000000Z');
+    expect(storage._data._fb_cloud_sync_ts).toBe(expectedMs);
+    expect(fb._getCloudBaseline().lastCloudTs).toBe(expectedMs);
     // 成功上传后，本机同步基线跟进到当前账号
     expect(storage._data._fb_sync_baseline_uid).toBe(uid);
   });
@@ -56,7 +58,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, {}))],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
   });
 
   it('throws a firestore error when the server response has an unparseable updateTime', async () => {
@@ -65,7 +67,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, { updateTime: 'not-a-valid-timestamp' }))],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
   });
 
   it('serializes concurrent syncToCloud calls instead of dropping them', async () => {
@@ -245,6 +247,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       // 迟到的响应不得覆写切换信号与云端时间戳
       expect(storage._data._fb_sync_baseline_uid).toBe(uid);
       expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+      expect(storage._data._fb_cloud_update_time).toBeUndefined();
 
       // 下一次登录仍能识别账号切换并强制拉取 B 的云端快照
       await fb.fbSignIn('b@example.com', 'password123');
@@ -259,6 +262,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       // 迟到的 U1 簿记未落：切号基线仍指向 A，云端时间戳仍缺席
       expect(storage._data._fb_sync_baseline_uid).toBe(uid);
       expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+      expect(storage._data._fb_cloud_update_time).toBeUndefined();
 
       // resolve tail：选「用云端」落地 B 快照、baseline 跟进到 B、零 PATCH 进 B
       await fb.fbResolveSyncConflict('cloud');
@@ -290,7 +294,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       const tsWriteStarted = new Promise((resolve) => { markTsWriteStarted = resolve; });
       let gatedOnce = false;
       storage.storage.local.set = async (values) => {
-        if (!gatedOnce && '_fb_cloud_sync_ts' in values) {
+        if (!gatedOnce && '_fb_cloud_update_time' in values) {
           gatedOnce = true;
           markTsWriteStarted();
           await tsWriteGate;
@@ -301,7 +305,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       globalThis.items = [{ id: 'local-edit' }];
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
-      const uploadPromise = fb._doSyncToCloud();
+      const uploadPromise = fb.syncToCloud();
 
       await tsWriteStarted;      // PATCH response handled; stuck in the bookkeeping write
       await fb.fbSignOut();      // _uid is nulled while that write is pending
@@ -325,7 +329,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       }))],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'firestore' });
     expect(fb.fbIsSignedIn()).toBe(true);   // 不得因规则拒绝而登出
   });
 
@@ -341,7 +345,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
       ],
     });
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'auth' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'auth' });
     expect(fb.fbIsSignedIn()).toBe(false);
   });
 
@@ -353,7 +357,7 @@ describe('_doSyncToCloud / syncToCloud', () => {
     });
     globalThis.items = [{ id: 'huge', type: 'link', name: 'x'.repeat(100000), url: 'https://example.com', size: '1x1' }];
 
-    await expect(fb._doSyncToCloud({ force: true })).rejects.toMatchObject({ code: 'payload-too-large' });
+    await expect(fb.syncToCloud({ force: true })).rejects.toMatchObject({ code: 'payload-too-large' });
     expect(patchCalls).toBe(0);
   });
 
@@ -370,9 +374,9 @@ describe('_doSyncToCloud / syncToCloud', () => {
     // is defaults. Uploading them would overwrite the real cloud document.
     globalThis.isStorageLoadFailed = () => true;
     try {
-      const result = await fb._doSyncToCloud({ force: true });
+      const result = await fb.syncToCloud({ force: true });
 
-      expect(result).toEqual({ ok: true, skipped: true });
+      expect(result).toEqual({ ok: true, skipped: true, reason: 'storage-read-only' });
       expect(patchCalls).toBe(0);
     } finally {
       delete globalThis.isStorageLoadFailed;

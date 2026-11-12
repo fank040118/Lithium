@@ -79,7 +79,8 @@ describe('syncFromCloud', () => {
       })))],
     });
     globalThis.items = sentinelItems;
-    await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+    // Same instant as the GET (6 vs 9 fractional digits): the cloud is unchanged.
+    await fb._setCloudBaseline(fb._knownBaseline('2024-01-01T00:00:00.000000Z'));
 
     const result = await fb.syncFromCloud();
 
@@ -104,7 +105,7 @@ describe('syncFromCloud', () => {
           }),
         ],
       });
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();   // 上次上传失败的遗留脏数据
       vi.clearAllTimers();                    // 清掉 mark 排的定时器，只验证 syncFromCloud 自己补排
 
@@ -140,7 +141,8 @@ describe('syncFromCloud', () => {
         ],
       });
       globalThis.items = sentinelItems;
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      // 旧基线，云端已变
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();   // 只观察 syncFromCloud 自己是否排上传
 
@@ -219,7 +221,8 @@ describe('syncFromCloud', () => {
         const result = await fb.syncFromCloud();
 
         expect(result).toBe(true);
-        expect(await fb._loadCloudSyncTs()).toBe(expectedTs);
+        expect(await fb._loadCloudBaseline()).toMatchObject({ kind: 'known', raw: cloudUpdateTime });
+        expect(fb._getCloudBaseline().lastCloudTs).toBe(expectedTs);
         expect(await fb._loadRevState()).toEqual({ editRev: 1, syncedRev: 0 });
         expect(vi.getTimerCount()).toBe(1);
       } finally {
@@ -398,9 +401,8 @@ describe('_pullAfterSignIn', () => {
     // 持久化基线仍指向上一次成功同步的账号 → 切号未解决
     storage._data._fb_sync_baseline_uid = 'account-a';
     await fb._loadAuth();
-    // 场景：上一次同步时间戳比新账号云文档还新（旧账号残留），但本地干净
-    storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
-    await fb._loadCloudSyncTs();
+    // 场景：残留的云端基线恰与新账号云文档同一版本（若走快路径会被跳过），但本地干净
+    await fb._setCloudBaseline(fb._knownBaseline('2024-06-02T00:00:00.000000Z'));
     globalThis.items = [{ id: 'leftover-from-account-a' }];
 
     await fb._pullAfterSignIn();
@@ -467,7 +469,7 @@ describe('_pullAfterSignIn', () => {
       document.body.innerHTML = '<div id="engine-name"></div>';
 
       await fb._loadAuth();
-      await fb._loadCloudSyncTs();
+      await fb._loadCloudBaseline();   // ms key only: pre-1.0.5 migration state
       await fb._loadRevState();
       // The upgrade seeds A as the baseline; that is what makes the switch below detectable.
       expect(storage._data._fb_sync_baseline_uid).toBe('account-a');
@@ -496,7 +498,7 @@ describe('_pullAfterSignIn', () => {
     }
   });
 
-  it('keeps the non-forced pull semantics when the stored cloud ts is newer than the cloud document', async () => {
+  it('keeps the non-forced pull semantics when the stored baseline equals the cloud document', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -508,10 +510,9 @@ describe('_pullAfterSignIn', () => {
         })))],
       });
       // 加载后基线已播种为当前 uid（并非“无基线”）：拉取保持非强制语义；
-      // 旧 _lastCloudTs 比云端文档新使 syncFromCloud 跳过，items 保持 leftover 且不排上传
+      // 云端基线与云端文档同一版本使 syncFromCloud 跳过，items 保持 leftover 且不排上传
       const leftoverItems = [{ id: 'leftover-from-account-a' }];
-      storage._data._fb_cloud_sync_ts = new Date('2024-12-01T00:00:00.000Z').getTime();
-      await fb._loadCloudSyncTs();
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-02T00:00:00.000000Z'));
       globalThis.items = leftoverItems;
 
       await fb._pullAfterSignIn();

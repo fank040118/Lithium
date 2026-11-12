@@ -128,6 +128,19 @@ describe('_friendlyAuthError', () => {
     delete globalThis.t;
   });
 
+  it.each([
+    ['baseline-cleared', undefined, 'toast.syncBaselineCleared'],
+    ['storage-unavailable', undefined, 'toast.syncStorageUnavailable'],
+    // A network failure carries the browser's own text; the code decides.
+    ['Failed to fetch', 'network', 'toast.syncNetworkFailed'],
+    ['Request timed out after 20000ms', 'network', 'toast.syncNetworkFailed'],
+    ['network', 'network', 'toast.syncNetworkFailed'],
+  ])('maps the account-deletion failure %s (code %s) to %s', (msg, code, key) => {
+    const fb = loadFirebaseModule();
+
+    expect(fb._friendlyAuthError(msg, code)).toBe(key);
+  });
+
   it('returns error.unknown for empty, null, or undefined input', () => {
     const fb = loadFirebaseModule();
 

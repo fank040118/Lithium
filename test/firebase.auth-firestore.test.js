@@ -254,7 +254,7 @@ describe('_saveAuth', () => {
 });
 
 describe('_clearAuth', () => {
-  it('resets internal state and removes auth keys plus cloud sync ts from storage', async () => {
+  it('resets internal state and removes auth keys plus both cloud baseline keys from storage', async () => {
     const fb = loadFirebaseModule();
     const mock = createMockChromeStorage({
       _fb_refresh: 'refresh-token',
@@ -262,6 +262,7 @@ describe('_clearAuth', () => {
       _fb_email_verified: true,
       _fb_email: 'user@example.com',
       _fb_cloud_sync_ts: 123456789,
+      _fb_cloud_update_time: '1970-01-02T10:17:36.789Z',
     });
     globalThis.chrome = mock;
 
@@ -282,12 +283,14 @@ describe('_clearAuth', () => {
       '_fb_email_verified',
       '_fb_email',
       '_fb_cloud_sync_ts',
+      '_fb_cloud_update_time',
     ]);
     expect(mock._data).not.toHaveProperty('_fb_refresh');
     expect(mock._data).not.toHaveProperty('_fb_uid');
     expect(mock._data).not.toHaveProperty('_fb_email_verified');
     expect(mock._data).not.toHaveProperty('_fb_email');
     expect(mock._data).not.toHaveProperty('_fb_cloud_sync_ts');
+    expect(mock._data).not.toHaveProperty('_fb_cloud_update_time');
   });
 
   it('resets internal state and skips storage removal when storage is unavailable', async () => {
@@ -628,7 +631,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(401, { error: { message: 'UNAUTHENTICATED' } }));
+    const body = { error: { message: 'UNAUTHENTICATED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(401, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 401 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -639,7 +644,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 403 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -650,7 +657,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(200, { error: { status: 'UNAUTHENTICATED', message: 'nope' } }));
+    const body = { error: { status: 'UNAUTHENTICATED', message: 'nope' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(200, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 200 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -661,7 +670,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: '... PERMISSION_DENIED ...' } }));
+    const body = { error: { message: '... PERMISSION_DENIED ...' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 400 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -677,7 +688,9 @@ describe('_parseFirestoreError', () => {
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, body), body);
 
     expect(result).toEqual({ code: 'auth', status: 403 });
     expect(fb.fbIsSignedIn()).toBe(false);
@@ -690,7 +703,9 @@ describe('_parseFirestoreError', () => {
     await fb._loadAuth();
     expect(fb.fbIsSignedIn()).toBe(false);
 
-    const result = await fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(403, body), body);
 
     expect(result).toEqual({ code: 'auth', status: 403 });
     expect(fb.fbIsSignedIn()).toBe(false);
@@ -725,7 +740,9 @@ describe('_parseFirestoreError', () => {
       ],
     });
 
-    const parsePromise = fb._parseFirestoreError(jsonResponse(403, { error: { status: 'PERMISSION_DENIED' } }));
+    const body = { error: { status: 'PERMISSION_DENIED' } };
+
+    const parsePromise = fb._parseFirestoreError(jsonResponse(403, body), body);
     await refreshStarted;                                  // the refresh captured the old epoch
     await fb.fbSignOut();                                  // old session ends
     await fb.fbSignIn('new@example.com', 'password123');   // new session takes over
@@ -745,7 +762,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(429, { error: { message: 'rate limited' } }));
+    const body = { error: { message: 'rate limited' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(429, body), body);
 
     expect(result).toEqual({ code: 'quota', status: 429 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -756,7 +775,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { status: 'RESOURCE_EXHAUSTED' } }));
+    const body = { error: { status: 'RESOURCE_EXHAUSTED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, body), body);
 
     expect(result).toEqual({ code: 'quota', status: 400 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -767,7 +788,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(400, { error: { message: 'QUOTA_EXCEEDED' } }));
+    const body = { error: { message: 'QUOTA_EXCEEDED' } };
+
+    const result = await fb._parseFirestoreError(jsonResponse(400, body), body);
 
     expect(result).toEqual({ code: 'quota', status: 400 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -778,7 +801,9 @@ describe('_parseFirestoreError', () => {
     await setupSignedInFirebase(fb);
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    const result = await fb._parseFirestoreError(jsonResponse(500, {}));
+    const body = {};
+
+    const result = await fb._parseFirestoreError(jsonResponse(500, body), body);
 
     expect(result).toEqual({ code: 'firestore', status: 500 });
     expect(fb.fbIsSignedIn()).toBe(true);
@@ -858,6 +883,16 @@ describe('_fsGet', () => {
   });
 });
 
+// _fsSet sends one prepared PATCH: the caller passes the url (with its
+// precondition), the token and the body (see _pushCore's I4 block).
+function fsSetArgs(fb, body = '{"fields":{}}') {
+  return {
+    url: fb._docUrl() + fb._preconditionQuery({ updateTime: '2023-12-31T00:00:00.000000Z' }),
+    token: 'id-token',
+    body,
+  };
+}
+
 describe('_fsSet', () => {
   it('returns updateTime on 200 with updateTime', async () => {
     const fb = loadFirebaseModule();
@@ -867,7 +902,7 @@ describe('_fsSet', () => {
       )],
     });
 
-    const result = await fb._fsSet({ items: '[]' });
+    const result = await fb._fsSet(fsSetArgs(fb));
 
     expect(result).toBe('2024-01-01T00:00:00.000000000Z');
   });
@@ -878,7 +913,7 @@ describe('_fsSet', () => {
       extraRoutes: [firestorePatchRoute(async () => jsonResponse(200, {}))],
     });
 
-    const result = await fb._fsSet({ items: '[]' });
+    const result = await fb._fsSet(fsSetArgs(fb));
 
     expect(result).toBeNull();
   });
@@ -893,7 +928,7 @@ describe('_fsSet', () => {
       }))],
     });
 
-    const result = await fb._fsSet({ items: '[]' });
+    const result = await fb._fsSet(fsSetArgs(fb));
 
     expect(result).toBeNull();
   });
@@ -907,7 +942,7 @@ describe('_fsSet', () => {
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'firestore', status: 401 });
+    await expect(fb._fsSet(fsSetArgs(fb))).rejects.toMatchObject({ code: 'firestore', status: 401 });
     expect(fb.fbIsSignedIn()).toBe(true);
   });
 
@@ -918,7 +953,7 @@ describe('_fsSet', () => {
     });
     expect(fb.fbIsSignedIn()).toBe(true);
 
-    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'network' });
+    await expect(fb._fsSet(fsSetArgs(fb))).rejects.toMatchObject({ code: 'network' });
     expect(fb.fbIsSignedIn()).toBe(true);
   });
 
@@ -933,27 +968,70 @@ describe('_fsSet', () => {
 
     await fb._loadAuth();
     expect(fb.fbIsSignedIn()).toBe(false);
-    await expect(fb._fsSet({ items: '[]' })).rejects.toMatchObject({ code: 'not-signed-in' });
+    // Signed out: _getToken has no token to give, and _fsSet refuses it.
+    const token = await fb._getToken();
+    expect(token).toBeNull();
+    await expect(fb._fsSet({ ...fsSetArgs(fb), token })).rejects.toMatchObject({ code: 'not-signed-in' });
     expect(fetchCalls).toBe(0);
   });
 
-  it('encodes data fields with _toFV in the PATCH body', async () => {
+  it('a signed-out upload rejects not-signed-in without fetching', async () => {
+    const fb = loadFirebaseModule();
+    globalThis.chrome = createMockChromeStorage({});
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      throw new Error('should not be called');
+    };
+    await fb._loadAuth();
+
+    // _pushCore itself (no queue): no token → not-signed-in, no request.
+    const ctx = {
+      epoch: 0, alive: () => true, budget: { baselineGet: 1, recoveryGet: 1, patch: 2 },
+      notifyConflict: false, storageRead: null,
+    };
+    await expect(fb._pushCore(ctx, { precondition: { exists: false } }))
+      .rejects.toMatchObject({ code: 'not-signed-in' });
+
+    // Queued, the dequeue guard stops it first: the empty store has no auth
+    // key, which spec §7.3 step 3 reports before the sign-in state.
+    const run = fb._enqueueSync({
+      kind: 'upload',
+      auto: false,
+      run: (c) => fb._pushCore(c, { precondition: { exists: false } }),
+    });
+    await expect(run).resolves.toEqual({ uploaded: false, reason: 'baseline-cleared' });
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('sends the body verbatim, with every upload field encoded by _toFV', async () => {
     const fb = loadFirebaseModule();
     let capturedBody;
     await setupSignedInFirebase(fb, {
       extraRoutes: [firestorePatchRoute(async (url, options) => {
-        capturedBody = JSON.parse(options.body);
+        capturedBody = options.body;
         return jsonResponse(200, { updateTime: '2024-02-02T00:00:00.000000000Z' });
       })],
     });
+    const snap = {
+      items: [{ id: 'a' }],
+      engines: [{ id: 'e' }],
+      selected_engine: 'google',
+      clocks: [],
+      grid_columns: 5,
+    };
+    const body = fb._buildUploadBody(snap, 123);
 
-    await fb._fsSet({ n: 123, s: 'str', o: { a: 1 }, n2: null });
+    await fb._fsSet(fsSetArgs(fb, body));
 
-    expect(capturedBody.fields).toEqual({
-      n: fb._toFV(123),
-      s: fb._toFV('str'),
-      o: fb._toFV({ a: 1 }),
-      n2: fb._toFV(null),
+    expect(capturedBody).toBe(body);
+    expect(JSON.parse(capturedBody).fields).toEqual({
+      items: fb._toFV(JSON.stringify(snap.items)),
+      engines: fb._toFV(JSON.stringify(snap.engines)),
+      selected_engine: fb._toFV('google'),
+      clocks: fb._toFV(JSON.stringify(snap.clocks)),
+      grid_columns: fb._toFV(5),
+      updated_at: fb._toFV(123),
     });
   });
 });

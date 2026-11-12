@@ -3,7 +3,7 @@ import { loadFirebaseModule } from './helpers/loadFirebaseModule.js';
 import { jsonResponse, createRoutedFetch } from './helpers/mockFetch.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
 import { installUiMocks } from './helpers/uiMocks.js';
-import { TEST_UID, setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute } from './helpers/setupSignedInFirebase.js';
+import { TEST_UID, setupSignedInFirebase, firestoreGetRoute, firestorePatchRoute, preconditionOf } from './helpers/setupSignedInFirebase.js';
 
 // A faithful stand-in for app.js's sanitizeItemsShape (which is not loaded in
 // firebase tests) covering the behaviors these cases rely on: folder children
@@ -307,7 +307,7 @@ describe('_buildSyncSnapshot', () => {
   });
 });
 
-describe('_doSyncToCloud payload equivalence', () => {
+describe('syncToCloud payload equivalence', () => {
   it('builds the PATCH payload field-for-field from _buildSyncSnapshot', async () => {
     const fb = loadFirebaseModule();
     let capturedBody = null;
@@ -326,7 +326,7 @@ describe('_doSyncToCloud payload equivalence', () => {
 
     const snap = fb._buildSyncSnapshot();
 
-    await fb._doSyncToCloud({ force: true });
+    await fb.syncToCloud({ force: true });
 
     const fields = capturedBody.fields;
     expect(fields.items.stringValue).toBe(JSON.stringify(snap.items));
@@ -472,7 +472,7 @@ describe('syncFromCloud conflict detection', () => {
           }),
         ],
       });
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -510,7 +510,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -546,7 +546,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -581,7 +581,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -613,7 +613,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -629,7 +629,10 @@ describe('syncFromCloud conflict detection', () => {
     }
   });
 
-  it('detects a conflict even when the cloud document has no updateTime', async () => {
+  // Plan deviation (Review Focus 3): a document without a usable updateTime
+  // has no version to base an upload on, so the pull fails as a server error
+  // instead of running conflict detection.
+  it('throws firestore without a conflict or landing when the cloud document has no updateTime', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -650,11 +653,12 @@ describe('syncFromCloud conflict detection', () => {
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
-      const result = await fb.syncFromCloud();
+      await expect(fb.syncFromCloud()).rejects.toMatchObject({ code: 'firestore' });
 
-      expect(result).toBe(false);
-      expect(fb.fbGetSyncConflict()).not.toBeNull();
-      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(fb.fbGetSyncConflict()).toBeNull();
+      expect(conflictHook).not.toHaveBeenCalled();
+      expect(globalThis.items).toEqual([{ id: 'local-only' }]);
+      expect(fb._isDirty()).toBe(true);
     } finally {
       delete globalThis.onSyncConflict;
       vi.useRealTimers();
@@ -693,6 +697,7 @@ describe('syncFromCloud conflict detection', () => {
     expect(globalThis.items).toEqual([{ id: 'local-only' }]);
     // 迟到的响应不得复活云端时间戳，也不得改写基线
     expect(storage._data._fb_cloud_sync_ts).toBeUndefined();
+    expect(storage._data._fb_cloud_update_time).toBeUndefined();
     expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
   });
 
@@ -759,7 +764,7 @@ describe('syncFromCloud conflict detection', () => {
         ],
       });
       globalThis.items = [{ id: 'local-only' }];
-      await fb._saveCloudSyncTs(new Date('2024-06-01T00:00:00.000Z').getTime());
+      await fb._setCloudBaseline(fb._knownBaseline('2024-06-01T00:00:00.000000Z'));
       await fb.markLocalCloudDataChanged();
       vi.clearAllTimers();
 
@@ -857,10 +862,12 @@ describe('fbResolveSyncConflict', () => {
       const localItems = [{ id: 'local-only' }];
       let patchCalls = 0;
       let capturedBody = null;
+      let capturedUrl = null;
       const { storage } = await makeConflict(fb, {
         getResponder: async () => jsonResponse(200, cloudDoc(fb, [{ id: 'cloud' }])),
         patchResponder: async (url, options) => {
           patchCalls += 1;
+          capturedUrl = url;
           capturedBody = JSON.parse(options.body);
           return jsonResponse(200, { updateTime: PATCH_TS });
         },
@@ -868,12 +875,17 @@ describe('fbResolveSyncConflict', () => {
       });
       await fb.syncFromCloud();
       expect(fb.fbGetSyncConflict()).not.toBeNull();
+      // The in-memory baseline is still the seed: the conflict never moves it.
+      expect(fb._getCloudBaseline().baseline.raw).not.toBe(CLOUD_TS);
 
       const result = await fb.fbResolveSyncConflict('local');
 
       expect(result).toEqual({ ok: true });
       expect(patchCalls).toBe(1);
       expect(JSON.parse(capturedBody.fields.items.stringValue)).toEqual(localItems);
+      // The precondition is the conflict GET's raw string, captured from the
+      // pending conflict at enqueue — not the in-memory baseline.
+      expect(preconditionOf(capturedUrl)).toEqual({ updateTime: CLOUD_TS });
       expect(fb.fbGetSyncConflict()).toBeNull();
       expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
     } finally {
@@ -939,6 +951,9 @@ describe('fbResolveSyncConflict', () => {
       expect(result).toEqual({ ok: true, code: 'no-cloud-data' });
       expect(fb.fbGetSyncConflict()).toBeNull();
       expect(storage._data._fb_sync_baseline_uid).toBe(TEST_UID);
+      // The import went out in the same executor hold, before the resolution
+      // returned — no debounce timer is involved.
+      expect(patchCalls).toBe(1);
 
       await vi.advanceTimersByTimeAsync(2000);
       expect(patchCalls).toBe(1);
@@ -1023,7 +1038,7 @@ describe('fbResolveSyncConflict', () => {
     }
   });
 
-  it("'local' clears the conflict on upload failure and keeps the local state dirty", async () => {
+  it("'local' keeps the conflict pending on upload failure; later edits still upload nothing", async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -1043,16 +1058,18 @@ describe('fbResolveSyncConflict', () => {
       const result = await fb.fbResolveSyncConflict('local');
 
       expect(result).toEqual({ ok: false, code: 'quota' });
-      expect(fb.fbGetSyncConflict()).toBeNull();
+      // Spec §6.4: the conflict stays pending (the dialog shows an inline
+      // error and the user retries); clearing it would only let an auto upload
+      // run against the pre-conflict baseline.
+      expect(fb.fbGetSyncConflict()).not.toBeNull();
       expect(fb._isDirty()).toBe(true);
       expect(globalThis.items).toEqual(localItems);
       expect(patchCalls).toBe(1);
 
-      // Retry path: the conflict is now cleared, so the next user edit resumes
-      // the automatic upload (existing error path) instead of staying paused.
+      // Automatic uploads stay paused while the conflict is pending.
       await fb.markLocalCloudDataChanged();
       await vi.advanceTimersByTimeAsync(2000);
-      expect(patchCalls).toBe(2);
+      expect(patchCalls).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -1441,7 +1458,7 @@ describe('account switch end-to-end', () => {
     }
   });
 
-  it('clears the pending conflict and schedules an import when the cloud doc is deleted while pending', async () => {
+  it('marks the pending conflict cloud-absent (no import) when the cloud doc is deleted while pending', async () => {
     vi.useFakeTimers();
     try {
       const fb = loadFirebaseModule();
@@ -1472,11 +1489,15 @@ describe('account switch end-to-end', () => {
       cloudDeleted = true;
       await fb._pullAfterSignIn({ trigger: 'sign-in' });
 
-      expect(conflictHook).not.toHaveBeenCalled();
-      expect(fb.fbGetSyncConflict()).toBeNull();
-      expect(vi.getTimerCount()).toBe(1);   // 导入上传排定
+      // Spec §7.3: a pull never resolves a pending conflict by an absent
+      // cloud. The pending is marked not-found and the dialog refreshed; only
+      // the user's choice imports (choose-local exists=false, or choose-cloud).
+      expect(conflictHook).toHaveBeenCalledTimes(1);
+      expect(fb.fbGetSyncConflict()).toMatchObject({ cloudState: 'not-found', cloudRaw: null });
+      expect(fb._isDirty()).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(2000);
-      expect(patchCalls).toBe(1);
+      expect(patchCalls).toBe(0);
     } finally {
       delete globalThis.onSyncConflict;
       vi.useRealTimers();
