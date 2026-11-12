@@ -410,6 +410,15 @@ describe('_handleSyncBtn result mapping (spec §5.4)', () => {
     expect(showToast).toHaveBeenCalledWith(key, kind);
   });
 
+  it.each([undefined, null, {}, { ok: true }])('an unrecognised upload result %j is never reported as uploaded', async (result) => {
+    const { fb, showToast } = arrange();
+    globalThis.syncToCloud = vi.fn(async () => result);
+
+    await fb._handleSyncBtn('upload');
+
+    expect(showToast).not.toHaveBeenCalledWith('toast.syncUploaded', expect.anything());
+  });
+
   it.each(['conflict', 'conflict-pending', 'session-changed', 'account-deleting', 'not-signed-in'])(
     'manual upload skipped with %s shows no toast and never claims "uploaded"', async (reason) => {
       const { fb, showToast } = arrange();

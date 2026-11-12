@@ -140,7 +140,7 @@
         wrongAccount: 'Wrong account?',
         signOut: 'Sign out',
         cloudChanged: 'The cloud data just changed again. The details above have been updated; please review and choose again.',
-        cloudAbsent: 'The cloud data was just deleted or cleared. Either choice keeps the local data and uploads it to the cloud again.',
+        cloudAbsent: 'The cloud data has been deleted or cleared. Either choice will normally refill the cloud with the local data.',
         payloadTooLarge: 'Local data exceeds the 100 KB upload limit, so it can\'t be kept. Trim custom icons and retry, or choose "Use cloud".',
       },
       deleteAccount: {

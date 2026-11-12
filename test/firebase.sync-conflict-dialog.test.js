@@ -97,9 +97,14 @@ describe('_renderSyncConflictDialog', () => {
   it.each(['not-found', 'empty'])('explains a cloud that was deleted or emptied (cloudState %s)', (cloudState) => {
     const { fb } = setup();
     fb._renderSyncConflictDialog({ ...INFO, cloudState, cloudShortcutCount: 0, cloudFolderCount: 0 });
-    const text = $('sync-conflict-text').textContent;
-    expect(text).toContain('dialog.syncConflict.text');
-    expect(text).toContain('dialog.syncConflict.cloudAbsent');
+    // Replaces the overwrite wording instead of contradicting it.
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.cloudAbsent');
+  });
+
+  it('cloud-absent replaces the account-switch text too', () => {
+    const { fb } = setup();
+    fb._renderSyncConflictDialog({ ...INFO, isAccountSwitch: true, cloudState: 'not-found' });
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.cloudAbsent');
   });
 
   it('does not show the cloud-absent hint for a document cloud, nor after the cloud comes back', () => {
@@ -218,7 +223,7 @@ describe('re-renders on langchange', () => {
     window.dispatchEvent(new Event('lithium:langchange'));
     fb._refreshSyncConflictDialogOnLangChange();
     expect(t).toHaveBeenCalledWith('dialog.syncConflict.cloudAbsent');
-    expect($('sync-conflict-text').textContent).toContain('dialog.syncConflict.cloudAbsent');
+    expect($('sync-conflict-text').textContent).toBe('dialog.syncConflict.cloudAbsent');
   });
 
   it('does not resurrect an error after close or re-open', () => {

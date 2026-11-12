@@ -2069,7 +2069,7 @@ function _syncErrorToastKey(code) {
 // have their own UI (or are not the user's business). Only an upload that
 // really PATCHed is reported as uploaded.
 function _manualUploadToast(r) {
-  if (r && !r.skipped) return { key: 'toast.syncUploaded', kind: 'default' };
+  if (r?.skipped === false) return { key: 'toast.syncUploaded', kind: 'default' };
   switch (r?.reason) {
     case 'up-to-date': return { key: 'toast.syncUpToDate', kind: 'default' };
     case 'conflict':
@@ -2537,13 +2537,14 @@ function _renderSyncConflictDialog(info) {
   const isSwitch = !!info.isAccountSwitch;
   const textEl = document.getElementById('sync-conflict-text');
   if (textEl) {
-    let text = t(isSwitch ? 'dialog.syncConflict.textSwitch' : 'dialog.syncConflict.text');
     // The pending conflict was re-marked cloud-absent (the cloud document was
-    // deleted or emptied since the conflict first appeared, spec §7.3): say so.
-    if (info.cloudState === 'not-found' || info.cloudState === 'empty') {
-      text += ` ${t('dialog.syncConflict.cloudAbsent')}`;
-    }
-    textEl.textContent = text;
+    // deleted or emptied since the conflict first appeared, spec §7.3): the
+    // usual "the other copy will be overwritten" text no longer holds, so this
+    // text replaces it instead of being appended to it.
+    const cloudAbsent = info.cloudState === 'not-found' || info.cloudState === 'empty';
+    textEl.textContent = t(cloudAbsent
+      ? 'dialog.syncConflict.cloudAbsent'
+      : (isSwitch ? 'dialog.syncConflict.textSwitch' : 'dialog.syncConflict.text'));
   }
 
   const warnEl = document.getElementById('sync-conflict-account-warn');
