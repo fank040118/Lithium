@@ -4,6 +4,10 @@
     "reason": "focus-within"
   },
   {
+    "selector": ".engine-item:hover .engine-delete-btn",
+    "reason": "state-in-ancestor"
+  },
+  {
     "selector": ".sync-conflict-footer:has(> .sync-conflict-signout:not(.hidden))",
     "reason": "has"
   }

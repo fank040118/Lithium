@@ -9,8 +9,10 @@
 //   base       去掉状态伪类和伪元素之后的部分，交给 el.matches()；unsupported 的选择器里，
 //              无法判定的部分（:has()、:not() 里的状态等）也被去掉，base 是「可能匹配」的宽松上界
 //   states     从任何位置取出的状态伪类：hover / active / focus / focus-visible / focus-within
+//   subjectStates  其中写在主体复合选择器（最后一个）上的；写在祖先、兄弟复合选择器上的不由元素自身的状态蕴含，
+//              出现时整条选择器 unsupported（reason 'state-in-ancestor'），在 cascade 里对任何状态都可能参与
 //   pseudoEl   归一化成双冒号写法，如 '::-webkit-slider-thumb'
-//   unsupported/reason  静态无法判定：has、focus-within、state-in-<not|is|where>、unknown-pseudo、match-error
+//   unsupported/reason  静态无法判定：has、focus-within、state-in-ancestor、state-in-<not|is|where>、unknown-pseudo、match-error
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -36,7 +38,9 @@ const KNOWN_PSEUDO_CLASSES = new Set([
   'read-only', 'read-write', 'placeholder-shown', 'indeterminate', 'default', 'valid', 'invalid',
   'in-range', 'out-of-range', 'lang', 'dir', 'scope', 'defined',
 ]);
-const SKIPPED_AT_RULES = new Set(['keyframes', '-webkit-keyframes', '-moz-keyframes', 'font-face', 'page', 'property', 'counter-style', 'font-feature-values', 'namespace']);
+// 内部不是普通规则的 at-rule：层叠判定（parseCss）整个跳过，lint 扫描（scanCss）要读进来。
+const KEYFRAMES_AT_RULES = new Set(['keyframes', '-webkit-keyframes', '-moz-keyframes']);
+const DECL_AT_RULES = new Set(['font-face', 'page', 'property', 'counter-style', 'font-feature-values']);
 
 // ---------------------------------------------------------------------------
 // 底层扫描工具
@@ -117,11 +121,28 @@ function readIdent(text, i) {
   return j;
 }
 
+// 顶层（括号、方括号、字符串之外）最后一个组合符（空白、>、+、~）的下标；没有返回 -1。
+function lastCombinatorIndex(text) {
+  let depth = 0;
+  let last = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '\\') i += 1;
+    else if (c === '"' || c === "'") i = skipString(text, i) - 1;
+    else if (c === '(' || c === '[') depth += 1;
+    else if (c === ')' || c === ']') depth -= 1;
+    else if (depth === 0 && /[\s>+~]/.test(c)) last = i;
+  }
+  return last;
+}
+
 const HOLE = '\u0000';   // 被取出的伪类 / 伪元素在 base 里的占位
 
 export function parseSelector(rawText) {
   const text = rawText.trim();
   const states = new Set();
+  const subjectStates = new Set();
+  const subjectStart = lastCombinatorIndex(text) + 1;
   let pseudoEl = null;
   let reason = null;
   let base = '';
@@ -158,6 +179,8 @@ export function parseSelector(rawText) {
         base += HOLE;
       } else if (arg === null && STATE_NAMES.has(name)) {
         states.add(name);
+        if (i >= subjectStart) subjectStates.add(name);
+        else reason ??= 'state-in-ancestor';
         if (name === 'focus-within') reason ??= 'focus-within';
         base += HOLE;
       } else if (name === 'has') {
@@ -181,7 +204,7 @@ export function parseSelector(rawText) {
 
   base = fillHoles(base.replace(new RegExp(`${HOLE}+`, 'g'), HOLE)).trim();
 
-  const sel = { text, base, states, pseudoEl, unsupported: reason !== null, reason };
+  const sel = { text, base, states, subjectStates, pseudoEl, unsupported: reason !== null, reason };
   if (reason === null && !canMatch(base)) {
     sel.unsupported = true;
     sel.reason = 'match-error';
@@ -304,7 +327,18 @@ function readIdentWithEscapes(text, i) {
 // ---------------------------------------------------------------------------
 // 规则
 
+// 层叠判定用：跳过 @keyframes 和声明型 at-rule。
 export function parseCss(source) {
+  return parse(source, false);
+}
+
+// lint 用：@keyframes 内部的关键帧规则（media 记为 '@keyframes 名字'）和 @font-face、@property 等的声明也读进来，
+// 免得颜色、字号之类的字面值躲在里面逃过扫描。
+export function scanCss(source) {
+  return parse(source, true);
+}
+
+function parse(source, includeAll) {
   const text = stripComments(source);
   const lineStarts = [0];
   for (let i = 0; i < text.length; i += 1) if (text[i] === '\n') lineStarts.push(i + 1);
@@ -346,7 +380,11 @@ export function parseCss(source) {
 
       if (prelude.startsWith('@')) {
         const name = /^@([\w-]+)/.exec(prelude)?.[1]?.toLowerCase() ?? '';
-        if (!SKIPPED_AT_RULES.has(name)) {
+        if (DECL_AT_RULES.has(name)) {
+          if (includeAll) rules.push(buildRule(prelude, preludeStart, bodyStart, close, media ?? prelude));
+        } else if (KEYFRAMES_AT_RULES.has(name)) {
+          if (includeAll) parseBlock(bodyStart, close, media === null ? prelude : `${media} > ${prelude}`);
+        } else if (name !== 'namespace') {
           const label = name === 'media' ? prelude.slice('@media'.length).trim() : prelude;
           const joined = media === null ? label : `${media} > ${label}`;
           parseBlock(bodyStart, close, joined);

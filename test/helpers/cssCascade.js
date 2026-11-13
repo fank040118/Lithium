@@ -141,7 +141,8 @@ export function createCascade(cssOrRules) {
         for (const sel of rule.selectors) {
           if (sel.pseudoEl !== pseudoEl) continue;
           // :focus-within 不在任何预设里，对它的 unsupported 选择器不用状态过滤，一律当作可能参与
-          const needed = sel.unsupported ? [...sel.states].filter((s) => s !== 'focus-within') : [...sel.states];
+          // 祖先、兄弟上的状态不由元素自身的状态蕴含，所以只用主体上的状态过滤
+          const needed = sel.unsupported ? [...sel.subjectStates].filter((s) => s !== 'focus-within') : [...sel.states];
           if (!needed.every((s) => state.has(s))) continue;
           let matched;
           try {

@@ -15,7 +15,7 @@
 // allow 白名单只对 raw-font-size、raw-z 生效，按完整值精确匹配（比如 '30px'、'1'）；
 // 不对 raw-radius 生效，免得白名单里的 10px 顺带放过 border-radius: 10px。
 
-import { parseCss, isReducedMotion, splitTopLevel } from './cssRules.js';
+import { scanCss, isReducedMotion, splitTopLevel } from './cssRules.js';
 
 // G-3 的首字母占位字号（30px / 10px）；spec §5.7 局部层表里的 z-index 小整数（-1 是壁纸预览的 ::after）。
 export const DEFAULT_ALLOW = ['30px', '10px', '1', '2', '-1'];
@@ -123,7 +123,7 @@ function declViolations(prop, value, allowSet) {
 export function lintStyle(text, { allow = [] } = {}) {
   const allowSet = new Set(allow.map((a) => String(a).toLowerCase()));
   const out = [];
-  for (const rule of parseCss(text)) {
+  for (const rule of scanCss(text)) {   // 口径与 cascade 不同：@keyframes 内部也要扫
     if (isExempt(rule)) continue;
     const selector = rule.selectors.map((s) => s.text).join(', ');
     for (const d of rule.decls) {

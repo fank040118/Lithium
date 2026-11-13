@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { parseCss, specificity, unsupportedSelectors, readStyleCss } from './helpers/cssRules.js';
+import { parseCss, scanCss, specificity, unsupportedSelectors, readStyleCss } from './helpers/cssRules.js';
 import {
   STATE_SETS, CascadeUndecidable, createCascade,
 } from './helpers/cssCascade.js';
@@ -66,6 +66,19 @@ describe('parseCss', () => {
     expect([...c.states].sort()).toEqual(['active', 'hover']);
   });
 
+  it('状态伪类写在非主体复合选择器（祖先、兄弟）里时标为 unsupported，主体上的不受影响', () => {
+    const s = (css) => parseCss(css)[0].selectors[0];
+    for (const css of ['.a:focus .b {}', '.a:hover > .b {}', '.a:hover + .b {}', '.a:focus-visible ~ .b {}', '.a:active .b:hover {}']) {
+      const sel = s(css);
+      expect(sel.unsupported, css).toBe(true);
+      expect(sel.reason, css).toBe('state-in-ancestor');
+    }
+    expect([...s('.a:active .b:hover {}').subjectStates]).toEqual(['hover']);
+    expect(s('.a .b:hover {}').unsupported).toBe(false);
+    expect(s('.a:not(.c .d) .b:hover {}').unsupported).toBe(false);
+    expect(s('.a .b:hover::before {}').unsupported).toBe(false);
+  });
+
   it('取出状态后复合选择器为空时补 *，旧式单冒号伪元素归一为双冒号', () => {
     const [a, b] = parseCss('.a :hover {} .b:after {}').map((r) => r.selectors[0]);
     expect(a.base).toBe('.a *');
@@ -86,6 +99,21 @@ describe('parseCss', () => {
     expect(s('.x:not(.y):first-child:nth-child(2n+1) {}').unsupported).toBe(false);
     expect(s('.x:not(:disabled):hover {}').unsupported).toBe(false);
     expect(s('.x:hover::before {}').unsupported).toBe(false);
+  });
+});
+
+describe('scanCss（给 lint 用的口径）', () => {
+  it('与 parseCss 的区别只在 @keyframes 与声明型 at-rule 内部：scanCss 读进来，parseCss 跳过', () => {
+    const css = `
+      @keyframes k { from { background: #fff } 50% { color: rgba(0,0,0,1) } }
+      @font-face { font-family: x; src: url(a.woff) }
+      .a { color: red }`;
+    expect(parseCss(css).map((r) => r.selectors[0].text)).toEqual(['.a']);
+    const scanned = scanCss(css);
+    expect(scanned.map((r) => [r.selectors[0].text, r.media])).toEqual([
+      ['from', '@keyframes k'], ['50%', '@keyframes k'], ['@font-face', '@font-face'], ['.a', null],
+    ]);
+    expect(scanned[0].decls[0]).toMatchObject({ prop: 'background', value: '#fff' });
   });
 });
 
@@ -340,6 +368,25 @@ describe('cascade：伪元素与 unsupported', () => {
     const el = mount('<div class="x"></div>');
     const { cascade } = createCascade('.x:made-up-pseudo{background:A}');
     expect(() => cascade(el, 'background')).toThrow(CascadeUndecidable);
+  });
+
+  it('状态写在祖先上：.a:focus .b 在 FOCUS_KB 下必须抛错，而不是被当成生效；REST 下同样可能参与，也抛错', () => {
+    const el = mount('<div class="a"><div class="b"></div></div>').firstElementChild;
+    const { cascade } = createCascade('.b{background:R} .a:focus .b{background:F}');
+    expect(() => cascade(el, 'background', { state: FOCUS_KB })).toThrow(CascadeUndecidable);
+    expect(() => cascade(el, 'background')).toThrow(CascadeUndecidable);
+    expect(() => cascade(el, 'color')).not.toThrow();           // 没声明目标属性，不参与
+    expect(() => cascade(mount('<div class="z"></div>'), 'background')).not.toThrow();   // 元素本身不可能匹配
+  });
+
+  it('状态写在兄弟上：.a:hover + .b 在 HOVER 下抛错；主体自己的状态仍然参与过滤', () => {
+    const el = mount('<div><i class="a"></i><i class="b"></i></div>').lastElementChild;
+    const { cascade } = createCascade('.b{background:R} .a:hover + .b{background:H} .a:hover + .b:active{background:A}');
+    expect(() => cascade(el, 'background', { state: HOVER })).toThrow(CascadeUndecidable);
+    let err;
+    try { cascade(el, 'background', { state: PRESSED }); } catch (e) { err = e; }
+    expect(err.selector).toBe('.a:hover + .b');
+    expect(err.reason).toContain('state-in-ancestor');
   });
 
   it('逗号分隔的选择器列表逐个判定：unsupported 的那一个不连累其余', () => {

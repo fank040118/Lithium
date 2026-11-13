@@ -104,6 +104,17 @@ describe('lintStyle', () => {
     expect(rulesOf('.a { font-size: 30px; z-index: 1; }')).toEqual(['raw-font-size', 'raw-z']);
   });
 
+  it('@keyframes 内部也扫描（cascade 才跳过）；@font-face、@property 等声明型 at-rule 同理', () => {
+    const css = `
+      @keyframes k { from { background: #fff; } to { color: rgba(0,0,0,1); transition: all 1s; } }
+      @property --x { syntax: '<color>'; initial-value: #abcdef; }
+      .a { color: red; }`;
+    const vs = lintStyle(css);
+    expect(vs.map((v) => [v.rule, v.selector])).toEqual([
+      ['hex', 'from'], ['rgb', 'to'], ['transition-all', 'to'], ['hex', '@property --x'],
+    ]);
+  });
+
   it('!important 不影响判定；注释里的内容不计', () => {
     expect(rulesOf('.a { z-index: 5 !important; } /* .b { color: #fff } */')).toEqual(['raw-z']);
   });
@@ -139,13 +150,21 @@ describe('lintJsColors', () => {
   });
 });
 
+// 棘轮用 ===：违规减少了也必须下调基线，否则余量会抵消后来新增的违规。
+function expectRatchet(label, actual, baseline, constName) {
+  const hint = actual < baseline
+    ? `${label}违规减少了（${baseline} -> ${actual}），请把 ${constName} 下调到 ${actual}`
+    : `${label}新增了违规（${baseline} -> ${actual}），请修掉新增的写法，不要上调 ${constName}`;
+  expect(actual, hint).toBe(baseline);
+}
+
 describe('棘轮：style.css', () => {
   const css = readStyleCss();
-  it('颜色类违规数（hex + rgb + primitive-ref）不超过基线', () => {
-    expect(colorViolations(css, { allow: DEFAULT_ALLOW }).length).toBeLessThanOrEqual(BASELINE_COLOR);
+  it('颜色类违规数（hex + rgb + primitive-ref）等于基线', () => {
+    expectRatchet('颜色类', colorViolations(css, { allow: DEFAULT_ALLOW }).length, BASELINE_COLOR, 'BASELINE_COLOR');
   });
-  it('尺寸类违规数（transition-all + raw-font-size + raw-radius + raw-z）不超过基线', () => {
-    expect(dimViolations(css, { allow: DEFAULT_ALLOW }).length).toBeLessThanOrEqual(BASELINE_DIM);
+  it('尺寸类违规数（transition-all + raw-font-size + raw-radius + raw-z）等于基线', () => {
+    expectRatchet('尺寸类', dimViolations(css, { allow: DEFAULT_ALLOW }).length, BASELINE_DIM, 'BASELINE_DIM');
   });
   it('lintStyle 在 style.css 上不抛错，且每条违规都带行号', () => {
     const vs = lintStyle(css, { allow: DEFAULT_ALLOW });
