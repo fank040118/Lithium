@@ -121,20 +121,47 @@ describe('lintStyle', () => {
     const css = `
       @keyframes k { from { background: #fff; } to { color: rgba(0,0,0,1); transition: all 1s; } }
       @property --x { syntax: '<color>'; initial-value: #abcdef; }
-      .a { color: red; }`;
+      .a { color: transparent; }`;
     const vs = lintStyle(css);
     expect(vs.map((v) => [v.rule, v.selector])).toEqual([
       ['hex', 'from'], ['rgb', 'to'], ['transition-all', 'to'], ['hex', '@property --x'],
     ]);
   });
 
+  it('hsl() / hsla() 记为 hsl', () => {
+    expect(rulesOf('.a { color: hsl(0, 0%, 100%); } .b { background: hsla(0 0% 0% / 0.5); } .c { color: HSL(10 20% 30%); }'))
+      .toEqual(['hsl', 'hsl', 'hsl']);
+  });
+
+  it('命名色记为 named-color：常见色名命中，放行 transparent / currentColor / inherit', () => {
+    for (const name of ['white', 'black', 'red', 'blue', 'green', 'gray', 'grey', 'orange', 'yellow', 'WHITE']) {
+      expect(rulesOf(`.a { color: ${name}; }`), name).toEqual(['named-color']);
+    }
+    expect(rulesOf('.a { border: 1px solid white; }')).toEqual(['named-color']);
+    expect(rulesOf('.a { background: linear-gradient(to right, red, blue); }')).toEqual(['named-color']);
+    expect(rulesOf('.a { box-shadow: 0 0 4px black; }')).toEqual(['named-color']);
+    for (const ok of ['transparent', 'currentColor', 'currentcolor', 'inherit']) {
+      expect(rulesOf(`.a { color: ${ok}; background: ${ok}; border-color: ${ok}; }`), ok).toEqual([]);
+    }
+  });
+
+  it('命名色只在颜色类属性里检查；var()、url()、引号字符串、选择器与自定义属性名里的色名不算', () => {
+    expect(rulesOf('.white { color: var(--tone-white-ish); }')).toEqual([]);
+    expect(rulesOf('.a { background-image: url(red.png); }')).toEqual([]);
+    expect(rulesOf('.a { content: "white"; }')).toEqual([]);
+    expect(rulesOf('.red .blue { color: var(--tone-red-ish, var(--color-text-primary)); }')).toEqual([]);
+    expect(rulesOf('.a { font-family: Roboto, sans-serif; animation-name: red; transition: black 1s; grid-area: blue; }')).toEqual([]);
+    expect(rulesOf('.a { color: var(--c, white); }'), 'var() 的兜底值是写死的颜色').toEqual(['named-color']);
+  });
+
   it('!important 不影响判定；注释里的内容不计', () => {
     expect(rulesOf('.a { z-index: 5 !important; } /* .b { color: #fff } */')).toEqual(['raw-z']);
   });
 
-  it('colorViolations 只含 hex / rgb / primitive-ref；dimViolations 含其余四类', () => {
+  it('colorViolations 只含 hex / rgb / hsl / named-color / primitive-ref；dimViolations 含其余四类', () => {
     const css = '.a { color: #fff; border-radius: 4px; transition: all 1s; background: var(--color-red-500); z-index: 3; font-size: 12px; background-image: rgb(0 0 0); }';
     expect(colorViolations(css).map((v) => v.rule)).toEqual(['hex', 'primitive-ref', 'rgb']);
+    expect(colorViolations('.a { color: white; background: hsl(0 0% 0%); }').map((v) => v.rule)).toEqual(['named-color', 'hsl']);
     expect(dimViolations(css, { allow: [] }).map((v) => v.rule))
       .toEqual(['raw-radius', 'transition-all', 'raw-z', 'raw-font-size']);
   });
@@ -173,7 +200,7 @@ function expectRatchet(label, actual, baseline, constName) {
 
 describe('棘轮：style.css', () => {
   const css = readStyleCss();
-  it('颜色类违规数（hex + rgb + primitive-ref）等于基线', () => {
+  it('颜色类违规数（hex + rgb + hsl + named-color + primitive-ref）等于基线', () => {
     expectRatchet('颜色类', colorViolations(css, { allow: DEFAULT_ALLOW }).length, BASELINE_COLOR, 'BASELINE_COLOR');
   });
   it('尺寸类违规数（transition-all + raw-font-size + raw-radius + raw-z）等于基线', () => {

@@ -1024,3 +1024,10 @@ describe('交互状态', () => {
     }
   });
 });
+
+describe('拖动态', () => {
+  it('.grid-item-dragging 的透明度走 --opacity-dragging，不写字面值', () => {
+    const el = mount('#folder-grid', '<div class="grid-item grid-item-dragging"></div>');
+    expect(win(el, 'opacity')).toBe('var(--opacity-dragging)');
+  });
+});

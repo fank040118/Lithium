@@ -25,13 +25,13 @@ describe('新 token 块与 tokens.json 一致', () => {
   it('core 与尺寸类 token 出现在第一个 :root 块之后的 :root 块，值 = renderCss', () => {
     expect(normalize(css), `style.css 里缺少或不一致的 core 块，期望：\n${blocks.core}\n`)
       .toContain(normalize(blocks.core));
-    expect(rootBlocks.length, '旧 :root 之外应新增一个 core :root 块').toBeGreaterThanOrEqual(2);
-    // 新块在旧块之后：旧块行号更小。
-    const [oldRoot, ...rest] = rootBlocks;
+    expect(rootBlocks.length, '布局辅助 :root 块之外还应有一个 core :root 块').toBeGreaterThanOrEqual(2);
+    // core 块在布局辅助块之后：布局辅助块行号更小。
+    const [layoutRoot, ...rest] = rootBlocks;
     const coreFirstVar = tokenToCssVar(tokens.find((t) => t.set === 'core').name);
     const coreBlock = rest.find((r) => customProps(r).some((d) => d.prop === coreFirstVar));
     expect(coreBlock, 'core 块缺失').toBeTruthy();
-    expect(coreBlock.line).toBeGreaterThan(oldRoot.line);
+    expect(coreBlock.line).toBeGreaterThan(layoutRoot.line);
   });
 
   it('core 块里每个 core token 的声明值 = renderCss（逐条）', () => {
@@ -67,12 +67,18 @@ describe('新 token 块与 tokens.json 一致', () => {
     expect(decl.value).not.toContain('Inter');
   });
 
-  it('新旧变量不重名', () => {
-    const [oldRoot, ...newRoots] = rootBlocks;
-    const oldNames = new Set(customProps(oldRoot).map((d) => d.prop));
-    const newNames = [...newRoots, ...themeBlocks].flatMap(customProps).map((d) => d.prop);
-    expect(newNames.length).toBeGreaterThan(0);
-    expect(newNames.filter((n) => oldNames.has(n))).toEqual([]);
-    expect(new Set(newNames).size, '新块内部也不能重名').toBe(newNames.length);
+  it('body 的 font-family 引用 var(--font-family-ui)，字体栈的唯一来源是 token', () => {
+    const body = rules.filter((r) => topLevel(r) && selectorKey(r) === 'body');
+    const fam = body.flatMap((r) => r.decls).filter((d) => d.prop === 'font-family').at(-1);
+    expect(fam?.value).toBe('var(--font-family-ui)');
+  });
+
+  it('布局辅助块、core 块与 theme 块的变量互不重名', () => {
+    const [layoutRoot, ...tokenRoots] = rootBlocks;
+    const layoutNames = new Set(customProps(layoutRoot).map((d) => d.prop));
+    const tokenNames = [...tokenRoots, ...themeBlocks].flatMap(customProps).map((d) => d.prop);
+    expect(tokenNames.length).toBeGreaterThan(0);
+    expect(tokenNames.filter((n) => layoutNames.has(n))).toEqual([]);
+    expect(new Set(tokenNames).size, 'token 块内部也不能重名').toBe(tokenNames.length);
   });
 });

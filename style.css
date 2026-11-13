@@ -286,7 +286,7 @@ body {
   min-height: 100vh;
   background: var(--color-bg-page);
   color: var(--color-text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-family-ui);
   overflow: hidden;
   position: relative;
 }
@@ -1233,7 +1233,7 @@ body {
 }
 
 .grid-item-dragging {
-  opacity: 0.4;
+  opacity: var(--opacity-dragging);
   transform: scale(0.95);
 }
 .grid-item-combine {
@@ -1529,8 +1529,7 @@ body {
 .login-consent-card .dialog-actions { gap: var(--space-2); }
 
 /* Sync-conflict dialog — the only way out besides choosing a side is the
-   "Decide later" link (or Esc), which just hides it while the conflict stays pending.
-   Amber is reserved for the conflict state (see --warning-* in :root). */
+   "Decide later" link (or Esc), which just hides it while the conflict stays pending. */
 /* Above every other overlay (--z-modal-confirm, incl. the later-in-DOM icon-crop overlay);
    below the signin notice, context menu and toast (--z-notice / --z-menu / --z-toast).
    It must never be covered by another dialog. */

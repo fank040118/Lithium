@@ -4,6 +4,10 @@
 // 规则：
 //   hex            值里有 #rgb / #rgba / #rrggbb / #rrggbbaa（url() 与引号字符串里的不算）
 //   rgb            值里有 rgb( / rgba(
+//   hsl            值里有 hsl( / hsla(
+//   named-color    颜色类属性（color、background*、border*、outline*、fill、stroke、box-shadow、text-shadow 等）的值里有 CSS 命名色
+//                  （white、black、red……）；transparent、currentColor、inherit 放行；var() 的名字、url()、引号字符串里的不算，
+//                  var(--x, white) 的兜底值算
 //   primitive-ref  值里引用了原始色变量 var(--color-(slate|blue|red|amber|white|alpha)…)，含无后缀的 --color-white
 //   transition-all transition / transition-property 里出现 all
 //   raw-font-size  font-size 不是 var()；font 简写不是单个 var()（继承类关键字除外）
@@ -20,11 +24,28 @@ import { scanCss, isReducedMotion, splitTopLevel } from './cssRules.js';
 // G-3 的首字母占位字号（30px / 10px）；spec §5.7 局部层表里的 z-index 小整数（-1 是壁纸预览的 ::after）。
 export const DEFAULT_ALLOW = ['30px', '10px', '1', '2', '-1'];
 
-const COLOR_RULES = new Set(['hex', 'rgb', 'primitive-ref']);
+const COLOR_RULES = new Set(['hex', 'rgb', 'hsl', 'named-color', 'primitive-ref']);
 const DIM_RULES = new Set(['transition-all', 'raw-font-size', 'raw-radius', 'raw-z']);
 
 const HEX = /#[0-9a-fA-F]{3,8}(?![\w-])/;
 const RGB = /\brgba?\(/i;
+const HSL = /\bhsla?\(/i;
+// CSS Color 4 的命名色（不含 transparent / currentColor，这两个是放行项）。
+const NAMED_COLORS = ('aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood '
+  + 'cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen '
+  + 'darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray '
+  + 'darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia '
+  + 'gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender '
+  + 'lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink '
+  + 'lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon '
+  + 'mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise '
+  + 'mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid '
+  + 'palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red '
+  + 'rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow '
+  + 'springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen').split(' ');
+const NAMED_COLOR = new RegExp(`(?<![\\w-])(?:${NAMED_COLORS.join('|')})(?![\\w(-])`, 'i');
+// 只有这些属性的值里才会出现颜色；animation-name、transition、grid-area、font-family 等里的同名标识符不算。
+const COLOR_PROP = /^(?:color|background(?:-color|-image)?|border(?:-(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?)?(?:-color)?|outline(?:-color)?|fill|stroke|box-shadow|text-shadow|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?|scrollbar-color|-webkit-text-fill-color|-webkit-text-stroke(?:-color)?)$/i;
 const PRIMITIVE_REF = /var\(\s*--color-(?:slate|blue|red|amber|white|alpha)(?!\w)/i;
 const TRANSITION_ALL = /(?:^|[\s,])all(?=$|[\s,])/i;
 const RADIUS_PROP = /^border(?:-(?:top|bottom)-(?:left|right)|-(?:start|end)-(?:start|end))?-radius$/;
@@ -99,6 +120,8 @@ function declViolations(prop, value, allowSet) {
   const bare = withoutLiterals(value);
   if (HEX.test(bare)) found.push('hex');
   if (RGB.test(bare)) found.push('rgb');
+  if (HSL.test(bare)) found.push('hsl');
+  if (COLOR_PROP.test(prop) && NAMED_COLOR.test(bare.replace(/--[\w-]+/g, ' '))) found.push('named-color');
   if (PRIMITIVE_REF.test(bare)) found.push('primitive-ref');
 
   if ((prop === 'transition' || prop === 'transition-property') && TRANSITION_ALL.test(withoutVars(value))) {
