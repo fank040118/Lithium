@@ -21,8 +21,9 @@ const rulesOf = (css, opts) => lintStyle(css, opts).map((v) => v.rule);
 // 2026-11-13 Task 35（间距、尺寸、圆角、阴影、模糊）：颜色类 12 -> 0（-12，box-shadow / text-shadow 里的 rgba 换成 --shadow-*）；
 //   尺寸类 149 -> 89（-60，raw-radius 全部改为 var(--radius-*)）。
 // 2026-11-13 Task 36（z-index 与动效）：尺寸类 89 -> 65（-24，transition-all 8 + raw-z 16 归零），只剩 raw-font-size 65（留给 Task 34）。
+// 2026-11-13 Task 34（排版）：尺寸类 65 -> 0（-65，raw-font-size 全部改为 type / font-size token；白名单仅 G-3 的 30px、10px 与 z-index 小整数）。
 const BASELINE_COLOR = 0;
-const BASELINE_DIM = 65;
+const BASELINE_DIM = 0;
 
 describe('lintStyle', () => {
   it('在 :root 外命中 #fff、rgba(、var(--color-blue-600)、transition: all', () => {
@@ -175,7 +176,9 @@ describe('棘轮：style.css', () => {
     expectRatchet('尺寸类', dimViolations(css, { allow: DEFAULT_ALLOW }).length, BASELINE_DIM, 'BASELINE_DIM');
   });
   it('lintStyle 在 style.css 上不抛错，且每条违规都带行号', () => {
-    const vs = lintStyle(css, { allow: DEFAULT_ALLOW });
+    // 带白名单时 style.css 已无违规（B6 归零）；不带白名单时 30px / 10px / z-index 小整数仍会命中，用来证明扫描没有空转。
+    expect(lintStyle(css, { allow: DEFAULT_ALLOW })).toEqual([]);
+    const vs = lintStyle(css);
     expect(vs.length).toBeGreaterThan(0);
     expect(vs.every((v) => Number.isInteger(v.line) && v.line > 0)).toBe(true);
   });

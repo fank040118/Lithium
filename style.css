@@ -21,6 +21,11 @@
   padding: 0;
 }
 
+/* 表单控件继承页面字体（spec §4.1）。标签选择器特异性最低，不会盖过任何带 font 的类规则。 */
+button, input, select, textarea {
+  font: inherit;
+}
+
 :root {
   /* ============================================================
      GLASS — black-tinted surface tiers
@@ -544,9 +549,7 @@ body {
 }
 
 .sidebar-title {
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1;
+  font: var(--type-title-md);
   color: var(--color-text-primary);
 }
 
@@ -560,10 +563,8 @@ body {
   border-radius: var(--radius-full);
   background: var(--color-chip-bg);
   text-align: center;
-  font-size: 13px;
-  font-weight: 600;
+  font: var(--type-label-sm);
   color: var(--color-text-primary);
-  line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 
@@ -633,13 +634,12 @@ body {
   display: flex;
   justify-content: space-between;
   color: var(--color-text-muted);
-  font-size: 14px;
+  font-size: var(--font-size-md);
 }
 
 .sidebar-note {
   color: var(--color-text-tertiary);
-  font-size: 0.82rem;
-  line-height: 1.5;
+  font: var(--type-body-sm);
 }
 
 /* Wallpaper effects sliders */
@@ -653,9 +653,9 @@ body {
   flex-direction: column;
 }
 .sidebar-effect-label {
-  font-size: 14px;
+  font-size: var(--font-size-md);
   color: var(--color-text-muted);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 /* Figma v1.1: both the main chip and the effect chips are the same size.
    .sidebar-value-sm is kept as an alias for HTML compatibility but inherits
@@ -731,9 +731,8 @@ body {
   border-radius: 0;
   background: transparent;
   color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -764,10 +763,7 @@ body {
   border-radius: var(--radius-sm);
   background: var(--color-control-panel-default);
   color: var(--color-text-primary);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1;
+  font: var(--type-label-md);
   white-space: nowrap;
   cursor: pointer;
   transition: background var(--motion-duration-base) var(--motion-ease-standard), opacity var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard);
@@ -814,9 +810,8 @@ body {
 .clock-text {
   display: block;
   min-width: var(--clock-time-width);
-  font-size: 3.75rem;
-  font-weight: 300;
-  letter-spacing: 0.05em;
+  font: var(--type-clock);
+  letter-spacing: var(--font-tracking-clock);
   color: var(--color-text-primary);
   text-align: center;
   white-space: nowrap;
@@ -827,14 +822,14 @@ body {
 .date-text {
   color: var(--color-text-primary);
   margin-top: var(--space-1);
-  font-size: 0.875rem;
+  font-size: var(--font-size-md);
   text-align: center;
   white-space: nowrap;
   cursor: default;
 }
 .tz-label {
   color: var(--color-text-primary);
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   margin-top: var(--space-1);
   text-align: center;
   white-space: nowrap;
@@ -857,9 +852,9 @@ body {
   border: var(--border-width-thin) solid var(--color-border-subtle);
 }
 .clock-entry-index {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   width: 20px;
   text-align: center;
@@ -871,7 +866,7 @@ body {
   border-radius: var(--radius-xs);
   padding: var(--space-2) var(--space-3);
   color: var(--color-text-secondary);
-  font-size: 14px;
+  font-size: var(--font-size-md);
   outline: none;
   cursor: pointer;
 }
@@ -885,7 +880,7 @@ body {
 .clock-entry select optgroup {
   background: var(--color-bg-page);
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-style: normal;
 }
 .clock-remove-btn {
@@ -910,7 +905,7 @@ body {
   border: var(--border-width-thin) dashed var(--color-border-subtle);
   cursor: pointer;
   color: var(--color-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--font-size-md);
   transition: background var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard), border-color var(--motion-duration-base) var(--motion-ease-standard), opacity var(--motion-duration-base) var(--motion-ease-standard);
 }
 .clock-add-entry:not(:disabled):hover {
@@ -923,7 +918,7 @@ body {
 }
 .clock-limit-msg {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   text-align: center;
 }
@@ -964,7 +959,7 @@ body {
   border-right: var(--border-width-thin) solid var(--color-divider);
   padding: 0 var(--space-4);
   color: var(--color-text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
   white-space: nowrap;
@@ -992,7 +987,7 @@ body {
   width: 100%;
   background: transparent;
   color: var(--color-text-primary);
-  font-size: 1rem;
+  font-size: var(--font-size-lg);
   outline: none;
   padding: 0 var(--space-4) 0 var(--space-10);
   /* 垂直 padding 为 0 后，拉满搜索栏的内容高度，点击区域与改动前一致（文字由浏览器原生垂直居中） */
@@ -1030,7 +1025,7 @@ body {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
-  font-size: 14px;
+  font-size: var(--font-size-md);
   color: var(--color-text-secondary);
 }
 .engine-item:hover {
@@ -1067,7 +1062,7 @@ body {
   width: 100%;
   padding: var(--space-3) var(--space-4);
   border: none;
-  font-size: 14px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   border-radius: var(--radius-sm);
   text-align: left;
@@ -1080,7 +1075,7 @@ body {
   width: 100%;
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   outline: none;
   margin-bottom: var(--space-2);
   transition: border-color var(--motion-duration-base) var(--motion-ease-standard), box-shadow var(--motion-duration-base) var(--motion-ease-standard);
@@ -1095,7 +1090,7 @@ body {
   padding: var(--space-2) var(--space-4);
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
@@ -1103,7 +1098,7 @@ body {
   padding: var(--space-2) var(--space-4);
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) var(--motion-ease-standard);
 }
@@ -1298,12 +1293,12 @@ body {
   left: 50%;
   top: calc(var(--card-h) + 2px);
   transform: translateX(-50%);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   color: var(--color-text-primary);
   width: 100%;
   text-align: center;
   padding: 0 var(--space-1);
-  line-height: 1.2;
+  line-height: var(--font-leading-tight);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1407,10 +1402,9 @@ body {
   top: 25%;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 1.5rem;
-  font-weight: bold;
+  font: var(--type-title-lg);
   color: var(--color-text-primary);
-  letter-spacing: 0.1em;
+  letter-spacing: var(--font-tracking-wide);
   pointer-events: none;
   text-shadow: var(--shadow-text);
   animation: pulse 2s ease-in-out infinite;
@@ -1482,9 +1476,7 @@ body {
   background: transparent;
 }
 .modal-title {
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 1;
+  font: var(--type-title-lg);
   color: var(--color-text-primary);
   display: flex;
   align-items: center;
@@ -1529,9 +1521,7 @@ body {
   opacity: 1; /* 聚焦时恢复不透明：outline 随元素一起半透明，对比会掉 */
 }
 .folder-name-input {
-  font: inherit;            /* match modal-title font sizing/weight */
-  font-size: 20px;
-  font-weight: 500;
+  font: var(--type-title-lg);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
   max-width: 360px;
@@ -1573,9 +1563,7 @@ body {
 /* Delete dialog title — icon + text inline. icon-red provides the danger
    signal; everything else inherits the primary text color. */
 .dialog-title {
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 1;
+  font: var(--type-title-lg);
   margin-bottom: var(--space-3);
   color: var(--color-text-primary);
   display: flex;
@@ -1584,16 +1572,13 @@ body {
 }
 /* Title inside a modal-header (edit / clock-settings / login). */
 .dialog-plain-title {
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 1;
+  font: var(--type-title-lg);
   color: var(--color-text-primary);
 }
 .dialog-text {
   color: var(--color-text-muted);
   margin-bottom: var(--space-6);
-  font-size: 14px;
-  line-height: 1.5;
+  font: var(--type-body-md);
 }
 .dialog-actions {
   display: flex;
@@ -1607,12 +1592,12 @@ body {
 .dialog-title-danger { color: var(--color-text-danger); }
 .dialog-text-danger {
   color: var(--color-text-secondary);
-  font-size: 14px;
+  font-size: var(--font-size-md);
   margin-bottom: var(--space-10); /* 24px gap + 12px spacer per Figma = 36, filed to 40 (spec §5.1 rule 3) */
 }
 .dialog-text-danger p {
   margin: 0;
-  line-height: 22px;
+  line-height: var(--font-leading-normal);
 }
 .dialog-text-danger p + p { margin-top: 0; }
 .delete-account-card .dialog-actions { gap: var(--space-2); }
@@ -1628,15 +1613,13 @@ body {
 }
 .login-consent-title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  font: var(--type-title-lg);
   color: var(--color-text-primary);
 }
 .login-consent-text {
   margin: 0;
-  font-size: 13px;
+  font: var(--type-body-sm);
   color: var(--color-text-secondary);
-  line-height: 20px;
 }
 .login-consent-bullets {
   margin: 0;
@@ -1645,7 +1628,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 .login-consent-bullets li::before {
@@ -1654,9 +1637,8 @@ body {
 }
 .login-consent-footnote {
   margin: 0;
-  font-size: 12px;
+  font: var(--type-caption);
   color: var(--color-text-tertiary);
-  line-height: 18px;
 }
 .login-consent-card .dialog-actions { gap: var(--space-2); }
 
@@ -1678,8 +1660,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 18px;
-  font-weight: 600;
+  font: var(--type-title-lg);
   color: var(--color-text-primary);
 }
 .sync-conflict-title svg {
@@ -1688,8 +1669,7 @@ body {
 }
 .sync-conflict-text {
   margin: 0;
-  font-size: 13px;
-  line-height: 20px;
+  font: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 .sync-conflict-warn {
@@ -1699,9 +1679,9 @@ body {
   border: var(--border-width-thin) solid var(--color-warning-border);
   background: var(--color-warning-bg);
   color: var(--color-text-warning);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 18px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--font-leading-normal);
 }
 .sync-conflict-compare {
   display: grid;
@@ -1716,17 +1696,17 @@ body {
   border-radius: var(--radius-md);
   background: var(--color-surface-group);   /* D5-1：叠白 */
   border: var(--border-width-thin) solid var(--color-border-subtle);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
 .sync-conflict-side-label {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-tertiary);
 }
 .sync-conflict-side-time {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
 }
 /* Cloud absent: the cloud card drops its time and counts for one empty line. */
@@ -1737,20 +1717,20 @@ body {
   display: none;
 }
 .sync-conflict-side-empty {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
 }
 /* Persistent note while the local data is over the upload limit (explains the
    disabled "Use local"); the inline error line below is the transient one. */
 .sync-conflict-limit {
   margin: 0;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: var(--font-size-sm);
+  line-height: var(--font-leading-normal);
   color: var(--color-text-warning);
 }
 .sync-conflict-error {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-danger);
 }
 .sync-conflict-actions { gap: var(--space-2); }
@@ -1777,7 +1757,7 @@ body {
   justify-content: center;
   align-items: baseline;
   gap: var(--space-2);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-muted);
 }
 /* Semantic danger signal — kept red even inside .dialog-title where text
@@ -1795,9 +1775,7 @@ body {
   padding: 0 var(--space-4);
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1;
+  font: var(--type-label-md);
   cursor: pointer;
   transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
 }
@@ -1973,9 +1951,7 @@ body {
   flex: 1;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-xs);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1;
+  font: var(--type-label-md);
   border: none;
   cursor: pointer;
   transition: background var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard);
@@ -1988,8 +1964,8 @@ body {
 }
 .form-label {
   display: block;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-muted);
   margin-bottom: var(--space-2);
 }
@@ -2024,7 +2000,7 @@ body {
   height: var(--size-control-md);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-4);
-  font-size: 14px;
+  font-size: var(--font-size-md);
   outline: none;
   transition: border-color var(--motion-duration-base) var(--motion-ease-standard), box-shadow var(--motion-duration-base) var(--motion-ease-standard);
 }
@@ -2053,7 +2029,7 @@ body {
   object-fit: contain;
 }
 .icon-preview-placeholder {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
 .icon-upload-btn {
@@ -2061,7 +2037,7 @@ body {
   padding: var(--space-2) var(--space-3);
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   text-align: left;
   transition: color var(--motion-duration-base) var(--motion-ease-standard), background var(--motion-duration-base) var(--motion-ease-standard);
@@ -2070,7 +2046,7 @@ body {
   padding: var(--space-2) var(--space-3);
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: color var(--motion-duration-base) var(--motion-ease-standard), background var(--motion-duration-base) var(--motion-ease-standard);
 }
@@ -2097,9 +2073,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 1;
+  font: var(--type-title-md);
   color: var(--color-text-primary);
   margin: 0;
 }
@@ -2190,7 +2164,7 @@ body {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-md);
   color: var(--color-text-secondary);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   white-space: nowrap;
@@ -2233,8 +2207,8 @@ body {
   height: var(--size-control-xs);
   padding: 0;
   border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-muted);
   background: var(--color-surface-sunken);
   cursor: pointer;
@@ -2312,9 +2286,18 @@ body {
   pointer-events: none;
 }
 
+/* 没有图标时的首字母占位（G-3）：内容尺寸，不进字号档，固定 30px / 10px，lint 白名单放行 */
+.icon-letter {
+  font-size: 30px;
+  font-weight: var(--font-weight-semibold);
+}
+.icon-letter-sm {
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+}
 .folder-slot-letter {
   font-size: var(--preview-letter-size);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-tertiary);
   pointer-events: none;
   text-transform: uppercase;
@@ -2389,7 +2372,7 @@ body {
 
 .folder-mini-letter {
   font-size: var(--folder-mini-letter-size);
-  font-weight: bold;
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-tertiary);
   pointer-events: none;
   text-transform: uppercase;
@@ -2415,8 +2398,7 @@ body {
   border-radius: var(--radius-md);
   background: var(--color-surface-menu);
   color: var(--color-text-primary);
-  font-size: 0.9rem;
-  line-height: 1.45;
+  font: var(--type-body-md);
   text-align: center;
   backdrop-filter: blur(var(--blur-menu));
   -webkit-backdrop-filter: blur(var(--blur-menu));
@@ -2481,16 +2463,16 @@ body {
 }
 .signin-notice-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-  line-height: 1;
+  line-height: var(--font-leading-none);
 }
 .signin-notice-sub {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-  line-height: 1;
+  line-height: var(--font-leading-none);
 }
 
 /* Login overlay */
@@ -2501,8 +2483,7 @@ body {
 
 .login-desc {
   color: var(--color-text-muted);
-  font-size: 14px;
-  line-height: 1.5;
+  font: var(--type-body-md);
   margin: 0 0 var(--space-4);
 }
 
@@ -2520,8 +2501,8 @@ body {
   padding: var(--space-2) var(--space-3);
   border: none;
   border-radius: var(--radius-xs);
-  font-size: 14px;
-  line-height: 1;
+  font-size: var(--font-size-md);
+  line-height: var(--font-leading-none);
   cursor: pointer;
   transition: background var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard);
 }
@@ -2538,7 +2519,7 @@ body {
 
 .login-error {
   color: var(--color-text-danger);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   min-height: 1.1em;
   margin: 0;
 }
@@ -2548,8 +2529,8 @@ body {
   background: none;
   border: none;
   padding: 0;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-accent);
   cursor: pointer;
   transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
@@ -2560,20 +2541,19 @@ body {
 
 .verify-desc {
   color: var(--color-text-tertiary);
-  font-size: 14px;
-  line-height: 1.5;
+  font: var(--type-body-md);
   margin: 0;
 }
 
 .verify-email-target {
   color: var(--color-text-accent);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   word-break: break-all;
 }
 
 .verify-status {
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   min-height: 1.1em;
   margin: 0;
 }
@@ -2600,8 +2580,8 @@ body {
 .sync-delete-btn {
   margin-top: var(--space-2);
   width: 100%;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 /* Sync status in sidebar — inherits .sidebar-value chip styling.
@@ -2615,8 +2595,7 @@ body {
 
 .sidebar-sync-hint {
   margin: 0 0 var(--space-2);
-  font-size: 12px;
-  line-height: 1.5;
+  font: var(--type-caption);
   color: var(--color-text-muted);
 }
 
@@ -2680,9 +2659,7 @@ body {
   border-radius: var(--radius-full);
   background: var(--color-surface-glass-default);
   color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 0.78rem;
-  line-height: 1;
+  font: var(--type-label-sm);
   cursor: pointer;
   user-select: none;
   backdrop-filter: blur(var(--blur-glass));

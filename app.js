@@ -1255,8 +1255,8 @@ function updateIconPreview(dataUrl) {
   }
 }
 
-const ICON_FALLBACK_STYLE = 'display:none;font-size:1.875rem;font-weight:600;color:#cbd5e1;pointer-events:none';
-const ICON_FALLBACK_STYLE_SM = 'display:none;font-size:10px;color:#cbd5e1;font-weight:bold;pointer-events:none';
+const ICON_FALLBACK_STYLE = 'display:none;color:#cbd5e1;pointer-events:none';
+const ICON_FALLBACK_STYLE_SM = 'display:none;color:#cbd5e1;pointer-events:none';
 const FOLDER_PREVIEW_ICON = '<svg class="folder-slot-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
 const FOLDER_PREVIEW_ICON_MINI = '<svg class="folder-mini-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
 
@@ -1326,27 +1326,27 @@ function renderIcon(item) {
   const isExpandedLink = item.type === 'link' && getItemSize(item) !== '1x1';
   if (item.type === 'link') {
     if (item.icon) {
-      const content = `${buildManagedImageTag({ src: item.icon, style: ICON_STYLE, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
+      const content = `${buildManagedImageTag({ src: item.icon, style: ICON_STYLE, errorMode: 'show-sibling' })}<span class="icon-letter" style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
       return isExpandedLink ? `<div class="grid-item-link-preview">${content}</div>` : content;
     }
     const cached = (window.iconCache && typeof window.iconCache.getCachedIcon === 'function')
       ? window.iconCache.getCachedIcon(item.url)
       : '';
     if (cached) {
-      const content = `${buildManagedImageTag({ src: cached, style: ICON_STYLE, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
+      const content = `${buildManagedImageTag({ src: cached, style: ICON_STYLE, errorMode: 'show-sibling' })}<span class="icon-letter" style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
       return isExpandedLink ? `<div class="grid-item-link-preview">${content}</div>` : content;
     }
     const favicon = getFavicon(item.url);
     if (favicon) {
-      const content = `${buildManagedImageTag({ src: favicon, style: ICON_STYLE, fallbackSrc: getFaviconFallback(item.url), errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
+      const content = `${buildManagedImageTag({ src: favicon, style: ICON_STYLE, fallbackSrc: getFaviconFallback(item.url), errorMode: 'show-sibling' })}<span class="icon-letter" style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
       return isExpandedLink ? `<div class="grid-item-link-preview">${content}</div>` : content;
     }
-    const content = `<span style="font-size:1.875rem;font-weight:600;color:#cbd5e1;pointer-events:none">${ch}</span>`;
+    const content = `<span class="icon-letter" style="color:#cbd5e1;pointer-events:none">${ch}</span>`;
     return isExpandedLink ? `<div class="grid-item-link-preview">${content}</div>` : content;
   }
 
   if (item.icon) {
-    return `${buildManagedImageTag({ src: item.icon, style: ICON_STYLE, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
+    return `${buildManagedImageTag({ src: item.icon, style: ICON_STYLE, errorMode: 'show-sibling' })}<span class="icon-letter" style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
   }
 
   if (children.length === 0) {
@@ -1363,17 +1363,17 @@ function renderIcon(item) {
     let cells = previews.map(c => {
       const cch = escapeHtml(c.name.charAt(0));
       if (c.icon) {
-        return `<div class="folder-preview-cell">${buildManagedImageTag({ src: c.icon, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
+        return `<div class="folder-preview-cell">${buildManagedImageTag({ src: c.icon, errorMode: 'show-sibling' })}<span class="icon-letter-sm" style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
       }
       const cached = (window.iconCache && typeof window.iconCache.getCachedIcon === 'function')
         ? window.iconCache.getCachedIcon(c.url)
         : '';
       if (cached) {
-        return `<div class="folder-preview-cell">${buildManagedImageTag({ src: cached, errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
+        return `<div class="folder-preview-cell">${buildManagedImageTag({ src: cached, errorMode: 'show-sibling' })}<span class="icon-letter-sm" style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
       }
       const fav = getFavicon(c.url);
-      if (fav) return `<div class="folder-preview-cell">${buildManagedImageTag({ src: fav, fallbackSrc: getFaviconFallback(c.url), errorMode: 'show-sibling' })}<span style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
-      return `<div class="folder-preview-cell"><span style="font-size:10px;color:#cbd5e1;font-weight:bold;pointer-events:none">${cch}</span></div>`;
+      if (fav) return `<div class="folder-preview-cell">${buildManagedImageTag({ src: fav, fallbackSrc: getFaviconFallback(c.url), errorMode: 'show-sibling' })}<span class="icon-letter-sm" style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
+      return `<div class="folder-preview-cell"><span class="icon-letter-sm" style="color:#cbd5e1;pointer-events:none">${cch}</span></div>`;
     }).join('');
     for (let i = 0; i < empties; i++) {
       cells += `<div class="folder-preview-cell empty"></div>`;

@@ -1032,7 +1032,7 @@ describe('app.js render/dom-light layer', () => {
         expect(html).not.toContain('grid-item-link-preview');
         expect(html).toContain('src="data:image/png;base64,CCC"');
         expect(html).toContain('style="width:100%;height:100%;display:block;object-fit:cover;pointer-events:none"');
-        expect(html).toContain('style="display:none;font-size:1.875rem;font-weight:600;color:#cbd5e1;pointer-events:none">E</span>');
+        expect(html).toContain('<span class="icon-letter" style="display:none;color:#cbd5e1;pointer-events:none">E</span>');
       });
 
       it('icon present, non-1x1 size -> wrapped in grid-item-link-preview (isExpandedLink)', () => {
@@ -1061,7 +1061,7 @@ describe('app.js render/dom-light layer', () => {
       it('no icon, no cache, no favicon -> letter fallback span only, non-expanded (1x1)', () => {
         const item = { id: 'l5', type: 'link', name: 'Zeta', url: 'https://zeta.com', size: '1x1' };
         const html = app.renderIcon(item);
-        expect(html).toBe('<span style="font-size:1.875rem;font-weight:600;color:#cbd5e1;pointer-events:none">Z</span>');
+        expect(html).toBe('<span class="icon-letter" style="color:#cbd5e1;pointer-events:none">Z</span>');
       });
     });
 
