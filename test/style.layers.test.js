@@ -389,14 +389,15 @@ describe('prefers-reduced-motion', () => {
   const reduced = rules.filter((r) => isReducedMotion(r.media));
   const DURATIONS = ['--motion-duration-fast', '--motion-duration-base', '--motion-duration-slow', '--motion-duration-slower'];
 
-  it('存在 @media (prefers-reduced-motion: reduce) 块，且选择器是 :root', () => {
-    const blocks = reduced.filter((r) => /reduce/i.test(r.media));
-    expect(blocks.length).toBeGreaterThan(0);
-    for (const b of blocks) expect(selectorKey(b)).toBe(':root');
+  const rootReduced = reduced.filter((r) => selectorKey(r) === ':root');
+
+  it('存在 @media (prefers-reduced-motion: reduce) 的 :root 块', () => {
+    expect(rootReduced.length).toBeGreaterThan(0);
+    for (const b of reduced) expect(/reduce/i.test(b.media), b.media).toBe(true);
   });
 
-  it('所有 --motion-duration-* 在该块里为 0ms，且块里没有别的声明', () => {
-    const decls = reduced.flatMap((r) => r.decls);
+  it('所有 --motion-duration-* 在该块里为 0ms，且 :root 块里没有别的声明', () => {
+    const decls = rootReduced.flatMap((r) => r.decls);
     const got = Object.fromEntries(decls.map((d) => [d.prop, d.value.trim()]));
     for (const name of DURATIONS) expect(got[name], name).toBe('0ms');
     expect(Object.keys(got).sort()).toEqual([...DURATIONS].sort());
@@ -417,11 +418,22 @@ describe('prefers-reduced-motion', () => {
       .filter((r) => r.media === null && ROOT_KEYS.has(selectorKey(r)) && r.decls.some((d) => d.prop.startsWith('--motion-duration-')))
       .map((r) => r.line);
     expect(defLines.length).toBeGreaterThan(0);
-    for (const r of reduced) expect(r.line).toBeGreaterThan(Math.max(...defLines));
+    for (const r of rootReduced) expect(r.line).toBeGreaterThan(Math.max(...defLines));
   });
 
   it('其余 @media 里没有 --motion-duration-* 的覆写（不会在别的条件下悄悄改时长）', () => {
     const others = rules.filter((r) => r.media !== null && !isReducedMotion(r.media));
     for (const r of others) for (const d of r.decls) expect(d.prop).not.toMatch(/^--motion-duration-/);
+  });
+
+  it('减少动效下 .move-to-main-hint 的 animation 为 none（提示照常显示，只是不再闪烁），且写在基础规则之后', () => {
+    const hint = reduced.filter((r) => selectorKey(r) === '.move-to-main-hint');
+    expect(hint).toHaveLength(1);
+    expect(hint[0].decls.map((d) => [d.prop, d.value.trim()])).toEqual([['animation', 'none']]);
+    const base = rules.find((r) => r.media === null && selectorKey(r) === '.move-to-main-hint');
+    expect(base.decls.some((d) => d.prop === 'animation' && d.value.trim() === 'pulse 2s ease-in-out infinite')).toBe(true);
+    expect(hint[0].line).toBeGreaterThan(base.line);
+    // 提示本身不隐藏：覆写里没有 display / opacity / visibility
+    expect(hint[0].decls.some((d) => /^(display|opacity|visibility)$/.test(d.prop))).toBe(false);
   });
 });

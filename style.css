@@ -1416,6 +1416,13 @@ body {
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* 减少动效：提示照常显示，只去掉无限循环的呼吸闪烁（spec §5.8 没有给这条 2s 循环定 token） */
+@media (prefers-reduced-motion: reduce) {
+  .move-to-main-hint {
+    animation: none;
+  }
+}
+
 /* Overlays */
 .overlay {
   position: fixed;
