@@ -154,6 +154,8 @@ describe('控件尺寸：高度用 size.control.*，垂直 padding 置 0', () =>
     const input = mk('.search-input');
     expect(win(input, 'padding')).toBe('0 var(--space-4) 0 var(--space-10)');
     expect(win(mk('.search-input-wrap'), 'align-items')).toBe('center');
+    // 垂直 padding 为 0 后，输入框必须拉满整个搜索栏的内容高度，点搜索栏任何位置都能聚焦
+    expect(win(input, 'align-self')).toBe('stretch');
   });
 });
 
@@ -224,7 +226,8 @@ describe('圆角：只用 var(--radius-*)', () => {
     expect(r('.clock-remove-btn')).toBe('var(--radius-sm)');     // 6 -> sm（§5.3 并入表）
     expect(r('.grid-item-card')).toBe('var(--radius-lg)');
     expect(r('.add-card')).toBe('var(--radius-lg)');
-    expect(r('.app-toast')).toBe('var(--radius-lg)');            // 0.9rem -> lg
+    // toast：取 §5.3 radius.md 行「用于：右键菜单、下拉、toast」（12）；「并入」列把 0.9rem 并入 lg 的写法与之矛盾，不取
+    expect(r('.app-toast')).toBe('var(--radius-md)');
     expect(r('.signin-notice')).toBe('var(--radius-lg)');        // 14 -> lg
     expect(r('.sidebar-value')).toBe('var(--radius-full)');
     expect(r('.search-bar')).toBe('var(--radius-full)');
@@ -234,7 +237,7 @@ describe('圆角：只用 var(--radius-*)', () => {
     expect(r('.folder-modal')).toBe('var(--radius-xl)');
     expect(r('.left-sidebar')).toBe('0 var(--radius-xl) var(--radius-xl) 0');
     expect(r('.blob')).toBe('var(--radius-full)');                // 50% -> full
-    expect(r('.engine-dropdown')).toBe('var(--radius-lg)');
+    expect(r('.engine-dropdown')).toBe('var(--radius-md)');      // §5.3 radius.md「下拉」；内边距 4 + 菜单项 sm 8 = 12
   });
 });
 

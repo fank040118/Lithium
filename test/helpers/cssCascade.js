@@ -69,6 +69,7 @@ function splitShorthand(value, styleKeywords, selector) {
     return { width: tokens[0], style: tokens[0], color: tokens[0] };
   }
   let width = null;
+  let widthFromVar = false;
   let style = null;
   let color = null;
   const rest = [];
@@ -77,11 +78,19 @@ function splitShorthand(value, styleKeywords, selector) {
     else if (VAR_WIDTH.test(t)) {
       if (width !== null) throw new CascadeUndecidable(selector, `简写「${value}」里有两个宽度分量`);
       width = t;
+      widthFromVar = true;
     } else if (VAR_COLOR.test(t)) {
       if (color !== null) throw new CascadeUndecidable(selector, `简写「${value}」里有两个颜色分量`);
       color = t;
-    } else if (WIDTH_TOKEN.test(t) && width === null) width = t;
-    else rest.push(t);
+    } else if (WIDTH_TOKEN.test(t)) {
+      if (width !== null) throw new CascadeUndecidable(selector, `简写「${value}」里有两个宽度分量`);
+      width = t;
+    } else rest.push(t);
+  }
+  // 只有能按前缀明确归类的 var() 才归类：宽度由 var() 给出时，剩下的未知 var() 不能默认当成颜色。
+  // 字面宽度 + 单个未知 var() 是旧写法（1px solid var(--x)），靠排除法归为颜色，不受影响。
+  if (widthFromVar && rest.some((t) => /^var\(/i.test(t))) {
+    throw new CascadeUndecidable(selector, `简写「${value}」里有无法按前缀归类的 var()`);
   }
   if (rest.length > 1) {
     throw new CascadeUndecidable(selector, `简写「${value}」有 ${rest.length} 段无法归类`);

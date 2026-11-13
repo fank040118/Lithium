@@ -983,6 +983,8 @@ body {
   font-size: 1rem;
   outline: none;
   padding: 0 var(--space-4) 0 var(--space-10);
+  /* 垂直 padding 为 0 后，拉满搜索栏的内容高度，点击区域与改动前一致（文字由浏览器原生垂直居中） */
+  align-self: stretch;
   border: none;
 }
 .search-input::placeholder {
@@ -997,7 +999,7 @@ body {
   margin-top: var(--space-2);
   background: var(--color-surface-menu);
   backdrop-filter: blur(var(--blur-menu));
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   border: var(--border-width-thin) solid var(--color-border-menu);
   box-shadow: var(--shadow-popover);
   overflow: hidden;
@@ -2390,7 +2392,7 @@ body {
   min-width: min(var(--size-toast-min), calc(100vw - var(--space-8)));
   max-width: calc(100vw - var(--space-8));
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--color-surface-menu);
   color: var(--color-text-primary);
   font-size: 0.9rem;

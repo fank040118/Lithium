@@ -288,6 +288,20 @@ describe('cascade：border 族', () => {
     expect(() => b('.b{border:solid var(--color-a) var(--color-b)}')).toThrow(CascadeUndecidable);
   });
 
+  it('只有能按前缀明确归类的 var() 才归类：已知宽度 / 颜色旁边出现未知前缀的 var() 一律抛错，不默认当颜色', () => {
+    // 已知宽度 + 未知 var()：旧实现把 --radius-sm 当成颜色返回
+    expect(() => b('.b{border:var(--border-width-thin) solid var(--radius-sm)}')).toThrow(CascadeUndecidable);
+    expect(() => b('.b{border:var(--space-1) solid var(--x)}')).toThrow(CascadeUndecidable);
+    // 已知颜色 + 未知 var()
+    expect(() => b('.b{border:var(--x) solid var(--color-a)}')).toThrow(CascadeUndecidable);
+    expect(() => b('.b{border:solid var(--color-a) var(--shadow-card)}')).toThrow(CascadeUndecidable);
+    // 同一分量同时出现字面值和 var()：旧实现把字面宽度落进 rest 当成颜色
+    expect(() => b('.b{border:var(--border-width-thin) 1px solid}')).toThrow(CascadeUndecidable);
+    expect(() => b('.b{border:1px var(--border-width-thin) solid}')).toThrow(CascadeUndecidable);
+    // 旧写法不受影响：字面宽度 + 单个未知 var() 靠排除法归为颜色
+    expect(b('.b{border:1px solid var(--x)}').color).toBe('var(--x)');
+  });
+
   it('长写同样可以用 var()：border-width / border-style / border-color 分量各自取胜', () => {
     const css = '.b{border-width:var(--border-width-thin)} .b{border-style:solid} .b{border-color:var(--color-border-subtle)}'
       + ' .b:hover{border-color:var(--color-border-strong)}';
