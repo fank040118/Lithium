@@ -7,6 +7,7 @@
 //   set   'core' | 'theme/dark'
 //   only  null（两侧都有）| 'css'（只在 CSS）
 //   doc   true 表示 Penpot 里只作文档展示、不绑定 shape
+//   $extensions  可选，Penpot 之外的附加信息；目前只有 shadow.text 的 css.property = 'text-shadow'
 // 引用写法：'{color.alpha.white.10}'。
 
 import { readFileSync } from 'node:fs';
@@ -20,9 +21,6 @@ const TOKENS_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../desi
 const PX_TYPES = new Set([
   'dimension', 'spacing', 'sizing', 'borderRadius', 'borderWidth', 'fontSizes', 'letterSpacing',
 ]);
-
-// text-shadow 的语法没有扩散半径（spec §5.5：shadow.text「CSS 为 text-shadow」）。
-const TEXT_SHADOW_TOKENS = new Set(['shadow.text']);
 
 const SET_ORDER = ['core', 'theme/dark'];
 
@@ -68,11 +66,18 @@ function refToVar(value, byName) {
 
 const px = (n) => (n === 0 ? '0' : `${n}px`);
 
+// text-shadow 的语法没有扩散半径（spec §5.5：shadow.text「CSS 为 text-shadow」）。
+// 由数据决定：token 上写 "$extensions": { "css": { "property": "text-shadow" } }。
+function isTextShadow(token) {
+  return token.$extensions?.css?.property === 'text-shadow';
+}
+
+// shadow 层字段名同 Penpot TokenShadowValueString：offsetX、offsetY、blur、spread、color、inset。
 function renderShadow(token, byName) {
-  const textOnly = TEXT_SHADOW_TOKENS.has(token.name);
+  const textOnly = isTextShadow(token);
   return token.value
     .map((layer) => {
-      const parts = [px(layer.x), px(layer.y), px(layer.blur)];
+      const parts = [px(layer.offsetX), px(layer.offsetY), px(layer.blur)];
       if (!textOnly) parts.push(px(layer.spread));
       parts.push(refName(layer.color) ? refToVar(layer.color, byName) : layer.color);
       return (layer.inset ? 'inset ' : '') + parts.join(' ');
@@ -80,10 +85,12 @@ function renderShadow(token, byName) {
     .join(', ');
 }
 
+// typography 字段名同 Penpot TokenTypographyValueString：fontFamilies、fontSizes、fontWeight、lineHeight、letterSpacing。
+// letterSpacing 不属于 font 简写，不在这里输出（spec §4.4）。
 function renderTypography(token, byName) {
   const v = token.value;
   const r = (field) => refToVar(v[field], byName);
-  return `${r('fontWeight')} ${r('fontSize')}/${r('lineHeight')} ${r('fontFamily')}`;
+  return `${r('fontWeight')} ${r('fontSizes')}/${r('lineHeight')} ${r('fontFamilies')}`;
 }
 
 export function renderCss(token, byName) {

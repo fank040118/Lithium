@@ -84,6 +84,38 @@ describe('design/tokens.json 结构', () => {
     expect(resolveRef('{no.such.token}', byName)).toBeNull();
   });
 
+  it('typography 的字段名是 Penpot TokenTypographyValueString 的名字，且每个引用指向正确类型', () => {
+    // 字段 -> 允许的目标 type。lineHeight 没有独立 token 类型，按 API 说明引用 number。
+    const allowed = {
+      fontFamilies: ['fontFamilies'],
+      fontSizes: ['fontSizes', 'dimension'],
+      fontWeight: ['fontWeights'],
+      lineHeight: ['number'],
+      letterSpacing: ['letterSpacing'],
+    };
+    const typos = tokens.filter((t) => t.type === 'typography');
+    expect(typos.length).toBe(10);
+    for (const t of typos) {
+      for (const [field, raw] of Object.entries(t.value)) {
+        expect(Object.keys(allowed), `${t.name} 有未知字段 ${field}`).toContain(field);
+        const target = resolveRef(raw, byName);
+        expect(target, `${t.name}.${field} 必须是可解析的引用：${raw}`).not.toBeNull();
+        expect(allowed[field], `${t.name}.${field} 引用了 ${target.name}（${target.type}）`).toContain(target.type);
+      }
+      for (const required of ['fontFamilies', 'fontSizes', 'fontWeight', 'lineHeight']) {
+        expect(t.value[required], `${t.name} 缺 ${required}`).toBeDefined();
+      }
+    }
+  });
+
+  it('shadow 的字段名是 Penpot TokenShadowValueString 的名字', () => {
+    const keys = ['offsetX', 'offsetY', 'blur', 'spread', 'color', 'inset'];
+    for (const t of tokens.filter((x) => x.type === 'shadow')) {
+      expect(Array.isArray(t.value) && t.value.length > 0, t.name).toBe(true);
+      for (const layer of t.value) expect(Object.keys(layer).sort(), t.name).toEqual([...keys].sort());
+    }
+  });
+
   it('theme/dark 的颜色只引用 core 的原始色', () => {
     const semantic = tokens.filter((t) => t.set === 'theme/dark' && t.type === 'color');
     expect(semantic.length).toBeGreaterThan(0);
@@ -214,8 +246,20 @@ describe('renderCss', () => {
     expect(renderCss(get('shadow.card'), byName)).toBe('0 4px 12px 0 var(--color-alpha-black-30)');
   });
 
-  it('shadow.text 是 text-shadow 语法，没有扩散半径', () => {
-    expect(renderCss(get('shadow.text'), byName)).toBe('0 1px 6px var(--color-alpha-black-70)');
+  it('shadow.text 靠数据标记（$extensions.css.property）输出 text-shadow 语法，没有扩散半径', () => {
+    const text = get('shadow.text');
+    expect(text.$extensions).toEqual({ css: { property: 'text-shadow' } });
+    expect(renderCss(text, byName)).toBe('0 1px 6px var(--color-alpha-black-70)');
+    // 只有 shadow.text 带标记，其余都是 box-shadow
+    expect(tokens.filter((t) => t.$extensions).map((t) => t.name)).toEqual(['shadow.text']);
+  });
+
+  it('是否输出 spread 只由数据决定，不看 token 名', () => {
+    const plain = { ...get('shadow.text') };
+    delete plain.$extensions;
+    expect(renderCss(plain, byName)).toBe('0 1px 6px 0 var(--color-alpha-black-70)');
+    const marked = { ...get('shadow.card'), $extensions: { css: { property: 'text-shadow' } } };
+    expect(renderCss(marked, byName)).toBe('0 4px 12px var(--color-alpha-black-30)');
   });
 
   it('渲染引用、dimension、duration、字体与字面值', () => {
