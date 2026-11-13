@@ -17,6 +17,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - An upload could be sent while a pull was still in flight
 - Choosing "Use local" and then hitting an upload error no longer resumes automatic uploads over the cloud copy
 - Edits made while cloud data was being applied could be marked as synced and lost
+- The main grid scrollbar was invisible on the dark background
+- Menu dividers were invisible
+- Search bar placeholder text looked the same as typed text
+- Danger button text in the sidebar had too little contrast
+- Some buttons fell back to the browser's default font
 
 ### Changed
 - All cloud operations now run through a single serial queue; cloud sync requests (Firestore reads and writes, token refresh) and account deletion time out after 20 seconds; sign-in, sign-up and email requests have no timeout
@@ -26,6 +31,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - In the conflict dialog, "Use cloud" is greyed out and the cloud side shows as empty when the cloud has no data; "Use local" is greyed out when the local data is over the upload limit, with the reason shown as soon as the dialog opens
 - The manual Upload button only reports "Uploaded" when the upload actually succeeded, says "Already up to date" when there was nothing to upload, and explains why otherwise
 - A manual pull now explains why nothing was pulled (for example, the cloud has no data or local storage is unavailable)
+- Refreshed the dark theme: sidebar groups, secondary buttons, inputs, the search bar border and card hover now use light overlays instead of black on black, so controls stand out from panels and dialogs
+- Primary and danger buttons now darken on hover and press, keeping their text readable
+- Keyboard focus is shown with the same blue ring everywhere
+- Disabled controls look the same everywhere (half opacity, "not allowed" cursor)
+- Dialog titles use a single size; the "drop here" hint is slightly smaller
+- Text styles are now consistent: the weight and line height of some labels and button text changed slightly
+- The search bar has a fixed height of 56px
+- The sync status chips in the sidebar are slightly taller (24px)
+- The sign-in notice uses the same blur as menus
+- Native dropdowns and scrollbars now follow the dark theme
+- The "Delete account" button in the sidebar now matches the other sidebar danger button
+- CSS transitions follow the system "reduce motion" setting
 
 ### Notes
 - New local storage key `_fb_cloud_update_time`; existing installs are migrated on the first pull without a migration script
