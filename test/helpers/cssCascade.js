@@ -4,7 +4,8 @@
 // 判定不了的一律抛 CascadeUndecidable，不返回值，并登记进浏览器目检清单 B6-U（见 cssRules.unsupportedSelectors）：
 //   - 参与竞争的候选里有 unsupported 的选择器（:has()、:focus-within、:not/:is/:where 里的状态、el.matches 抛错）；
 //   - 胜出值依赖 inherit / unset / revert；
-//   - 简写拆分后有两段以上无法归类（例如整个值只有一个 var()）；
+//   - 简写拆分后有两段以上无法归类（例如整个值只有一个 var()）；var() 按变量名前缀归类：
+//     --border-width-* / --space-* / --size-* 归 width，--color-* 归 color，其余前缀分不清；
 //   - border 不指定 side 且四边结果不同。
 // 它不负责：继承、currentColor、var() 的实际取值、:has()、@supports、除 prefers-reduced-motion 以外的 @media、
 // JS 写的行内样式、浏览器默认样式、视觉上是否可见。
@@ -53,6 +54,9 @@ const OUTLINE_PROP = /^outline(?:-(width|style|color|offset))?$/;
 const BORDER_STYLES = new Set(['none', 'hidden', 'dotted', 'dashed', 'solid', 'double', 'groove', 'ridge', 'inset', 'outset']);
 const OUTLINE_STYLES = new Set([...BORDER_STYLES, 'auto']);
 const WIDTH_TOKEN = /^(?:[+-]?(?:\d+\.?\d*|\.\d+)[a-z%]*|thin|medium|thick|calc\(.*)$/i;
+// 简写里的 var() 按变量名前缀归类（Task 35 裁定）：尺寸类 token 归 width，--color-* 归 color；其余前缀分不清。
+const VAR_WIDTH = /^var\(\s*--(?:border-width|space|size)-/i;
+const VAR_COLOR = /^var\(\s*--color-/i;
 
 // ---------------------------------------------------------------------------
 // 简写拆分
@@ -66,10 +70,17 @@ function splitShorthand(value, styleKeywords, selector) {
   }
   let width = null;
   let style = null;
+  let color = null;
   const rest = [];
   for (const t of tokens) {
     if (styleKeywords.has(t.toLowerCase()) && style === null) style = t;
-    else if (WIDTH_TOKEN.test(t) && width === null) width = t;
+    else if (VAR_WIDTH.test(t)) {
+      if (width !== null) throw new CascadeUndecidable(selector, `简写「${value}」里有两个宽度分量`);
+      width = t;
+    } else if (VAR_COLOR.test(t)) {
+      if (color !== null) throw new CascadeUndecidable(selector, `简写「${value}」里有两个颜色分量`);
+      color = t;
+    } else if (WIDTH_TOKEN.test(t) && width === null) width = t;
     else rest.push(t);
   }
   if (rest.length > 1) {
@@ -78,7 +89,10 @@ function splitShorthand(value, styleKeywords, selector) {
   if (rest.length === 1 && tokens.length === 1 && /^var\(/i.test(rest[0])) {
     throw new CascadeUndecidable(selector, `简写「${value}」整个值只有一个 var()，分不清它代表哪个分量`);
   }
-  return { width: width ?? 'initial', style: style ?? 'initial', color: rest[0] ?? 'initial' };
+  if (color !== null && rest.length > 0) {
+    throw new CascadeUndecidable(selector, `简写「${value}」有 ${rest.length} 段无法归类`);
+  }
+  return { width: width ?? 'initial', style: style ?? 'initial', color: color ?? rest[0] ?? 'initial' };
 }
 
 // 1~4 个值按 CSS 的四边规则展开成 top/right/bottom/left。

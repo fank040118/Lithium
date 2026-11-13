@@ -18,8 +18,10 @@ const rulesOf = (css, opts) => lintStyle(css, opts).map((v) => v.rule);
 // 2026-11-13 Task 31（弹窗与表单）：颜色类 18 -> 14（-4，裁剪框 4 处）。
 // 2026-11-13 Task 32（浮层）：颜色类 14 -> 13（-1，toast 的 color: #fff）。
 // 2026-11-13 Task 33（交互状态）：颜色类 13 -> 12（-1，滑块拇指两处同一条投影合为 --range-thumb-shadow 一处）。
-const BASELINE_COLOR = 12;
-const BASELINE_DIM = 149;
+// 2026-11-13 Task 35（间距、尺寸、圆角、阴影、模糊）：颜色类 12 -> 0（-12，box-shadow / text-shadow 里的 rgba 换成 --shadow-*）；
+//   尺寸类 149 -> 89（-60，raw-radius 全部改为 var(--radius-*)）。
+const BASELINE_COLOR = 0;
+const BASELINE_DIM = 89;
 
 describe('lintStyle', () => {
   it('在 :root 外命中 #fff、rgba(、var(--color-blue-600)、transition: all', () => {

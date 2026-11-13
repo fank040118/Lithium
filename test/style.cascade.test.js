@@ -269,6 +269,37 @@ describe('cascade：border 族', () => {
     expect(() => b('.b{border:1px solid var(--x) var(--y)}')).toThrow(CascadeUndecidable);
   });
 
+  it('简写里出现两个 var() 时按变量名前缀归类：--border-width-* / --space-* / --size-* 归 width，--color-* 归 color', () => {
+    expect(b('.b{border:var(--border-width-thin) solid var(--color-border-subtle)}'))
+      .toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
+    // 顺序无关
+    expect(b('.b{border:var(--color-border-subtle) dashed var(--border-width-thick)}'))
+      .toEqual({ kind: 'set', width: 'var(--border-width-thick)', style: 'dashed', color: 'var(--color-border-subtle)' });
+    expect(b('.b{border-right:var(--space-1) solid var(--color-divider)}', { side: 'right' }))
+      .toEqual({ kind: 'set', width: 'var(--space-1)', style: 'solid', color: 'var(--color-divider)' });
+    expect(b('.b{border:var(--size-range-track) solid var(--color-x)}').width).toBe('var(--size-range-track)');
+    // 宽度用字面值、颜色用 var() 的老写法不受影响
+    expect(b('.b{border:1px solid var(--color-x)}').color).toBe('var(--color-x)');
+  });
+
+  it('前缀归类之外：未知前缀的两个 var()、同一分量出现两个 var() 仍抛 CascadeUndecidable', () => {
+    expect(() => b('.b{border:1px solid var(--x) var(--y)}')).toThrow(CascadeUndecidable);
+    expect(() => b('.b{border:var(--border-width-thin) var(--border-width-thick) solid}')).toThrow(CascadeUndecidable);
+    expect(() => b('.b{border:solid var(--color-a) var(--color-b)}')).toThrow(CascadeUndecidable);
+  });
+
+  it('长写同样可以用 var()：border-width / border-style / border-color 分量各自取胜', () => {
+    const css = '.b{border-width:var(--border-width-thin)} .b{border-style:solid} .b{border-color:var(--color-border-subtle)}'
+      + ' .b:hover{border-color:var(--color-border-strong)}';
+    expect(b(css)).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(b(css, { state: HOVER }).color).toBe('var(--color-border-strong)');
+  });
+
+  it('简写（两个 var）后接长写 border-color：长写按分量覆盖颜色，宽度保持', () => {
+    const css = '.b{border:var(--border-width-thin) solid var(--color-a)} .b:hover{border-color:var(--color-b)}';
+    expect(b(css, { state: HOVER })).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-b)' });
+  });
+
   it('先写 border: none、后写 border-right: 1px solid … 时，右边为 set、其他边为 none', () => {
     const css = '.b{border:none} .b{border-right:1px solid var(--x)}';
     expect(b(css, { side: 'right' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--x)' });
@@ -301,6 +332,12 @@ describe('cascade：outline 族', () => {
     const css = '.b{outline:2px solid var(--a)} .b:focus{outline-color:var(--c)} .b:focus{outline-offset:2px}';
     expect(o(css)).toEqual({ color: 'var(--a)', width: '2px', style: 'solid', offset: 'initial' });
     expect(o(css, { state: FOCUS_KB })).toEqual({ color: 'var(--c)', width: '2px', style: 'solid', offset: '2px' });
+  });
+
+  it('outline 简写里的两个 var() 同样按前缀归类', () => {
+    expect(o('.b{outline:var(--border-width-thick) solid var(--color-focus-ring)}'))
+      .toEqual({ color: 'var(--color-focus-ring)', width: 'var(--border-width-thick)', style: 'solid', offset: 'initial' });
+    expect(() => o('.b{outline:solid var(--x) var(--y)}')).toThrow(CascadeUndecidable);
   });
 
   it('outline: none 只给 style，其余为 initial；没有任何候选时为 null', () => {

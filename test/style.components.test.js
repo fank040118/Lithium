@@ -153,7 +153,7 @@ describe('主区玻璃', () => {
     expect(err.selector).toBe('.search-bar:focus-within');
     const decls = (selector) => rulesMentioning('search-bar')
       .find((r) => r.selectors.some((s) => s.text === selector)).decls;
-    expect(decls('.search-bar').find((d) => d.prop === 'border').value).toBe('1px solid var(--color-input-border)');
+    expect(decls('.search-bar').find((d) => d.prop === 'border').value).toBe('var(--border-width-thin) solid var(--color-input-border)');
     expect(decls('.search-bar:focus-within').find((d) => d.prop === 'border-color').value).toBe('var(--color-focus-border)');
     noOld('search-bar');
   });
@@ -162,7 +162,7 @@ describe('主区玻璃', () => {
     const t = mount('.search-bar', '<button class="engine-trigger"></button>');
     expect(win(t, 'background')).toBe('transparent');
     expect(win(t, 'background', { state: HOVER })).toBe('var(--color-surface-glass-hover)');
-    expect(win(t, 'border', { side: 'right' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-divider)' });
+    expect(win(t, 'border', { side: 'right' })).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-divider)' });
     expect(win(t, 'border', { side: 'left' })).toEqual({ kind: 'none' });
     expect(win(t, 'color')).toBe('var(--color-text-primary)');
     noOld('engine-trigger');
@@ -216,7 +216,7 @@ describe('主区玻璃', () => {
   it('.lang-toggle：玻璃底 + 轮廓；悬停叠白 + 强轮廓；文字 secondary（D5-9、D5-26）；焦点环（D5-22）', () => {
     const t = mount('body', '<button class="lang-toggle"></button>');
     expect(win(t, 'background')).toBe('var(--color-surface-glass-default)');
-    expect(win(t, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(t, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     expect(win(t, 'color')).toBe('var(--color-text-secondary)');
     expect(win(t, 'background', { state: HOVER })).toBe('var(--color-surface-glass-hover)');
     expect(win(t, 'border', { state: HOVER }).color).toBe('var(--color-border-strong)');
@@ -253,7 +253,7 @@ describe('侧栏', () => {
   it('.left-sidebar：面板底 surface.panel，右边线 border.subtle，其余三边无边框', () => {
     const bar = mount('body', '<aside class="left-sidebar"></aside>');
     expect(win(bar, 'background')).toBe('var(--color-surface-panel)');
-    expect(win(bar, 'border', { side: 'right' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(bar, 'border', { side: 'right' })).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     expect(win(bar, 'border', { side: 'left' })).toEqual({ kind: 'none' });
     noOld('left-sidebar');
   });
@@ -266,7 +266,7 @@ describe('侧栏', () => {
     expect(stripes.match(/var\(--color-handle\)/g)).toHaveLength(2);
     expect(stripes).not.toMatch(/rgba?\(/);
     expect(win(handle, 'outline', { state: FOCUS_KB })).toEqual({
-      color: 'var(--color-focus-ring)', width: '2px', style: 'solid', offset: '-2px',
+      color: 'var(--color-focus-ring)', width: 'var(--border-width-thick)', style: 'solid', offset: '-2px',
     });
     noOld('left-sidebar-handle');
   });
@@ -274,7 +274,7 @@ describe('侧栏', () => {
   it('.sidebar-panel：分组卡片底 surface.group（白 6%），边框 border.subtle，顶部内高光 shadow.highlight', () => {
     const panel = mount('.sidebar-stack', '<section class="sidebar-section sidebar-panel"></section>');
     expect(win(panel, 'background')).toBe('var(--color-surface-group)');
-    expect(win(panel, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(panel, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     expect(win(panel, 'box-shadow')).toBe('var(--shadow-highlight)');
     noOld('sidebar-panel');
   });
@@ -305,7 +305,7 @@ describe('侧栏', () => {
   it('壁纸预览：底 bg.page（与页面底同色），轮廓 border.subtle', () => {
     const preview = mount('.sidebar-wallpaper-layout', '<div class="sidebar-wallpaper-preview"></div>');
     expect(win(preview, 'background')).toBe('var(--color-bg-page)');
-    expect(win(preview, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(preview, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     noOld('sidebar-wallpaper-preview');
   });
 
@@ -391,9 +391,9 @@ describe('弹窗与表单', () => {
   it('.folder-modal：surface.panel + border.strong；头部分隔线 border.subtle；标题图标底 surface.sunken', () => {
     const modal = mount('#folder-overlay', '<div id="folder-modal" class="folder-modal"></div>');
     expect(win(modal, 'background')).toBe('var(--color-surface-panel)');
-    expect(win(modal, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-strong)' });
+    expect(win(modal, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-strong)' });
     const header = mount('#folder-modal', '<div class="modal-header"></div>');
-    expect(win(header, 'border', { side: 'bottom' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(header, 'border', { side: 'bottom' })).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     expect(win(mount('.modal-title', '<span class="folder-title-icon"></span>'), 'background')).toBe('var(--color-surface-sunken)');
     noOld('folder-modal'); noOld('folder-title-icon'); noOld('modal-title');
   });
@@ -475,11 +475,11 @@ describe('弹窗与表单', () => {
   it('条目行叠白（D5-1）：.clock-entry、.sync-conflict-side 用 surface.group + border.subtle', () => {
     const entry = mount('.clock-list', '<div class="clock-entry"></div>');
     expect(win(entry, 'background')).toBe('var(--color-surface-group)');
-    expect(win(entry, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(entry, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     expect(win(mount('.clock-entry', '<span class="clock-entry-index"></span>'), 'color')).toBe('var(--color-text-muted)');
     const side = mount('.sync-conflict-compare', '<div class="sync-conflict-side"></div>');
     expect(win(side, 'background')).toBe('var(--color-surface-group)');
-    expect(win(side, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(side, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     expect(win(side, 'color')).toBe('var(--color-text-muted)');
     noOld('clock-entry'); noOld('clock-entry-index'); noOld('sync-conflict-side');
   });
@@ -488,8 +488,8 @@ describe('弹窗与表单', () => {
     const b = mount('.clock-list', '<button class="clock-add-entry"></button>');
     expect(win(b, 'background')).toBe('var(--color-control-bg-default)');
     expect(win(b, 'background', { state: HOVER })).toBe('var(--color-control-bg-hover)');
-    expect(win(b, 'border')).toEqual({ kind: 'set', width: '1px', style: 'dashed', color: 'var(--color-border-subtle)' });
-    expect(win(b, 'border', { state: HOVER })).toEqual({ kind: 'set', width: '1px', style: 'dashed', color: 'var(--color-border-strong)' });
+    expect(win(b, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'dashed', color: 'var(--color-border-subtle)' });
+    expect(win(b, 'border', { state: HOVER })).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'dashed', color: 'var(--color-border-strong)' });
     expect(win(b, 'color')).toBe('var(--color-text-muted)');
     expect(win(b, 'color', { state: HOVER })).toBe('var(--color-text-secondary)');
     noOld('clock-add-entry'); noOld('clock-limit-msg');
@@ -498,7 +498,7 @@ describe('弹窗与表单', () => {
   it('冲突弹窗警告条：warning.bg + warning.border + text.warning；标题图标 icon.warning；说明字', () => {
     const warn = mount('.sync-conflict-card', '<p class="sync-conflict-warn"></p>');
     expect(win(warn, 'background')).toBe('var(--color-warning-bg)');
-    expect(win(warn, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-warning-border)' });
+    expect(win(warn, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-warning-border)' });
     expect(win(warn, 'color')).toBe('var(--color-text-warning)');
     expect(win(mount('.sync-conflict-title', '<svg></svg>'), 'color')).toBe('var(--color-icon-warning)');
     expect(win(mount('.sync-conflict-card', '<p class="sync-conflict-limit"></p>'), 'color')).toBe('var(--color-text-warning)');
@@ -531,9 +531,9 @@ describe('弹窗与表单', () => {
     for (const [parent, cls] of [['.form-fields', 'form-input'], ['.add-engine-form', 'engine-form-input'], ['.modal-title', 'folder-name-input']]) {
       const i = mount(parent, `<input class="${cls}">`);
       expect(win(i, 'background'), cls).toBe('var(--color-input-bg)');
-      expect(win(i, 'border'), cls).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-input-border)' });
+      expect(win(i, 'border'), cls).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-input-border)' });
       expect(win(i, 'color'), cls).toBe('var(--color-text-primary)');
-      expect(win(i, 'border', { state: FOCUS_KB }), cls).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-focus-border)' });
+      expect(win(i, 'border', { state: FOCUS_KB }), cls).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-focus-border)' });
       expect(win(i, 'box-shadow', { state: FOCUS_KB }), cls).toBe('0 0 0 3px var(--color-focus-glow)');
       noOld(cls);
     }
@@ -545,9 +545,9 @@ describe('弹窗与表单', () => {
   it('时钟下拉 .clock-entry select：input.bg + input.border，聚焦 focus.border（D5-21，不加光晕）；选项底不透明', () => {
     const sel = mount('.clock-entry', '<select></select>');
     expect(win(sel, 'background')).toBe('var(--color-input-bg)');
-    expect(win(sel, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-input-border)' });
+    expect(win(sel, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-input-border)' });
     expect(win(sel, 'color')).toBe('var(--color-text-secondary)');
-    expect(win(sel, 'border', { state: FOCUS_KB })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-focus-border)' });
+    expect(win(sel, 'border', { state: FOCUS_KB })).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-focus-border)' });
     expect(win(mount('.clock-entry select', '<option></option>'), 'background')).toBe('var(--color-bg-page)');
     const group = mount('.clock-entry select', '<optgroup></optgroup>');
     expect(win(group, 'background')).toBe('var(--color-bg-page)');
@@ -586,7 +586,7 @@ describe('弹窗与表单', () => {
   it('图标裁剪：舞台 surface.sunken，裁剪框 1px crop.line（原 1.5px），框外压暗 crop.mask，三分线 crop.grid，手柄 crop.line', () => {
     expect(win(mount('.icon-crop-card', '<div class="icon-crop-stage"></div>'), 'background')).toBe('var(--color-surface-sunken)');
     const box = mount('.icon-crop-stage', '<div class="icon-crop-box"></div>');
-    expect(win(box, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-crop-line)' });
+    expect(win(box, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-crop-line)' });
     expect(win(box, 'box-shadow')).toBe('0 0 0 9999px var(--color-crop-mask)');
     expect(win(mount('.icon-crop-box', '<div class="icon-crop-grid icon-crop-grid-v"></div>'), 'background')).toBe('var(--color-crop-grid)');
     expect(win(mount('.icon-crop-box', '<div class="icon-crop-handle" data-handle="nw"></div>'), 'background')).toBe('var(--color-crop-line)');
@@ -597,7 +597,7 @@ describe('弹窗与表单', () => {
 });
 
 describe('浮层', () => {
-  const MENU_BORDER = { kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-menu)' };
+  const MENU_BORDER = { kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-menu)' };
 
   it('右键菜单容器：surface.menu 底 + border.menu 描边（定稿 黑 78% / 黑 40%）', () => {
     const m = mount('body', '<div class="context-menu"></div>');
@@ -651,7 +651,7 @@ describe('浮层', () => {
     expect(win(dd, 'background')).toBe('var(--color-surface-menu)');
     expect(win(dd, 'border')).toEqual(MENU_BORDER);
     const foot = mount('.engine-dropdown', '<div class="engine-dropdown-footer"></div>');
-    expect(win(foot, 'border', { side: 'top' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-divider)' });
+    expect(win(foot, 'border', { side: 'top' })).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-divider)' });
     noOld('engine-dropdown'); noOld('engine-dropdown-footer');
   });
 
@@ -671,10 +671,10 @@ describe('浮层', () => {
     const t = mount('body', '<div class="app-toast"></div>');
     expect(win(t, 'background')).toBe('var(--color-surface-menu)');
     expect(win(t, 'color')).toBe('var(--color-text-primary)');
-    expect(win(t, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(t, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     const err = mount('body', '<div class="app-toast" data-variant="error"></div>');
     expect(win(err, 'color')).toBe('var(--color-text-danger)');
-    expect(win(err, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-danger-border)' });
+    expect(win(err, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-danger-border)' });
     expect(win(err, 'background')).toBe('var(--color-surface-menu)');
     noOld('app-toast');
   });
@@ -682,7 +682,7 @@ describe('浮层', () => {
   it('登录提示：surface.menu 底 + border.subtle 描边，图标 text.accent，标题 primary，副文 tertiary', () => {
     const n = mount('body', '<div class="signin-notice"></div>');
     expect(win(n, 'background')).toBe('var(--color-surface-menu)');
-    expect(win(n, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(n, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
     expect(win(mount('.signin-notice', '<svg class="signin-notice-icon"></svg>'), 'color')).toBe('var(--color-text-accent)');
     expect(win(mount('.signin-notice-text', '<p class="signin-notice-title"></p>'), 'color')).toBe('var(--color-text-primary)');
     expect(win(mount('.signin-notice-text', '<p class="signin-notice-sub"></p>'), 'color')).toBe('var(--color-text-tertiary)');
@@ -701,7 +701,7 @@ describe('交互状态', () => {
     expect(r, `找不到声明了 ${prop} 的规则 ${selectorText}`).toBeTruthy();
     return r.decls.find((d) => d.prop === prop).value;
   };
-  const RING = (offset) => ({ color: 'var(--color-focus-ring)', width: '2px', style: 'solid', offset });
+  const RING = (offset) => ({ color: 'var(--color-focus-ring)', width: 'var(--border-width-thick)', style: 'solid', offset });
 
   // 外扩环：四周有 >= 4px 空间的元素（弹窗内容区、侧栏分组卡片、直接在壁纸上的语言切换）
   const OUTSET = [
@@ -974,7 +974,7 @@ describe('交互状态', () => {
   it('.form-input:focus 用 focus.border + 3px focus.glow（三种输入框同）', () => {
     for (const row of [['form-input', '.form-fields', 'input'], ['engine-form-input', '.add-engine-form', 'input'], ['folder-name-input', '.modal-title', 'input']]) {
       const i = make(row);
-      expect(win(i, 'border', { state: FOCUS_KB }), row[0]).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-focus-border)' });
+      expect(win(i, 'border', { state: FOCUS_KB }), row[0]).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-focus-border)' });
       expect(win(i, 'box-shadow', { state: FOCUS_KB }), row[0]).toBe('0 0 0 3px var(--color-focus-glow)');
     }
   });
@@ -983,7 +983,7 @@ describe('交互状态', () => {
     for (const cls of ['form-input', 'engine-form-input', 'folder-name-input']) {
       const parent = { 'form-input': '.form-fields', 'engine-form-input': '.add-engine-form', 'folder-name-input': '.modal-title' }[cls];
       const bad = mount(parent, `<input class="${cls} is-invalid">`);
-      const red = { kind: 'set', width: '1px', style: 'solid', color: 'var(--color-danger-border)' };
+      const red = { kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-danger-border)' };
       for (const state of [REST, HOVER, FOCUS_KB, FOCUS_KB_HOVER]) expect(win(bad, 'border', { state }), `${cls} ${[...state].join('+') || 'rest'}`).toEqual(red);
       // 没有 .is-invalid 的同类输入框不受影响
       expect(win(mount(parent, `<input class="${cls}">`), 'border', { state: FOCUS_KB }).color).toBe('var(--color-focus-border)');
@@ -996,7 +996,12 @@ describe('交互状态', () => {
 
   it('.grid-scroll-region 四周 padding >= 4px（外扩环不被 overflow 裁掉，§6.1.1）', () => {
     const region = mount('.main-content', '<section class="grid-scroll-region"></section>');
-    const px = (v) => (/rem$/.test(v) ? parseFloat(v) * 16 : parseFloat(v));
+    const SPACE = { 0: 0, 1: 4, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40, 12: 48, 16: 64, 20: 80 };   // spec §5.1
+    const px = (v) => {
+      const m = /^var\(--space-(\d+)\)$/.exec(v);
+      if (m) return SPACE[m[1]];
+      return /rem$/.test(v) ? parseFloat(v) * 16 : parseFloat(v);
+    };
     const [t, r = t, b = t, l = r] = win(region, 'padding').trim().split(/\s+/).map(px);
     for (const [side, v] of Object.entries({ top: t, right: r, bottom: b, left: l })) expect(v, side).toBeGreaterThanOrEqual(4);
   });
