@@ -1,0 +1,10 @@
+[
+  {
+    "selector": ".search-bar:focus-within",
+    "reason": "focus-within"
+  },
+  {
+    "selector": ".sync-conflict-footer:has(> .sync-conflict-signout:not(.hidden))",
+    "reason": "has"
+  }
+]
