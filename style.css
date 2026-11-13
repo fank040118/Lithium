@@ -377,8 +377,8 @@
 
 body {
   min-height: 100vh;
-  background: #0f172a;
-  color: #fff;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   overflow: hidden;
   position: relative;
@@ -398,12 +398,12 @@ body {
 }
 .blob-blue {
   top: -10%; left: -10%;
-  background: rgba(37, 99, 235, 0.2);
+  background: var(--color-decoration-blob-blue);
   filter: blur(120px);
 }
 .blob-purple {
   bottom: -10%; right: -10%;
-  background: rgba(147, 51, 234, 0.2);
+  background: var(--color-decoration-blob-purple);
   filter: blur(120px);
 }
 
@@ -679,7 +679,7 @@ body {
   left: -12%;
   width: 72%;
   height: 72%;
-  background: rgba(37, 99, 235, 0.36);
+  background: var(--color-decoration-preview-blue);
 }
 
 .sidebar-wallpaper-preview::after {
@@ -687,7 +687,7 @@ body {
   bottom: -24%;
   width: 76%;
   height: 76%;
-  background: rgba(147, 51, 234, 0.34);
+  background: var(--color-decoration-preview-purple);
 }
 
 .sidebar-wallpaper-preview[data-empty="true"]::before,
@@ -706,7 +706,7 @@ body {
   padding: 0;
   border-radius: 0;
   background: transparent;
-  color: #fff;
+  color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -716,7 +716,7 @@ body {
 .sidebar-wallpaper-preview[data-empty="false"] .sidebar-wallpaper-preview-label {
   padding: 0.35rem 0.8rem;
   border-radius: 999px;
-  background: var(--glass-l2);
+  background: var(--color-surface-glass-default);
 }
 
 .sidebar-wallpaper-actions {
@@ -773,7 +773,7 @@ body {
   align-items: flex-start;
   padding: 12px 36px 8px;
   border-radius: 16px;
-  background: var(--glass-l3);
+  background: var(--color-surface-glass-default);
   backdrop-filter: blur(var(--blur-base));
   -webkit-backdrop-filter: blur(var(--blur-base));
   user-select: none;
@@ -793,7 +793,7 @@ body {
   font-size: 3.75rem;
   font-weight: 300;
   letter-spacing: 0.05em;
-  color: #fff;
+  color: var(--color-text-primary);
   text-align: center;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -801,7 +801,7 @@ body {
   cursor: default;
 }
 .date-text {
-  color: #fff;
+  color: var(--color-text-primary);
   margin-top: 2px;
   font-size: 0.875rem;
   text-align: center;
@@ -809,7 +809,7 @@ body {
   cursor: default;
 }
 .tz-label {
-  color: #fff;
+  color: var(--color-text-primary);
   font-size: 0.7rem;
   margin-top: 2px;
   text-align: center;
@@ -921,16 +921,16 @@ body {
 .search-bar {
   display: flex;
   width: 100%;
-  background: var(--glass-l3);
+  background: var(--color-surface-glass-default);
   backdrop-filter: blur(var(--blur-base));
   border-radius: 9999px;
-  border: 1px solid var(--border-black-medium);
+  border: 1px solid var(--color-input-border);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   overflow: hidden;
   transition: border-color 0.2s;
 }
 .search-bar:focus-within {
-  border-color: var(--accent-blue-border);
+  border-color: var(--color-focus-border);
 }
 .engine-trigger {
   display: flex;
@@ -938,16 +938,16 @@ body {
   gap: 4px;
   background: transparent;
   border: none;
-  border-right: 1px solid var(--border-black-medium);
+  border-right: 1px solid var(--color-divider);
   padding: 0 16px;
-  color: #fff;
+  color: var(--color-text-primary);
   font-size: 14px;
   cursor: pointer;
   transition: background-color 0.2s;
   white-space: nowrap;
 }
 .engine-trigger:hover {
-  background: var(--glass-l1);
+  background: var(--color-surface-glass-hover);
 }
 .chevron-icon {
   opacity: 0.5;
@@ -962,20 +962,20 @@ body {
 .search-icon-svg {
   position: absolute;
   left: 16px;
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
   pointer-events: none;
 }
 .search-input {
   width: 100%;
   background: transparent;
-  color: #fff;
+  color: var(--color-text-primary);
   font-size: 1rem;
   outline: none;
   padding: 1rem 1rem 1rem 2.5rem;
   border: none;
 }
 .search-input::placeholder {
-  color: #fff;
+  color: var(--color-text-placeholder);
 }
 
 /* Engine dropdown */
@@ -1119,7 +1119,7 @@ body {
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
   scrollbar-width: auto;
-  scrollbar-color: var(--glass-l3) transparent;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
 }
 
 .grid-scroll-region::-webkit-scrollbar {
@@ -1131,19 +1131,19 @@ body {
 }
 
 .grid-scroll-region::-webkit-scrollbar-thumb {
-  background: var(--glass-l3);
+  background: var(--color-scrollbar-thumb);
   border: 3px solid transparent;
   border-radius: 9999px;
   background-clip: padding-box;
 }
 
 .grid-scroll-region::-webkit-scrollbar-thumb:hover {
-  background: var(--glass-l3-hover);
+  background: var(--color-scrollbar-hover);
   background-clip: padding-box;
 }
 
 .grid-scroll-region::-webkit-scrollbar-thumb:active {
-  background: var(--glass-l3-hover);
+  background: var(--color-scrollbar-hover);
   background-clip: padding-box;
 }
 
@@ -1235,7 +1235,7 @@ body {
   width: 100%;
   height: 100%;
   flex-shrink: 0;
-  background: var(--glass-l3);
+  background: var(--color-surface-glass-default);
   backdrop-filter: blur(var(--blur-base));
   border-radius: 1rem;
   display: flex;
@@ -1249,7 +1249,7 @@ body {
   position: relative;
 }
 .grid-item-card:hover {
-  background: var(--glass-l3-hover);
+  background: var(--color-surface-glass-hover);
 }
 
 #folder-grid .grid-item-card[data-item-type="link"] {
@@ -1259,7 +1259,7 @@ body {
 }
 
 #folder-grid .grid-item-card[data-item-type="link"]:hover {
-  background: rgba(255, 255, 255, 0.08);   /* one-off white tint, not in glass scale */
+  background: var(--color-surface-glass-hover);
 }
 
 .grid-folder-icon {
@@ -1287,7 +1287,7 @@ body {
 .grid-item-wrap[data-size="2x2"] .grid-item-name,
 .grid-item-wrap[data-size="2x4"] .grid-item-name,
 .grid-item-wrap[data-size="4x2"] .grid-item-name {
-  color: #fff;
+  color: var(--color-text-primary);
   text-shadow: 0 1px 6px rgba(0,0,0,0.7);
   z-index: 2;
   pointer-events: none;
@@ -1299,7 +1299,7 @@ body {
   top: calc(var(--card-h) + 2px);
   transform: translateX(-50%);
   font-size: 0.75rem;
-  color: #fff;
+  color: var(--color-text-primary);
   width: 100%;
   text-align: center;
   padding: 0 0.25rem;
@@ -1313,7 +1313,7 @@ body {
   width: 100%;
   aspect-ratio: 1;
   max-width: 64px;
-  background: var(--glass-l3);
+  background: var(--color-surface-glass-default);
   backdrop-filter: blur(var(--blur-base));
   -webkit-backdrop-filter: blur(var(--blur-base));
   border: none;
@@ -1324,10 +1324,10 @@ body {
   justify-content: center;
   cursor: pointer;
   transition: background-color 0.2s;
-  color: #fff;
+  color: var(--color-text-primary);
 }
 .add-card:hover {
-  background: var(--glass-l3-hover);
+  background: var(--color-surface-glass-hover);
 }
 
 .grid-item-wrap.add-wrap {
@@ -1339,7 +1339,7 @@ body {
 .drag-indicator {
   position: absolute;
   width: 4px;
-  background: var(--action-primary-hover);
+  background: var(--color-drag-indicator);
   border-radius: 9999px;
   box-shadow: 0 0 8px rgba(59,130,246,0.8);
   z-index: 20;
@@ -1359,8 +1359,8 @@ body {
   transform: scale(0.95);
 }
 .grid-item-combine {
-  outline: 2px solid var(--action-primary-hover);
-  background: var(--accent-blue-bg-soft);
+  outline: 2px solid var(--color-drag-indicator);
+  background: var(--color-drag-combine);
   transform: scale(1.05);
   border-radius: 1rem;
 }
@@ -1399,7 +1399,7 @@ body {
 }
 
 .drag-over-folder-bg {
-  background: rgba(30, 58, 138, 0.4) !important;   /* specific blue-900 drop hint */
+  background: var(--color-drag-target) !important;
   backdrop-filter: blur(var(--blur-light));
 }
 .move-to-main-hint {
@@ -1409,7 +1409,7 @@ body {
   transform: translateX(-50%);
   font-size: 1.5rem;
   font-weight: bold;
-  color: #fff;
+  color: var(--color-text-primary);
   letter-spacing: 0.1em;
   pointer-events: none;
   text-shadow: 0 2px 8px rgba(0,0,0,0.5);
@@ -2162,7 +2162,7 @@ body {
 }
 
 .folder-slot-folder {
-  background: var(--glass-l3);
+  background: var(--color-surface-glass-default);
   backdrop-filter: blur(var(--blur-base));
   box-shadow: var(--surface-shadow);
 }
@@ -2182,7 +2182,7 @@ body {
 .folder-slot-letter {
   font-size: var(--preview-letter-size);
   font-weight: 600;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
   pointer-events: none;
   text-transform: uppercase;
   line-height: 1;
@@ -2234,7 +2234,7 @@ body {
 }
 
 .folder-mini-folder-slot {
-  background: var(--glass-l3);
+  background: var(--color-surface-glass-default);
   backdrop-filter: blur(var(--blur-base));
   box-shadow: var(--surface-shadow);
 }
@@ -2257,7 +2257,7 @@ body {
 .folder-mini-letter {
   font-size: var(--folder-mini-letter-size);
   font-weight: bold;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
   pointer-events: none;
   text-transform: uppercase;
 }
@@ -2569,10 +2569,10 @@ body {
   gap: 0.4rem;
   height: 1.85rem;
   padding: 0 0.75rem;
-  border: 1px solid var(--border-white-hairline);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 999px;
-  background: var(--glass-l3);
-  color: var(--fg-strong);
+  background: var(--color-surface-glass-default);
+  color: var(--color-text-secondary);
   font: inherit;
   font-size: 0.78rem;
   line-height: 1;
@@ -2585,13 +2585,13 @@ body {
 }
 
 .lang-toggle:hover {
-  background: var(--glass-l4);
-  border-color: var(--border-white-soft);
-  color: #fff;
+  background: var(--color-surface-glass-hover);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 .lang-toggle:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 

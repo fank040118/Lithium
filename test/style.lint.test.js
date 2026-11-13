@@ -13,7 +13,8 @@ const rulesOf = (css, opts) => lintStyle(css, opts).map((v) => v.rule);
 // 2026-11-13 @ 6e0b1d5 实测（按声明计数，一条声明对一条规则只记一次）：
 //   颜色类：hex 23 + rgb 27 + primitive-ref 0 = 50
 //   尺寸类：transition-all 8 + raw-font-size 65 + raw-radius 60 + raw-z 16（已扣除 DEFAULT_ALLOW）= 149
-const BASELINE_COLOR = 50;
+// 2026-11-13 Task 29（主区玻璃）：颜色类 50 -> 29（-21）。
+const BASELINE_COLOR = 29;
 const BASELINE_DIM = 149;
 
 describe('lintStyle', () => {
