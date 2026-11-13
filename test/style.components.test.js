@@ -1,13 +1,13 @@
-// 组件对齐（阶段 B2，spec §3.3、§3.3.2、§6）：逐元素断言 style.css 里**最终生效**的颜色声明。
+// 组件对齐：逐元素断言 style.css 里**最终生效**的颜色声明。
 // 这里的断言都经 cssCascade.cascade 判定（选择器匹配 + 特异性 + 源码顺序），而不是 grep 某条规则：
 // 后面的规则覆盖了前面的，测试看到的就是覆盖后的值。
 //
-// 统一工具（Task 30–32 往本文件追加 describe 时复用）：
+// 统一工具（本文件的各个 describe 复用）：
 //   mount(parentSel, html)  把 html 挂到由 parentSel 搭出来的祖先链下（'#folder-grid'、'.a .b' 都可），返回 html 的首个元素
 //   win(el, family, opts)   最终生效的值；opts = { state, pseudoEl, side }，state 只能取 STATE_SETS 里的预设（默认 REST）
-//   noBorder(el, state)     断言 border 判定为 { kind: 'none' } 或 null（交互元素不新增描边，spec §3.1）
-//   noOld(className)        断言选择器里含该 class 的所有规则，声明值里不再出现旧颜色变量（清单取自 spec §9）
-//                           只管颜色类旧变量；--surface-shadow / --sidebar-shadow 与 --blur-* 的改名归 Task 35，不在清单里
+//   noBorder(el, state)     断言 border 判定为 { kind: 'none' } 或 null（交互元素不新增描边）
+//   noOld(className)        断言选择器里含该 class 的所有规则，声明值里不再出现旧颜色变量（清单取自设计规范的旧变量对照）
+//                           只管颜色类旧变量；--surface-shadow / --sidebar-shadow 与 --blur-* 的改名不在清单里
 import { describe, it, expect, beforeEach } from 'vitest';
 import { cascade, rulesMentioning, STATE_SETS } from './helpers/cssCascade.js';
 
@@ -48,7 +48,7 @@ function noBorder(el, state = REST) {
   expect(b === null || b.kind === 'none', `border 应为 none 或无声明，实际 ${JSON.stringify(b)}`).toBe(true);
 }
 
-// spec §9 的旧颜色变量。surface-shadow / sidebar-shadow / blur 不在此列（Task 35）。
+// 设计规范里要清掉的旧颜色变量。surface-shadow / sidebar-shadow / blur 不在此列（它们归尺寸类迁移）。
 const OLD_COLOR_VAR = new RegExp(
   'var\\(\\s*--(?:'
   + 'glass-'
@@ -95,7 +95,7 @@ describe('工具自检', () => {
     expect(() => win(el, 'background', { state: new Set(['hover']) })).toThrow(TypeError);
   });
 
-  it('noOld 的旧变量清单：抓得到旧颜色变量，放过新 token 与 Task 35 才处理的阴影、模糊变量', () => {
+  it('noOld 的旧变量清单：抓得到旧颜色变量，放过新 token 与归尺寸类迁移处理的阴影、模糊变量', () => {
     for (const v of ['var(--glass-l3)', 'var(--text-quaternary)', 'var(--action-primary-hover)', 'var(--bg-input-soft)',
       'var(--border-white-hairline)', 'var(--accent-blue-bg-soft)', 'var(--fg-strong)', 'var(--sidebar-button-bg)']) {
       expect(OLD_COLOR_VAR.test(v), v).toBe(true);
@@ -122,7 +122,7 @@ describe('主区玻璃', () => {
     noOld('blob-blue'); noOld('blob-purple');
   });
 
-  it('壁纸预览标签：空态无底，设了壁纸后用玻璃底（D5-12）', () => {
+  it('壁纸预览标签：空态无底，设了壁纸后用玻璃底', () => {
     const empty = mount('.sidebar-wallpaper-preview[data-empty="true"]', '<span class="sidebar-wallpaper-preview-label"></span>');
     expect(win(empty, 'background')).toBe('transparent');
     const set = mount('.sidebar-wallpaper-preview[data-empty="false"]', '<span class="sidebar-wallpaper-preview-label"></span>');
@@ -141,11 +141,11 @@ describe('主区玻璃', () => {
     noOld('clocks-wrap');
   });
 
-  it('.search-bar：玻璃底 + input.border 描边，聚焦描边 focus.border（D5-21）', () => {
+  it('.search-bar：玻璃底 + input.border 描边，聚焦描边 focus.border', () => {
     const bar = mount('.search-form', '<div class="search-bar"></div>');
     expect(win(bar, 'background')).toBe('var(--color-surface-glass-default)');
     // 描边：:focus-within 不在 STATE_SETS 里，只要它的 base 匹配，border 族就判不了（CascadeUndecidable，
-    // 该选择器已登记在 fixtures/b6-unverified.json，由 B6-U 在浏览器里确认）。不绕过，改为：
+    // 该选择器已登记在 fixtures/undecidable-selectors.json，需要在浏览器里目检确认）。不绕过，改为：
     //   1) 断言 cascade 确实抛了这条选择器；2) 直接断言两条规则各自的声明。
     let err;
     try { win(bar, 'border'); } catch (e) { err = e; }
@@ -158,7 +158,7 @@ describe('主区玻璃', () => {
     noOld('search-bar');
   });
 
-  it('.engine-trigger：透明底、悬停叠白（D5-10）、右侧分隔线 divider（D5-11）、左边无边框', () => {
+  it('.engine-trigger：透明底、悬停叠白、右侧分隔线 divider、左边无边框', () => {
     const t = mount('.search-bar', '<button class="engine-trigger"></button>');
     expect(win(t, 'background')).toBe('transparent');
     expect(win(t, 'background', { state: HOVER })).toBe('var(--color-surface-glass-hover)');
@@ -168,7 +168,7 @@ describe('主区玻璃', () => {
     noOld('engine-trigger');
   });
 
-  it('搜索输入：文字、占位（D5-25）、图标', () => {
+  it('搜索输入：文字、占位、图标', () => {
     const input = mount('.search-input-wrap', '<input class="search-input">');
     expect(win(input, 'color')).toBe('var(--color-text-primary)');
     expect(win(input, 'color', { pseudoEl: '::placeholder' })).toBe('var(--color-text-placeholder)');
@@ -176,7 +176,7 @@ describe('主区玻璃', () => {
     noOld('search-input'); noOld('search-icon-svg');
   });
 
-  it('.grid-item-card：玻璃底，悬停替换为叠白；文件夹内的链接卡片透明，悬停叠白（D5-32）', () => {
+  it('.grid-item-card：玻璃底，悬停替换为叠白；文件夹内的链接卡片透明，悬停叠白', () => {
     const card = mount('.grid-area', '<div class="grid-item-card"></div>');
     expect(win(card, 'background')).toBe('var(--color-surface-glass-default)');
     expect(win(card, 'background', { state: HOVER })).toBe('var(--color-surface-glass-hover)');
@@ -194,7 +194,7 @@ describe('主区玻璃', () => {
     noOld('grid-item-name');
   });
 
-  it('.add-card：玻璃底，悬停叠白（D5-8）', () => {
+  it('.add-card：玻璃底，悬停叠白', () => {
     const add = mount('.grid-item-wrap', '<button class="add-card"></button>');
     expect(win(add, 'background')).toBe('var(--color-surface-glass-default)');
     expect(win(add, 'background', { state: HOVER })).toBe('var(--color-surface-glass-hover)');
@@ -203,7 +203,7 @@ describe('主区玻璃', () => {
     noOld('add-card');
   });
 
-  it('文件夹格（大卡片槽、迷你槽）：玻璃底（D5-8）；首字母占位 text.tertiary', () => {
+  it('文件夹格（大卡片槽、迷你槽）：玻璃底；首字母占位 text.tertiary', () => {
     const slot = mount('.folder-slot-grid', '<div class="folder-slot-normal folder-slot-folder"></div>');
     expect(win(slot, 'background')).toBe('var(--color-surface-glass-default)');
     const mini = mount('.folder-slot-mini-group', '<div class="folder-mini-icon folder-mini-folder-slot"></div>');
@@ -213,7 +213,7 @@ describe('主区玻璃', () => {
     for (const c of ['folder-slot-folder', 'folder-mini-folder-slot', 'folder-slot-letter', 'folder-mini-letter']) noOld(c);
   });
 
-  it('.lang-toggle：玻璃底 + 轮廓；悬停叠白 + 强轮廓；文字 secondary（D5-9、D5-26）；焦点环（D5-22）', () => {
+  it('.lang-toggle：玻璃底 + 轮廓；悬停叠白 + 强轮廓；文字 secondary；焦点环', () => {
     const t = mount('body', '<button class="lang-toggle"></button>');
     expect(win(t, 'background')).toBe('var(--color-surface-glass-default)');
     expect(win(t, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
@@ -225,7 +225,7 @@ describe('主区玻璃', () => {
     noOld('lang-toggle');
   });
 
-  it('主网格滚动条：thumb / hover 用 scrollbar token（D5-20）', () => {
+  it('主网格滚动条：thumb / hover 用 scrollbar token', () => {
     const region = mount('.main-content', '<section class="grid-scroll-region"></section>');
     expect(win(region, 'scrollbar-color')).toBe('var(--color-scrollbar-thumb) transparent');
     const thumb = (state) => win(region, 'background', { state, pseudoEl: '::-webkit-scrollbar-thumb' });
@@ -258,7 +258,7 @@ describe('侧栏', () => {
     noOld('left-sidebar');
   });
 
-  it('把手：三条纹统一 handle（D5-30），键盘焦点内缩环 focus.ring（D5-22）', () => {
+  it('把手：三条纹统一 handle，键盘焦点内缩环 focus.ring', () => {
     const handle = mount('.left-sidebar', '<button class="left-sidebar-handle"></button>');
     expect(win(handle, 'background')).toBe('transparent');
     expect(win(handle, 'background', { pseudoEl: '::before' })).toBe('var(--color-handle)');
@@ -308,7 +308,7 @@ describe('侧栏', () => {
     noOld('sidebar-wallpaper-preview');
   });
 
-  it('.sidebar-action-btn：secondary × default × panel，无描边（spec §6.2）', () => {
+  it('.sidebar-action-btn：secondary × default × panel，无描边', () => {
     const btn = mount('.sidebar-panel', '<button class="sidebar-action-btn"></button>');
     expect(win(btn, 'background')).toBe('var(--color-control-panel-default)');
     expect(win(btn, 'background', { state: HOVER })).toBe('var(--color-control-panel-hover)');
@@ -318,7 +318,7 @@ describe('侧栏', () => {
     noOld('sidebar-action-btn');
   });
 
-  it('.sidebar-action-btn-danger：只改文字为 text.dangeronfill（Q2 / D5-5），底与悬停同普通按钮', () => {
+  it('.sidebar-action-btn-danger：只改文字为 text.dangeronfill，底与悬停同普通按钮', () => {
     const btn = mount('.sidebar-panel', '<button class="sidebar-action-btn sidebar-action-btn-danger"></button>');
     expect(win(btn, 'color')).toBe('var(--color-text-dangeronfill)');
     expect(win(btn, 'color', { state: HOVER })).toBe('var(--color-text-dangeronfill)');
@@ -328,7 +328,7 @@ describe('侧栏', () => {
     noOld('sidebar-action-btn-danger');
   });
 
-  it('.sync-delete-btn 并入 secondary × danger × panel：无描边、常态不半透明、悬停白 22%（D5-2、D5-33）', () => {
+  it('.sync-delete-btn 并入 secondary × danger × panel：无描边、常态不半透明、悬停白 22%', () => {
     const btn = mount('#sync-logged-section', '<button class="sidebar-action-btn sidebar-action-btn-danger sync-delete-btn"></button>');
     noBorder(btn, REST); noBorder(btn, HOVER);
     expect(win(btn, 'opacity')).toBeNull();
@@ -352,7 +352,7 @@ describe('侧栏', () => {
     noOld('sidebar-sync-status');
   });
 
-  it('同步提示 .sidebar-sync-hint：text.muted（D5-24，--text-quaternary 的去向）', () => {
+  it('同步提示 .sidebar-sync-hint：text.muted（取代旧的 --text-quaternary）', () => {
     expect(win(mount('.sidebar-panel', '<p class="sidebar-sync-hint"></p>'), 'color')).toBe('var(--color-text-muted)');
     noOld('sidebar-sync-hint');
   });
@@ -397,7 +397,7 @@ describe('弹窗与表单', () => {
     noOld('folder-modal'); noOld('folder-title-icon'); noOld('modal-title');
   });
 
-  it('按钮 primary × default：.btn-primary 与 .engine-form-save 共用一套规则（P-2、D5-36），悬停 blue.700（Q1）', () => {
+  it('按钮 primary × default：.btn-primary 与 .engine-form-save 共用一套规则，悬停 blue.700', () => {
     expect(selectorsOf('btn-primary', '.btn-primary', 'background')).toEqual(expect.arrayContaining(['.engine-form-save']));
     for (const cls of ['btn-primary', 'engine-form-save']) {
       const b = mount('.dialog-actions', `<button class="${cls}"></button>`);
@@ -410,7 +410,7 @@ describe('弹窗与表单', () => {
     noOld('btn-primary'); noOld('engine-form-save');
   });
 
-  it('按钮 primary × danger：.btn-danger 悬停 red.700（Q1），禁用态悬停不变深', () => {
+  it('按钮 primary × danger：.btn-danger 悬停 red.700，禁用态悬停不变深', () => {
     const b = mount('.dialog-actions', '<button class="btn-danger"></button>');
     expect(win(b, 'background')).toBe('var(--color-action-danger-default)');
     expect(win(b, 'background', { state: HOVER })).toBe('var(--color-action-danger-hover)');
@@ -421,7 +421,7 @@ describe('弹窗与表单', () => {
     noOld('btn-danger');
   });
 
-  it('按钮 secondary × default：.btn-secondary 与 .icon-upload-btn、.engine-form-cancel 共用一套规则（D5-18）', () => {
+  it('按钮 secondary × default：.btn-secondary 与 .icon-upload-btn、.engine-form-cancel 共用一套规则', () => {
     expect(selectorsOf('btn-secondary', '.btn-secondary', 'background')).toEqual(expect.arrayContaining(['.icon-upload-btn', '.engine-form-cancel']));
     for (const cls of ['btn-secondary', 'icon-upload-btn', 'engine-form-cancel']) {
       const b = mount('.dialog-actions', `<button class="${cls}"></button>`);
@@ -434,7 +434,7 @@ describe('弹窗与表单', () => {
     noOld('btn-secondary'); noOld('icon-upload-btn'); noOld('engine-form-cancel');
   });
 
-  it('按钮 ghost × default：.close-btn、.add-engine-btn 普通态透明 + text.muted；悬停 control.bg.hover + text.primary（D5-17、D5-18）', () => {
+  it('按钮 ghost × default：.close-btn、.add-engine-btn 普通态透明 + text.muted；悬停 control.bg.hover + text.primary', () => {
     for (const cls of ['close-btn', 'add-engine-btn']) {
       const b = mount('.modal-header', `<button class="${cls}"></button>`);
       expect(win(b, 'background'), cls).toBe('transparent');
@@ -453,7 +453,7 @@ describe('弹窗与表单', () => {
     noOld('folder-rename-btn');
   });
 
-  it('按钮 ghost × danger：三个按钮共用一套规则，普通态透明 + text.muted，悬停 danger.bg + text.danger（D5-34、D5-38、D5-23）', () => {
+  it('按钮 ghost × danger：三个按钮共用一套规则，普通态透明 + text.muted，悬停 danger.bg + text.danger', () => {
     expect(selectorsOf('clock-remove-btn', '.clock-remove-btn', 'background')).toEqual(expect.arrayContaining(['.engine-delete-btn', '.icon-clear-btn']));
     for (const [parent, cls] of [['.clock-entry', 'clock-remove-btn'], ['.engine-item', 'engine-delete-btn'], ['.icon-upload-row', 'icon-clear-btn']]) {
       const b = mount(parent, `<button class="${cls}"></button>`);
@@ -466,12 +466,12 @@ describe('弹窗与表单', () => {
     }
   });
 
-  it('.icon-red：text.danger（D5-23，#ef4444 -> #f87171）', () => {
+  it('.icon-red：text.danger（#ef4444 -> #f87171）', () => {
     expect(win(mount('.dialog-title', '<svg class="icon-red"></svg>'), 'color')).toBe('var(--color-text-danger)');
     noOld('icon-red');
   });
 
-  it('条目行叠白（D5-1）：.clock-entry、.sync-conflict-side 用 surface.group + border.subtle', () => {
+  it('条目行叠白：.clock-entry、.sync-conflict-side 用 surface.group + border.subtle', () => {
     const entry = mount('.clock-list', '<div class="clock-entry"></div>');
     expect(win(entry, 'background')).toBe('var(--color-surface-group)');
     expect(win(entry, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-border-subtle)' });
@@ -483,7 +483,7 @@ describe('弹窗与表单', () => {
     noOld('clock-entry'); noOld('clock-entry-index'); noOld('sync-conflict-side');
   });
 
-  it('.clock-add-entry：secondary 底、虚线框 border.subtle / 悬停 border.strong（D5-18）', () => {
+  it('.clock-add-entry：secondary 底、虚线框 border.subtle / 悬停 border.strong', () => {
     const b = mount('.clock-list', '<button class="clock-add-entry"></button>');
     expect(win(b, 'background')).toBe('var(--color-control-bg-default)');
     expect(win(b, 'background', { state: HOVER })).toBe('var(--color-control-bg-hover)');
@@ -507,7 +507,7 @@ describe('弹窗与表单', () => {
       'sync-conflict-text', 'sync-conflict-side-label', 'sync-conflict-side-time', 'sync-conflict-side-empty']) noOld(c);
   });
 
-  it('分段切换：槽 surface.sunken（含 .auth-tabs，D5-15），选中段 selection.solid + onaccent，未选中 muted、悬停 primary', () => {
+  it('分段切换：槽 surface.sunken（含 .auth-tabs），选中段 selection.solid + onaccent，未选中 muted、悬停 primary', () => {
     expect(selectorsOf('type-toggle', '.type-toggle', 'background')).toEqual(expect.arrayContaining(['.auth-tabs']));
     expect(win(mount('.edit-form', '<div class="type-toggle"></div>'), 'background')).toBe('var(--color-surface-sunken)');
     expect(win(mount('.login-card', '<div class="auth-tabs"></div>'), 'background')).toBe('var(--color-surface-sunken)');
@@ -541,7 +541,7 @@ describe('弹窗与表单', () => {
     }
   });
 
-  it('时钟下拉 .clock-entry select：input.bg + input.border，聚焦 focus.border（D5-21，不加光晕）；选项底不透明', () => {
+  it('时钟下拉 .clock-entry select：input.bg + input.border，聚焦 focus.border（不加光晕）；选项底不透明', () => {
     const sel = mount('.clock-entry', '<select></select>');
     expect(win(sel, 'background')).toBe('var(--color-input-bg)');
     expect(win(sel, 'border')).toEqual({ kind: 'set', width: 'var(--border-width-thin)', style: 'solid', color: 'var(--color-input-border)' });
@@ -553,7 +553,7 @@ describe('弹窗与表单', () => {
     expect(win(group, 'color')).toBe('var(--color-text-muted)');
   });
 
-  it('图标预览框 input.bg（D5-19）、占位字 muted；字段标签、弹窗说明 muted（D5-24）', () => {
+  it('图标预览框 input.bg、占位字 muted；字段标签、弹窗说明 muted', () => {
     expect(win(mount('.icon-upload-row', '<div class="icon-preview-box"></div>'), 'background')).toBe('var(--color-input-bg)');
     expect(win(mount('.icon-preview-box', '<span class="icon-preview-placeholder"></span>'), 'color')).toBe('var(--color-text-muted)');
     for (const cls of ['form-label', 'dialog-text', 'login-desc', 'verify-status']) {
@@ -605,7 +605,7 @@ describe('浮层', () => {
     noOld('context-menu');
   });
 
-  it('菜单项：text.secondary，悬停 menu.hover，选中 selection.bg + text.accent（§6.5）', () => {
+  it('菜单项：text.secondary，悬停 menu.hover，选中 selection.bg + text.accent', () => {
     const item = mount('.context-menu', '<div class="ctx-item"></div>');
     expect(win(item, 'color')).toBe('var(--color-text-secondary)');
     expect(win(item, 'background')).toBeNull();
@@ -627,12 +627,12 @@ describe('浮层', () => {
     noOld('ctx-danger');
   });
 
-  it('菜单分隔线 divider（Q3，D5-6：黑 50% -> 白 10%）', () => {
+  it('菜单分隔线 divider（黑 50% -> 白 10%）', () => {
     expect(win(mount('.context-menu', '<div class="ctx-sep"></div>'), 'background')).toBe('var(--color-divider)');
     noOld('ctx-sep');
   });
 
-  it('尺寸按钮：普通 surface.sunken + text.muted（D5-16），悬停 menu.hover + text.secondary，选中 selection.bg + text.accent（D5-28）', () => {
+  it('尺寸按钮：普通 surface.sunken + text.muted，悬停 menu.hover + text.secondary，选中 selection.bg + text.accent', () => {
     const b = mount('.ctx-size-grid', '<div class="ctx-size-btn"></div>');
     expect(win(b, 'background')).toBe('var(--color-surface-sunken)');
     expect(win(b, 'color')).toBe('var(--color-text-muted)');
@@ -645,7 +645,7 @@ describe('浮层', () => {
     noOld('ctx-size-btn'); noOld('size-active');
   });
 
-  it('引擎下拉容器：surface.menu 底 + border.menu 描边（D5-13，黑 50% -> 40%）；页脚顶边 divider（D5-35）', () => {
+  it('引擎下拉容器：surface.menu 底 + border.menu 描边（黑 50% -> 40%）；页脚顶边 divider', () => {
     const dd = mount('.search-bar', '<div class="engine-dropdown"></div>');
     expect(win(dd, 'background')).toBe('var(--color-surface-menu)');
     expect(win(dd, 'border')).toEqual(MENU_BORDER);
@@ -666,7 +666,7 @@ describe('浮层', () => {
     noOld('engine-item'); noOld('selected');
   });
 
-  it('toast：surface.menu 底 + border.subtle 描边 + text.primary（D5-14）；错误态 text.danger + danger.border', () => {
+  it('toast：surface.menu 底 + border.subtle 描边 + text.primary；错误态 text.danger + danger.border', () => {
     const t = mount('body', '<div class="app-toast"></div>');
     expect(win(t, 'background')).toBe('var(--color-surface-menu)');
     expect(win(t, 'color')).toBe('var(--color-text-primary)');
@@ -690,7 +690,7 @@ describe('浮层', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 阶段 B3（Task 33，spec §6）：焦点环、按下态、禁用态、输入框聚焦与错误态、滑块悬停。
+// 焦点环、按下态、禁用态、输入框聚焦与错误态、滑块悬停。
 
 describe('交互状态', () => {
   // [class, 祖先链, 标签]：按真实 DOM 的位置搭，免得祖先上的选择器（.engine-item .x 之类）被漏判。
@@ -712,7 +712,7 @@ describe('交互状态', () => {
     ['folder-rename-btn', '#folder-title'], ['forgot-password-btn', '.login-card'],
     ['engine-form-save', '.add-engine-form'],
   ];
-  // 内缩环：被 overflow: hidden 或 4px 内边距包住的元素（§6.1.1）
+  // 内缩环：被 overflow: hidden 或 4px 内边距包住的元素
   const INSET = [
     ['engine-trigger', '.search-bar'], ['engine-item', '.engine-list', 'div'], ['ctx-item', '.context-menu', 'div'],
     ['ctx-size-btn', '.ctx-size-grid', 'div'], ['type-btn', '.type-toggle'], ['auth-tab', '.auth-tabs'],
@@ -731,7 +731,7 @@ describe('交互状态', () => {
     });
   }
 
-  it('实心按钮（primary / danger 两类）只用外扩环：内缩环画在 blue.600 / red.600 上对比不够（§6.1），不得出现在内缩清单', () => {
+  it('实心按钮（primary / danger 两类）只用外扩环：内缩环画在 blue.600 / red.600 上对比不够，不得出现在内缩清单', () => {
     const SOLID = ['btn-primary', 'btn-danger', 'engine-form-save']; // 实心按钮合并规则里的全部 class
     const solidRule = rulesMentioning('btn-primary').find((r) => r.selectors.some((s) => s.text === '.btn-primary') && r.decls.some((d) => d.prop === 'background'));
     expect(solidRule.selectors.map((s) => s.text)).toEqual(expect.arrayContaining(['.btn-primary', '.engine-form-save']));
@@ -771,7 +771,7 @@ describe('交互状态', () => {
     }
   });
 
-  it('焦点环颜色统一为 focus.ring，含把手与语言切换（D5-22）', () => {
+  it('焦点环颜色统一为 focus.ring，含把手与语言切换', () => {
     for (const cls of ['left-sidebar-handle', 'lang-toggle']) {
       const row = [...OUTSET, ...INSET].find((r) => r[0] === cls);
       expect(win(make(row), 'outline', { state: FOCUS_KB }).color, cls).toBe('var(--color-focus-ring)');
@@ -793,7 +793,7 @@ describe('交互状态', () => {
 
   it('.engine-delete-btn 平时透明、悬停行时才出现；键盘聚焦它本身时必须可见，否则环画在透明按钮上', () => {
     const b = make(['engine-delete-btn', '.engine-item']);
-    // 祖先上的 :hover 无法静态判定（已登记 b6-unverified.json 的 .engine-item:hover .engine-delete-btn）：断言它抛错，再直接断言声明
+    // 祖先上的 :hover 无法静态判定（已登记在 undecidable-selectors.json 的 .engine-item:hover .engine-delete-btn）：断言它抛错，再直接断言声明
     let err;
     try { win(b, 'opacity'); } catch (e) { err = e; }
     expect(err?.name).toBe('CascadeUndecidable');
@@ -816,7 +816,7 @@ describe('交互状态', () => {
     ['folder-rename-btn', '#folder-title'],
   ];
 
-  it('实心按钮按下态（PRESSED = hover + active，悬停规则写在后面也必须被按下规则压住）：blue.800 / red.800（Q1，D5-37）', () => {
+  it('实心按钮按下态（PRESSED = hover + active，悬停规则写在后面也必须被按下规则压住）：blue.800 / red.800', () => {
     for (const cls of ['btn-primary', 'engine-form-save']) {
       const b = make([cls, '.dialog-actions']);
       expect(win(b, 'background', { state: PRESSED }), cls).toBe('var(--color-action-primary-pressed)');
@@ -855,7 +855,7 @@ describe('交互状态', () => {
     }
   });
 
-  it('侧栏按钮按下 control.panel.pressed（白 18%，D5-7），危险款同；文字不变', () => {
+  it('侧栏按钮按下 control.panel.pressed（白 18%），危险款同；文字不变', () => {
     const b = make(['sidebar-action-btn', '.sidebar-panel']);
     expect(win(b, 'background', { state: PRESSED })).toBe('var(--color-control-panel-pressed)');
     expect(win(b, 'background', { state: HOVER })).toBe('var(--color-control-panel-hover)');
@@ -866,7 +866,7 @@ describe('交互状态', () => {
     noBorder(b, PRESSED);
   });
 
-  it('分段切换、菜单项、列表项、引擎触发按下 = 悬停（§6.3、§6.5）', () => {
+  it('分段切换、菜单项、列表项、引擎触发按下 = 悬停', () => {
     for (const cls of ['type-btn', 'auth-tab']) {
       const b = make([cls, cls === 'type-btn' ? '.type-toggle' : '.auth-tabs']);
       expect(win(b, 'color', { state: PRESSED }), cls).toBe('var(--color-text-primary)');
@@ -878,7 +878,7 @@ describe('交互状态', () => {
     expect(win(make(['engine-trigger', '.search-bar']), 'background', { state: PRESSED })).toBe('var(--color-surface-glass-hover)');
   });
 
-  it('选中 + 悬停 / 按下：尺寸按钮 menu.hover + text.accent（§6.4）；菜单项同理；引擎项 list.hover + text.accent（§6.5）', () => {
+  it('选中 + 悬停 / 按下：尺寸按钮 menu.hover + text.accent；菜单项同理；引擎项 list.hover + text.accent', () => {
     const size = mount('.ctx-size-grid', '<div class="ctx-size-btn size-active"></div>');
     for (const state of [HOVER, PRESSED]) {
       expect(win(size, 'background', { state })).toBe('var(--color-menu-hover)');
@@ -899,7 +899,7 @@ describe('交互状态', () => {
     expect(win(eng, 'background')).toBe('var(--color-selection-bg)');
   });
 
-  it('文件夹格悬停叠白 surface.glass.hover，替换底色（D5-8）', () => {
+  it('文件夹格悬停叠白 surface.glass.hover，替换底色', () => {
     const slot = mount('.folder-slot-grid', '<div class="folder-slot-normal folder-slot-folder"></div>');
     const mini = mount('.folder-slot-mini-group', '<div class="folder-mini-icon folder-mini-folder-slot"></div>');
     for (const [el, name] of [[slot, 'folder-slot-folder'], [mini, 'folder-mini-folder-slot']]) {
@@ -993,9 +993,9 @@ describe('交互状态', () => {
   // -------------------------------------------------------------------------
   // 焦点环不被裁掉、滑块悬停
 
-  it('.grid-scroll-region 四周 padding >= 4px（外扩环不被 overflow 裁掉，§6.1.1）', () => {
+  it('.grid-scroll-region 四周 padding >= 4px（外扩环不被 overflow 裁掉）', () => {
     const region = mount('.main-content', '<section class="grid-scroll-region"></section>');
-    const SPACE = { 0: 0, 1: 4, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40, 12: 48, 16: 64, 20: 80 };   // spec §5.1
+    const SPACE = { 0: 0, 1: 4, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40, 12: 48, 16: 64, 20: 80 };   // 间距档位
     const px = (v) => {
       const m = /^var\(--space-(\d+)\)$/.exec(v);
       if (m) return SPACE[m[1]];
@@ -1005,7 +1005,7 @@ describe('交互状态', () => {
     for (const [side, v] of Object.entries({ top: t, right: r, bottom: b, left: l })) expect(v, side).toBeGreaterThanOrEqual(4);
   });
 
-  it('滑块拇指悬停有 4px control.panel.hover 光圈，保留原有投影；时长 fast（D5-31）', () => {
+  it('滑块拇指悬停有 4px control.panel.hover 光圈，保留原有投影；时长 fast', () => {
     const range = make(['sidebar-range', '.sidebar-panel', 'input', 'type="range"']);
     for (const pe of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
       const rest = win(range, 'box-shadow', { pseudoEl: pe });

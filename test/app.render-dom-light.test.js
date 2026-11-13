@@ -131,7 +131,7 @@ describe('app.js render/dom-light layer', () => {
     });
 
     // wallpaperDim 是闭包私有的 let，测试拿不到 setter；这里把初始值改成 40 后重新求值 app.js，只用来走非零分支。
-    it('dim > 0 时只写运行时变量 --rt-wallpaper-dim-opacity = 滑块值 / 85，不再写 rgba 背景（G-1 方案 a）', () => {
+    it('dim > 0 时只写运行时变量 --rt-wallpaper-dim-opacity = 滑块值 / 85，不再写 rgba 背景', () => {
       const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../app.js'), 'utf8')
         .replace(/\ninit\(\);\s*$/, '\n')
         .replace('let wallpaperDim = 0;', 'let wallpaperDim = 40;');
@@ -1054,7 +1054,7 @@ describe('app.js render/dom-light layer', () => {
         expect(html).toContain('src="data:image/png;base64,CCC"');
         expect(html).toContain('style="width:100%;height:100%;display:block;object-fit:cover;pointer-events:none"');
         expect(html).toContain('<span class="icon-letter" style="display:none;pointer-events:none">E</span>');
-        expect(html).not.toMatch(/color:|font-size:/); // 颜色与字号在 .icon-letter 上（G-3）
+        expect(html).not.toMatch(/color:|font-size:/); // 颜色与字号在 .icon-letter 上
       });
 
       it('icon present, non-1x1 size -> wrapped in grid-item-link-preview (isExpandedLink)', () => {

@@ -1,4 +1,4 @@
-// style.css 里的新 token 块与 design/tokens.json 的一致性（Task 28，spec §2.3、§2.4、§4.4）。
+// style.css 里的新 token 块与 design/tokens.json 的一致性。
 // 期望的块由 expectedCssBlocks 渲染；不一致时失败信息里带着期望文本，直接粘贴进 style.css 即可。
 import { describe, it, expect } from 'vitest';
 import { readStyleCss, parseCss } from './helpers/cssRules.js';

@@ -9,8 +9,8 @@ import {
   expectedCssBlocks,
 } from './helpers/designTokens.js';
 
-// design/tokens.json 的结构测试（spec r6.3 §2、§3.2、§3.3、§4、§5、§8.4）。
-// 数值抄错由计数测试和抽样断言兜底；Task 28 的一致性测试会再核一次 CSS 与 Penpot。
+// design/tokens.json 的结构测试。
+// 数值抄错由计数测试和抽样断言兜底；style.tokens.test.js 会再核一次 style.css 与 tokens.json 是否一致。
 
 const tokens = loadTokens();
 const byName = indexByName(tokens);
@@ -23,7 +23,7 @@ const count = (pred) => tokens.filter(pred).length;
 const inGroup = (prefix) => (t) => t.name.startsWith(prefix + '.');
 
 describe('design/tokens.json 结构', () => {
-  it('名字符合 spec §2.2', () => {
+  it('名字符合命名规则', () => {
     for (const t of tokens) expect(t.name).toMatch(/^[a-z]+(\.[a-z0-9]+)+$/);
   });
 
@@ -127,7 +127,7 @@ describe('design/tokens.json 结构', () => {
     }
   });
 
-  it('阴影的颜色引用原始色，shadow.highlight 引用 border.highlight 是唯一例外（spec §5.5）', () => {
+  it('阴影的颜色引用原始色，shadow.highlight 引用 border.highlight 是唯一例外', () => {
     const shadows = tokens.filter((t) => t.type === 'shadow');
     for (const t of shadows) {
       expect(t.set).toBe('theme/dark');
@@ -143,22 +143,22 @@ describe('design/tokens.json 结构', () => {
     }
   });
 
-  it('原始层的颜色是字面值，不引用其他 token（spec §2.1 第 4 条）', () => {
+  it('原始层的颜色是字面值，不引用其他 token', () => {
     for (const t of tokens.filter((x) => x.set === 'core' && x.type === 'color')) {
       expect(resolveRef(t.value, byName), t.name).toBeNull();
       expect(t.value).toMatch(/^(#[0-9a-f]{6}|rgba\(\d+, ?\d+, ?\d+, ?0?\.\d+\))$/);
     }
   });
 
-  it('不建只被 alpha 用到的实色，也不建 red.500（Q1 = A）', () => {
+  it('不建只被 alpha 用到的实色，也不建 red.500', () => {
     for (const name of ['color.black', 'color.blue.900', 'color.purple.600', 'color.red.500']) {
       expect(byName.has(name), name).toBe(false);
     }
   });
 
-  it('计数与 spec 一致', () => {
+  it('计数与设计规范一致', () => {
     const semanticColor = (t) => t.set === 'theme/dark' && t.type === 'color';
-    expect(count(semanticColor)).toBe(67); // G-1 方案 a，含 color.wallpaper.dim
+    expect(count(semanticColor)).toBe(67); // 含 color.wallpaper.dim
     expect(count((t) => t.type === 'shadow')).toBe(8);
     expect(count(inGroup('space'))).toBe(12);
     expect(count(inGroup('radius'))).toBe(6);
@@ -169,7 +169,7 @@ describe('design/tokens.json 结构', () => {
     expect(count(inGroup('motion.duration'))).toBe(4);
     expect(count(inGroup('motion.ease'))).toBe(4);
     expect(count(inGroup('blur'))).toBe(6);
-    expect(count((t) => t.set === 'core' && t.type === 'color' && !t.name.startsWith('color.alpha.'))).toBe(17); // Q1 = A
+    expect(count((t) => t.set === 'core' && t.type === 'color' && !t.name.startsWith('color.alpha.'))).toBe(17);
     expect(count((t) => t.name.startsWith('color.alpha.'))).toBe(33);
   });
 
@@ -198,13 +198,13 @@ describe('design/tokens.json 结构', () => {
   it('抽样取值', () => {
     expect(get('color.slate.425').value).toBe('#8b98ac');
     expect(get('size.control.lg').value).toBe(56);
-    expect(get('color.action.primary.hover').value).toBe('{color.blue.700}'); // Q1
-    expect(get('color.action.danger.hover').value).toBe('{color.red.700}'); // Q1
-    expect(get('color.text.dangeronfill').value).toBe('{color.red.300}'); // Q2
-    expect(get('color.divider').value).toBe('{color.alpha.white.10}'); // Q3
-    expect(get('font.size.xl').value).toBe(20); // Q4
-    expect(get('color.control.panel.pressed').value).toBe('{color.alpha.white.18}'); // D5-7
-    expect(get('color.wallpaper.dim').value).toBe('{color.alpha.black.85}'); // G-1 方案 a
+    expect(get('color.action.primary.hover').value).toBe('{color.blue.700}');
+    expect(get('color.action.danger.hover').value).toBe('{color.red.700}');
+    expect(get('color.text.dangeronfill').value).toBe('{color.red.300}');
+    expect(get('color.divider').value).toBe('{color.alpha.white.10}');
+    expect(get('font.size.xl').value).toBe(20);
+    expect(get('color.control.panel.pressed').value).toBe('{color.alpha.white.18}');
+    expect(get('color.wallpaper.dim').value).toBe('{color.alpha.black.85}');
     expect(get('color.alpha.black.29').value).toBe('rgba(0, 0, 0, 0.29)');
     expect(get('color.alpha.blue900.40').value).toBe('rgba(30, 58, 138, 0.4)');
     expect(get('z.notice').value).toBe(350);
@@ -278,7 +278,7 @@ describe('renderCss', () => {
     );
   });
 
-  it('type.clock 的字间距不在 font 简写里（spec §4.4）', () => {
+  it('type.clock 的字间距不在 font 简写里', () => {
     const clock = get('type.clock');
     expect(renderCss(clock, byName)).toBe(
       'var(--font-weight-light) var(--font-size-clock)/var(--font-leading-none) var(--font-family-ui)'

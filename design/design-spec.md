@@ -7,7 +7,7 @@
 | 规范版本 | `2.0.0` |
 | 取值来源 | [`design/tokens.json`](./tokens.json)，唯一来源 |
 | 主题 | 仅深色；结构上为浅色预留（见 §2.4） |
-| 单位 | 全部为 px；`style.css` 不使用 rem 表达字号与间距 |
+| 单位 | 以 px 为主；字号与间距不用 rem。极少数布局常量用 rem（见 §5.1 末尾的例外） |
 
 ---
 
@@ -17,7 +17,7 @@
 2. **浮起的元素叠白，压下去的元素叠黑**：深色表面上要「浮起」的元素（分组卡片、次要按钮、chip、输入框、卡片悬停）用白色 alpha；「凹下去」的元素（分段切换的槽、尺寸按钮底）用黑色 alpha。
 3. **层级靠填充明度和轮廓线，不靠阴影**：深色背景上黑色阴影几乎看不见，阴影只负责氛围。控件不新增描边，现有描边只保留在输入框（含搜索栏）、面板轮廓、功能色条和语言切换上。
 4. **不引入新色相**：除功能色外不再增加颜色。
-5. **所有数值走档位**：间距是 4 的倍数，字号 6 档，圆角 6 档，阴影 8 档。代码里不写档外的字面值，由测试守住（见 §8）。
+5. **数值走档位**：间距是 4 的倍数，字号 6 档，圆角 6 档，阴影 8 档。组件规则里的颜色、字号、阴影、模糊一律走 token；少量布局常量保留字面值，已知例外列在 §5.1 末尾，由测试的白名单限定（见 §8）。
 6. **可访问性**：文字对比度目标 >= 4.5，键盘焦点环对所在表面 >= 3。
 
 ---
@@ -183,8 +183,8 @@
 | `color.selection.bg` | `alpha.blue500.15` | 带色 | 列表选中项、菜单项选中、尺寸按钮选中 |
 | `color.menu.hover` | `alpha.blue500.20` | 带色 | 右键菜单项、尺寸按钮悬停 |
 | `color.list.hover` | `alpha.blue500.15` | 带色 | 引擎下拉列表项悬停 |
-| `color.danger.bg` | `alpha.red500.15` | 带色 | 危险 ghost 与菜单危险项的悬停、错误条底 |
-| `color.danger.border` | `red.400` | 实色 | 输入框错误态、toast 错误态、错误条描边 |
+| `color.danger.bg` | `alpha.red500.15` | 带色 | 危险 ghost 与菜单危险项的悬停 |
+| `color.danger.border` | `red.400` | 实色 | 输入框错误态、toast 错误态 |
 | `color.warning.bg` / `.border` | `alpha.amber500.18` / `alpha.amber500.45` | 带色 | 冲突弹窗警告条、侧栏同步冲突 pill |
 | `color.focus.ring` | `blue.400` | 实色 | 2px 键盘焦点环（§6.1） |
 | `color.focus.border` | `blue.600` | 实色 | 输入框、搜索栏聚焦时的描边 |
@@ -314,7 +314,15 @@ CSS 写法：
 | `space.4` | 16 | `space.16` | 64 |
 | `space.5` | 20 | `space.20` | 80 |
 
-单行控件的高度由 `size.control.*` 决定，垂直 padding 为 0，不用 padding 撑高度。
+主要的单行控件（按钮、搜索栏、输入框、语言切换等）的高度由 `size.control.*` 决定，垂直 padding 为 0，不用 padding 撑高度。
+
+**字面值例外**：下面这些保留字面值或不走上述规则，不进档位。
+
+- 用垂直 padding 撑高度：`.engine-item`、`.add-engine-btn`（垂直 `space.3`），`.auth-tab`、`.icon-upload-btn`、`.icon-clear-btn`、`.engine-form-input`（垂直 `space.2`）。
+- 固定高度加垂直 padding：右键菜单项 `.ctx-item`（高 32px，垂直 `space.2`）。
+- rem：滑块区高度 `2.5rem`、toast 距底 `1.5rem`、拖放指示线偏移 `-0.5rem`、主网格最小宽度 `56rem`。
+- px 字面值：壁纸预览高 99px、引擎下拉最大高度 240px、登录提示宽 320px 与距边 24px、把手与搜索图标的定位偏移（6px、16px）、首字母占位字号（30px / 10px）。
+- 局部不透明度：下拉箭头 0.5、`.folder-rename-btn` 普通态 0.55、右键菜单项图标 0.6、「忘记密码」悬停 0.8，以及呼吸动画的关键帧；它们不属于 §5.9 的两档。
 
 ### 5.2 尺寸
 
@@ -465,7 +473,7 @@ CSS 写法：
 
 | 容器 | 处理 |
 |---|---|
-| `.grid-scroll-region`（`overflow: auto`） | 容器四周至少 `space.1` 内边距，卡片用外扩环 |
+| `.grid-scroll-region`（`overflow: auto`） | 容器四周至少 `space.1` 内边距，给外扩环留位置。卡片目前不可键盘聚焦（见 §6.7） |
 | `.search-bar`（`overflow: hidden`） | 搜索栏整体按文本输入聚焦（`:focus-within` 描边 `focus.border`）；内部的引擎触发按钮用内缩环 |
 | 引擎下拉、右键菜单、分段切换的槽 | 列表项、菜单项、段用内缩环 |
 | 相邻间距 4px 的 chip、尺寸按钮 | 内缩环 |
@@ -498,8 +506,9 @@ CSS 写法：
 | `.btn-secondary`、`.icon-upload-btn`、`.engine-form-cancel` | secondary × default × default |
 | `.sidebar-action-btn` | secondary × default × panel |
 | `.sidebar-action-btn-danger`、`.sync-delete-btn` | secondary × danger × panel |
-| `.close-btn`、`.folder-rename-btn`、`.add-engine-btn` | ghost × default |
-| `.clock-remove-btn`、`.engine-delete-btn`、`.icon-clear-btn` | ghost × danger |
+| `.close-btn`、`.add-engine-btn` | ghost × default |
+| `.folder-rename-btn` | ghost × default 的例外：普通态不换字色，用 `text.primary` + `opacity: 0.55` 变暗；悬停、按下、聚焦时恢复不透明，悬停与按下的填充和文字同 ghost × default |
+| `.clock-remove-btn`、`.engine-delete-btn`、`.icon-clear-btn` | ghost × danger（`.engine-delete-btn` 普通态 `opacity: 0`，所在引擎项悬停或自身获得焦点时才显示） |
 | 右键菜单「删除」 | 菜单项 danger（§6.5） |
 
 **语言切换**直接浮在壁纸上，保留 1px 轮廓：`surface.glass.default` + 1px `border.subtle` + `blur.glass`，文字 `text.secondary`；悬停 `surface.glass.hover` + `border.strong` + `text.primary`；焦点用外扩环。
@@ -553,16 +562,17 @@ chip 是 `radius.full` 的小胶囊，无悬停反馈，只出现在分组标题
 | 组件 | 填充 | 描边 | 文字 / 图标 |
 |---|---|---|---|
 | 状态条 · warning（冲突弹窗的账号提示） | `warning.bg` | `warning.border` | `text.warning` / `icon.warning` |
-| 状态条 · danger（冲突弹窗的错误态） | `danger.bg` | `danger.border` | `text.danger` |
 | 状态 pill · default（侧栏同步状态） | `chip.bg` | 无 | `text.primary` |
 | 状态 pill · warning（同步冲突） | `warning.bg` | `warning.border`（内描边） | `text.warning` |
 | toast · default / danger | `surface.menu` + `blur.menu` | `border.subtle` / `danger.border` | `text.primary` / `text.danger` |
+
+冲突弹窗里的错误提示（`.sync-conflict-error`）只是文字：`text.danger`、`type.body.sm`，没有底色和描边。
 
 ### 6.7 卡片、滑块、侧栏把手、滚动条
 
 | 元素 | 普通 | 悬停 | 按下 / 拖动 | 焦点 |
 |---|---|---|---|---|
-| 主页卡片、加号卡、文件夹格 | `surface.glass.default` + `blur.glass` + `shadow.card`，无描边 | `surface.glass.hover`（替换底色） | 拖动时 `opacity.dragging`；合并态 2px `drag.indicator` 外框 + `drag.combine` 底 | 外扩环 |
+| 主页卡片、加号卡、文件夹格 | `surface.glass.default` + `blur.glass` + `shadow.card`，无描边 | `surface.glass.hover`（替换底色） | 拖动时 `opacity.dragging`；合并态 2px `drag.indicator` 外框 + `drag.combine` 底 | 当前不可键盘聚焦 |
 | 文件夹内的链接卡片 | 透明 | `surface.glass.hover` | 同上 | 同上 |
 | 滑块 | 轨道 `range.track` 4px，拇指 `range.thumb` 20px + `shadow.thumb` | 拇指外加 4px `control.panel.hover` 光圈（时长 `fast`），尺寸不变 | 同悬停 | 拇指外扩环 |
 | 侧栏把手 | 三条纹 `handle`，用间距表达三条 | 不变 | | 内缩环 |

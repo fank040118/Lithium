@@ -1,6 +1,6 @@
-// design/tokens.json 的读取与 CSS 渲染（spec r6.3 §2.3、§4.4、§5.5）。
+// design/tokens.json 的读取与 CSS 渲染。
 // tokens.json 是 Penpot 与 CSS 共同的 token 源：这里把它渲染成 style.css 里应有的 :root 块，
-// 供一致性测试（Task 28）比对，也供执行者在 tokens.json 变更后直接粘贴。
+// 供一致性测试比对，也供执行者在 tokens.json 变更后直接粘贴。
 //
 // Token 结构：{ name, type, set, value, only, doc }
 //   type  Penpot TokenType 的名字；CSS 专用的另有 duration、cubicBezier；blur 用 dimension
@@ -36,7 +36,7 @@ export function tokenToCssVar(name) {
   return '--' + name.replaceAll('.', '-');
 }
 
-// 段内禁止连字符（spec §2.2），所以这条规则是双射。
+// 段内禁止连字符，所以这条规则是双射。
 export function cssVarToToken(cssVar) {
   return cssVar.replace(/^--/, '').replaceAll('-', '.');
 }
@@ -66,7 +66,7 @@ function refToVar(value, byName) {
 
 const px = (n) => (n === 0 ? '0' : `${n}px`);
 
-// text-shadow 的语法没有扩散半径（spec §5.5：shadow.text「CSS 为 text-shadow」）。
+// text-shadow 的语法没有扩散半径（shadow.text 在 CSS 里输出为 text-shadow）。
 // 由数据决定：token 上写 "$extensions": { "css": { "property": "text-shadow" } }。
 function isTextShadow(token) {
   return token.$extensions?.css?.property === 'text-shadow';
@@ -86,7 +86,7 @@ function renderShadow(token, byName) {
 }
 
 // typography 字段名同 Penpot TokenTypographyValueString：fontFamilies、fontSizes、fontWeight、lineHeight、letterSpacing。
-// letterSpacing 不属于 font 简写，不在这里输出（spec §4.4）。
+// letterSpacing 不属于 font 简写，不在这里输出。
 function renderTypography(token, byName) {
   const v = token.value;
   const r = (field) => refToVar(v[field], byName);
@@ -108,7 +108,7 @@ function declarations(tokens, byName) {
   return tokens.map((t) => `  ${tokenToCssVar(t.name)}: ${renderCss(t, byName)};`);
 }
 
-// 两个块的完整文本：core 放原始层与尺寸；theme 放语义色与阴影，并声明 color-scheme（spec §2.4）。
+// 两个块的完整文本：core 放原始层与尺寸；theme 放语义色与阴影，并声明 color-scheme。
 export function expectedCssBlocks(tokens) {
   const byName = indexByName(tokens);
   const inSet = (set) => tokens.filter((t) => t.set === set);

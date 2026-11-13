@@ -1,5 +1,5 @@
-// 排版（Task 34，spec §4.1–§4.4）：字号改用 type token、font: inherit、字号相对 b733093 只变确认过的那几处。
-// 比对基线 b733093 是 M-F 确认字号时的代码（设计规范化开始之前的 main）。
+// 排版：字号改用 type token、font: inherit、字号相对 b733093 只变确认过的那几处。
+// 比对基线 b733093 是设计规范化开始之前的 main，字号变化以它为准。
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -81,7 +81,7 @@ function fontSizeMap(cssText) {
   return map;
 }
 
-// M-F 确认要变的字号（spec §4.2「M-F 字号结论」），键为选择器，值为 [b733093, 现在]。
+// 明确确认要变的字号，键为选择器，值为 [b733093, 现在]。
 const CONFIRMED_CHANGES = {
   '.tz-label': [11.2, 12],
   '.app-toast': [14.4, 14],
@@ -90,15 +90,15 @@ const CONFIRMED_CHANGES = {
   '.sync-conflict-title': [18, 20],
   '.lang-toggle': [12.48, 13],
 };
-// M-F 选「保持」的紧凑表单选择器（spec §4.4「紧凑表单例外」）。
+// 明确选择「保持 13px」的紧凑表单选择器（排版规范里的紧凑表单例外）。
 const KEPT_AT_13 = ['.engine-form-input', '.engine-form-save', '.engine-form-cancel', '.icon-upload-btn', '.icon-clear-btn'];
-// Task 37 删掉的死 CSS：页面里没有任何元素使用，b733093 里有字号、现在没有，不算字号变化。
+// 迁移中删掉的死 CSS：页面里没有任何元素使用，b733093 里有字号、现在没有，不算字号变化。
 const REMOVED_DEAD_CSS = ['.sidebar-note'];
 const NEW_SELECTORS = ['.icon-letter', '.icon-letter-sm'];
 const FORM_TAGS = ['button', 'input', 'select', 'textarea'];
 
 describe('raw-font-size 归零', () => {
-  it('style.css 里没有 font-size / font 的字面值（白名单只有 G-3 的 30px、10px）', () => {
+  it('style.css 里没有 font-size / font 的字面值（白名单只有首字母占位的 30px、10px）', () => {
     const left = dimViolations(css, { allow: DEFAULT_ALLOW }).filter((v) => v.rule === 'raw-font-size');
     expect(left.map((v) => `${v.line} ${v.selector} ${v.prop}: ${v.value}`)).toEqual([]);
   });
@@ -178,8 +178,8 @@ describe('type token 的使用', () => {
   });
 });
 
-// spec §4.4 角色表 + 迁移对照（字号 / 字重 -> token）落到选择器：每条都锁住字号、字重、行高（token 自带）。
-// 依据列：R = §4.4「用于」列点名；M = §4.4 迁移对照（按字号 / 现有字重机械归档）；U = 用户裁定。
+// 排版角色表 + 迁移对照（字号 / 字重 -> token）落到选择器：每条都锁住字号、字重、行高（token 自带）。
+// 依据列：R = 角色表「用于」列点名；M = 迁移对照（按字号 / 现有字重机械归档）；U = 明确选定。
 const ROLE_MAP = {
   'type-clock': ['.clock-text'],
   'type-title-lg': ['.modal-title', '.dialog-title', '.dialog-plain-title', '.login-consent-title',
@@ -200,11 +200,11 @@ const ROLE_MAP = {
   'type-caption': ['.login-consent-footnote', '.sidebar-sync-hint', '.grid-item-name', '.clock-limit-msg',
     '.sync-conflict-side', '.icon-preview-placeholder', '.signin-notice-sub'],
 };
-// §4.4 里找不到对应角色、保留 size / weight / leading 分开写的选择器，以及固定尺寸的首字母占位。
+// 角色表里找不到对应角色、保留 size / weight / leading 分开写的选择器，以及固定尺寸的首字母占位。
 const UNMAPPED_WITH_SIZE = ['.sync-conflict-warn'];
 const LETTER_SELECTORS = ['.icon-letter', '.icon-letter-sm', '.folder-slot-letter', '.folder-mini-letter'];
 
-describe('排版角色表（§4.4）：每个有字号的选择器都归到一个 type token', () => {
+describe('排版角色表：每个有字号的选择器都归到一个 type token', () => {
   const entries = Object.entries(ROLE_MAP).flatMap(([token, sels]) => sels.map((sel) => [sel, token]));
 
   it('角色表里没有重复的选择器', () => {
@@ -224,7 +224,7 @@ describe('排版角色表（§4.4）：每个有字号的选择器都归到一�
     expect(inMedia, sel).toEqual([]);
   });
 
-  it('token 展开后的字号 / 字重 / 行高与 §4.4 表一致', () => {
+  it('token 展开后的字号 / 字重 / 行高与角色表一致', () => {
     const vars = rootVars(rules);
     const expected = {
       'type-clock': '300 60px/1', 'type-title-lg': '600 20px/1.25', 'type-title-md': '600 16px/1.25',
@@ -246,7 +246,7 @@ describe('排版角色表（§4.4）：每个有字号的选择器都归到一�
     expect(offenders).toEqual([]);
   });
 
-  it('.sync-conflict-warn（多行 500 字重提示，§4.4 无对应角色）：13 / 500 / 1.5 用原始 token', () => {
+  it('.sync-conflict-warn（多行 500 字重提示，角色表无对应角色）：13 / 500 / 1.5 用原始 token', () => {
     const d = declsOf(rules, '.sync-conflict-warn');
     expect(lastOf(d, 'font-size')).toBe('var(--font-size-sm)');
     expect(lastOf(d, 'font-weight')).toBe('var(--font-weight-medium)');
@@ -258,7 +258,7 @@ describe('排版角色表（§4.4）：每个有字号的选择器都归到一�
     expect(lastOf(declsOf(rules, '.clock-entry select optgroup'), 'font-weight')).toBe('var(--font-weight-semibold)');
   });
 
-  it('M-F 与用户裁定：.grid-item-name 取 caption，.sync-conflict-side-time 取 body.lg（400）', () => {
+  it('明确选定的字号：.grid-item-name 取 caption，.sync-conflict-side-time 取 body.lg（400）', () => {
     expect(lastOf(declsOf(rules, '.grid-item-name'), 'font')).toBe('var(--type-caption)');
     expect(lastOf(declsOf(rules, '.sync-conflict-side-time'), 'font')).toBe('var(--type-body-lg)');
     expect(lastOf(declsOf(rules, '.sync-conflict-side-time'), 'font-weight')).toBeUndefined();
@@ -282,13 +282,13 @@ describe('字间距', () => {
   });
 });
 
-describe('首字母占位（G-3）', () => {
+describe('首字母占位', () => {
   it('.icon-letter 固定 30px、.icon-letter-sm 固定 10px，字重都是 semibold', () => {
     expect(lastOf(declsOf(rules, '.icon-letter'), 'font-size')).toBe('30px');
     expect(lastOf(declsOf(rules, '.icon-letter-sm'), 'font-size')).toBe('10px');
     for (const s of ['.icon-letter', '.icon-letter-sm', '.folder-mini-letter', '.folder-slot-letter', '.move-to-main-hint']) {
       const d = declsOf(rules, s);
-      // type.title.lg 的字重是 semibold（spec §4.4），用 font 简写的选择器按它算
+      // type.title.lg 的字重是 semibold，用 font 简写的选择器按它算
       const font = lastOf(d, 'font');
       const w = lastOf(d, 'font-weight') ?? (font === 'var(--type-title-lg)' ? 'var(--font-weight-semibold)' : font);
       expect(w, s).toMatch(/semibold|600/);
@@ -319,15 +319,15 @@ describe('button, input, select, textarea { font: inherit }', () => {
   });
 });
 
-describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
+describe('字号与 b733093 的差异恰好是明确确认的清单', () => {
   const oldMap = fontSizeMap(baseCss);
   const newMap = fontSizeMap(css);
   const keyOf = (sel) => `|${sel}`;
-  // Task 37：运行时变量加了 --rt- 前缀，比对时还原成旧名，只看「是不是同一个变量驱动」。
+  // 运行时变量加了 --rt- 前缀，比对时还原成旧名，只看「是不是同一个变量驱动」。
   const unRt = (v) => (typeof v === 'string' ? v.replace('runtime:--rt-', 'runtime:--') : v);
   const dead = new Set(REMOVED_DEAD_CSS.map(keyOf));
 
-  it('Task 37 删掉的死 CSS：旧版有字号、现在整条没了，页面里也没有任何使用处', () => {
+  it('迁移中删掉的死 CSS：旧版有字号、现在整条没了，页面里也没有任何使用处', () => {
     for (const sel of REMOVED_DEAD_CSS) {
       expect(oldMap.has(keyOf(sel)), `${sel} @${BASE_COMMIT}`).toBe(true);
       expect(newMap.has(keyOf(sel)), `${sel} @HEAD`).toBe(false);
@@ -360,7 +360,7 @@ describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
     expect(diffs).toEqual(CONFIRMED_CHANGES);
   });
 
-  it('新出现的有字号的选择器只有 G-3 的两个类，加上 font: inherit 的四个标签', () => {
+  it('新出现的有字号的选择器只有首字母占位的两个类，加上 font: inherit 的四个标签', () => {
     const added = [...newMap.keys()].filter((k) => !oldMap.has(k)).map((k) => k.replace(/^\|/, ''));
     expect(added.sort()).toEqual([...NEW_SELECTORS, ...FORM_TAGS].sort());
     for (const tag of FORM_TAGS) expect(newMap.get(keyOf(tag)), tag).toBe('inherit');
@@ -371,7 +371,7 @@ describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
     expect(inherits.sort()).toEqual([...FORM_TAGS].sort());
   });
 
-  it('M-F 选「保持」的选择器，字号与 b733093 相同（逐条）', () => {
+  it('选择保持 13px 的选择器，字号与 b733093 相同（逐条）', () => {
     for (const sel of KEPT_AT_13) {
       expect(oldMap.get(keyOf(sel)), `${sel} @${BASE_COMMIT}`).toBe(13);
       expect(newMap.get(keyOf(sel)), `${sel} @HEAD`).toBe(oldMap.get(keyOf(sel)));

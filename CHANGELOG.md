@@ -33,11 +33,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - A manual pull now explains why nothing was pulled (for example, the cloud has no data or local storage is unavailable)
 - Refreshed the dark theme: sidebar groups, secondary buttons, inputs, the search bar border and card hover now use light overlays instead of black on black, so controls stand out from panels and dialogs
 - Primary and danger buttons now darken on hover and press, keeping their text readable
-- Keyboard focus is shown with the same blue ring everywhere
+- Keyboard focus on buttons and list items is shown with a blue ring; text inputs highlight their border with a glow instead
 - Disabled controls look the same everywhere (half opacity, "not allowed" cursor)
 - Dialog titles use a single size; the "drop here" hint is slightly smaller
-- Text styles are now consistent: the weight and line height of some labels and button text changed slightly
-- The search bar has a fixed height of 56px
+- Text styles are now consistent: for example, the sidebar value chips use a medium font weight instead of semibold, and single-line labels and buttons no longer get extra line spacing
+- The search bar has a fixed height of 56px, and the search input now fills the whole bar so clicking anywhere in it focuses it
+- The engine dropdown and toast corners are now 12px
+- Sidebar sliders show a halo around the thumb on hover and press
 - The sync status chips in the sidebar are slightly taller (24px)
 - The sign-in notice uses the same blur as menus
 - Native dropdowns and scrollbars now follow the dark theme

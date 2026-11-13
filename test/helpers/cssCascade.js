@@ -1,7 +1,7 @@
-// 静态层叠判定（Task 27）。回答一个问题：在给定的一组元素状态下，样式表里哪一条声明最终胜出。
+// 静态层叠判定。回答一个问题：在给定的一组元素状态下，样式表里哪一条声明最终胜出。
 // 依据只有选择器匹配、特异性、!important、源码顺序。
 //
-// 判定不了的一律抛 CascadeUndecidable，不返回值，并登记进浏览器目检清单 B6-U（见 cssRules.unsupportedSelectors）：
+// 判定不了的一律抛 CascadeUndecidable，不返回值，并登记进需要在浏览器里目检的选择器清单（见 cssRules.unsupportedSelectors）：
 //   - 参与竞争的候选里有 unsupported 的选择器（:has()、:focus-within、:not/:is/:where 里的状态、el.matches 抛错）；
 //   - 胜出值依赖 inherit / unset / revert；
 //   - 简写拆分后有两段以上无法归类（例如整个值只有一个 var()）；var() 按变量名前缀归类：
@@ -11,7 +11,7 @@
 // JS 写的行内样式、浏览器默认样式、视觉上是否可见。
 //
 // 用法：createCascade(cssText) 返回 { cascade, rulesMentioning, rules }；模块级的 cascade / rulesMentioning
-// 绑定到仓库的 style.css（首次调用时读取），给 Task 29 及之后的组件测试用。
+// 绑定到仓库的 style.css（首次调用时读取），给组件测试用。
 
 import {
   parseCss, readStyleCss, specificity, splitTopLevel,
@@ -54,7 +54,7 @@ const OUTLINE_PROP = /^outline(?:-(width|style|color|offset))?$/;
 const BORDER_STYLES = new Set(['none', 'hidden', 'dotted', 'dashed', 'solid', 'double', 'groove', 'ridge', 'inset', 'outset']);
 const OUTLINE_STYLES = new Set([...BORDER_STYLES, 'auto']);
 const WIDTH_TOKEN = /^(?:[+-]?(?:\d+\.?\d*|\.\d+)[a-z%]*|thin|medium|thick|calc\(.*)$/i;
-// 简写里的 var() 按变量名前缀归类（Task 35 裁定）：尺寸类 token 归 width，--color-* 归 color；其余前缀分不清。
+// 简写里的 var() 按变量名前缀归类：尺寸类 token 归 width，--color-* 归 color；其余前缀分不清。
 const VAR_WIDTH = /^var\(\s*--(?:border-width|space|size)-/i;
 const VAR_COLOR = /^var\(\s*--color-/i;
 

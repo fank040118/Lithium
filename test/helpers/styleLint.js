@@ -1,4 +1,4 @@
-// 样式 lint（Task 27）：把 spec §9 的验收项和尺寸类 token 的迁移进度变成可计数的规则，供棘轮使用。
+// 样式 lint：把设计规范里的验收项和尺寸类 token 的迁移进度变成可计数的规则，供棘轮使用。
 //
 // lintStyle(text, { allow }) -> Violation[]；Violation = { rule, line, selector, prop, value }
 // 规则：
@@ -21,7 +21,7 @@
 
 import { scanCss, isReducedMotion, splitTopLevel } from './cssRules.js';
 
-// G-3 的首字母占位字号（30px / 10px）；spec §5.7 局部层表里的 z-index 小整数（-1 是壁纸预览的 ::after）。
+// 首字母占位的固定字号（30px / 10px）；设计规范局部层表里的 z-index 小整数（-1 是壁纸预览的 ::after）。
 export const DEFAULT_ALLOW = ['30px', '10px', '1', '2', '-1'];
 
 const COLOR_RULES = new Set(['hex', 'rgb', 'hsl', 'named-color', 'primitive-ref']);

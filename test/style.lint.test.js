@@ -1,6 +1,6 @@
-// 样式 lint 与棘轮（Task 27）。
+// 样式 lint 与棘轮。
 // lintStyle / lintJsColors 的规则用内联夹具验证；棘轮读真实的 style.css，只允许违规数下降，不允许上升。
-// 每个后续 Task 完成时把 BASELINE_* 下调到新的实测值（B6 归零）。
+// 每完成一批迁移就把 BASELINE_* 下调到新的实测值，最终归零。
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -14,18 +14,18 @@ import { loadTokens, tokenToCssVar } from './helpers/designTokens.js';
 
 const rulesOf = (css, opts) => lintStyle(css, opts).map((v) => v.rule);
 
-// 2026-11-13 @ 6e0b1d5 实测（按声明计数，一条声明对一条规则只记一次）：
+// 2026-11-13 迁移开始前实测（按声明计数，一条声明对一条规则只记一次）：
 //   颜色类：hex 23 + rgb 27 + primitive-ref 0 = 50
 //   尺寸类：transition-all 8 + raw-font-size 65 + raw-radius 60 + raw-z 16（已扣除 DEFAULT_ALLOW）= 149
-// 2026-11-13 Task 29（主区玻璃）：颜色类 50 -> 29（-21）。
-// 2026-11-13 Task 30（侧栏）：颜色类 29 -> 18（-11）。
-// 2026-11-13 Task 31（弹窗与表单）：颜色类 18 -> 14（-4，裁剪框 4 处）。
-// 2026-11-13 Task 32（浮层）：颜色类 14 -> 13（-1，toast 的 color: #fff）。
-// 2026-11-13 Task 33（交互状态）：颜色类 13 -> 12（-1，滑块拇指两处同一条投影合为 --range-thumb-shadow 一处）。
-// 2026-11-13 Task 35（间距、尺寸、圆角、阴影、模糊）：颜色类 12 -> 0（-12，box-shadow / text-shadow 里的 rgba 换成 --shadow-*）；
+// 2026-11-13 主区玻璃：颜色类 50 -> 29（-21）。
+// 2026-11-13 侧栏：颜色类 29 -> 18（-11）。
+// 2026-11-13 弹窗与表单：颜色类 18 -> 14（-4，裁剪框 4 处）。
+// 2026-11-13 浮层：颜色类 14 -> 13（-1，toast 的 color: #fff）。
+// 2026-11-13 交互状态：颜色类 13 -> 12（-1，滑块拇指两处同一条投影合为 --range-thumb-shadow 一处）。
+// 2026-11-13 间距、尺寸、圆角、阴影、模糊：颜色类 12 -> 0（-12，box-shadow / text-shadow 里的 rgba 换成 --shadow-*）；
 //   尺寸类 149 -> 89（-60，raw-radius 全部改为 var(--radius-*)）。
-// 2026-11-13 Task 36（z-index 与动效）：尺寸类 89 -> 65（-24，transition-all 8 + raw-z 16 归零），只剩 raw-font-size 65（留给 Task 34）。
-// 2026-11-13 Task 34（排版）：尺寸类 65 -> 0（-65，raw-font-size 全部改为 type / font-size token；白名单仅 G-3 的 30px、10px 与 z-index 小整数）。
+// 2026-11-13 z-index 与动效：尺寸类 89 -> 65（-24，transition-all 8 + raw-z 16 归零），只剩 raw-font-size 65（留给排版迁移）。
+// 2026-11-13 排版：尺寸类 65 -> 0（-65，raw-font-size 全部改为 type / font-size token；白名单仅首字母占位的 30px、10px 与 z-index 小整数）。
 const BASELINE_COLOR = 0;
 const BASELINE_DIM = 0;
 
@@ -207,7 +207,7 @@ describe('棘轮：style.css', () => {
     expectRatchet('尺寸类', dimViolations(css, { allow: DEFAULT_ALLOW }).length, BASELINE_DIM, 'BASELINE_DIM');
   });
   it('lintStyle 在 style.css 上不抛错，且每条违规都带行号', () => {
-    // 带白名单时 style.css 已无违规（B6 归零）；不带白名单时 30px / 10px / z-index 小整数仍会命中，用来证明扫描没有空转。
+    // 带白名单时 style.css 已无违规（迁移完成后归零）；不带白名单时 30px / 10px / z-index 小整数仍会命中，用来证明扫描没有空转。
     expect(lintStyle(css, { allow: DEFAULT_ALLOW })).toEqual([]);
     const vs = lintStyle(css);
     expect(vs.length).toBeGreaterThan(0);
@@ -216,16 +216,16 @@ describe('棘轮：style.css', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 37（B5，spec §9）：旧变量清零、变量全部有定义、JS 不写颜色、运行时变量统一 --rt- 前缀。
+// 旧变量清零、变量全部有定义、JS 不写颜色、运行时变量统一 --rt- 前缀。
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const readRepo = (f) => readFileSync(resolve(REPO_ROOT, f), 'utf8');
 const JS_FILES = ['app.js', 'firebase.js', 'weather.js', 'iconCache.js'];
 const SCAN_FILES = [...JS_FILES, 'newtab.html'];
 
-// spec §9 的旧变量（改名或删除的全部旧名）；JS 运行时变量的旧名（加 --rt- 前缀之前）也在内。
+// 设计规范要求改名或删除的全部旧变量名；JS 运行时变量的旧名（加 --rt- 前缀之前）也在内。
 // --clock-time-width、--main-grid-track-size、--main-grid-min-width 是 style.css 内部用的布局辅助变量，
-// §9 没有要求改名或删除，不在清单里。
+// 设计规范没有要求改名或删除，不在清单里。
 const OLD_VARS = [
   '--glass-l0', '--glass-l1', '--glass-l2', '--glass-l3', '--glass-l3-hover', '--glass-l4', '--glass-l4-strong',
   '--blur-light', '--blur-soft', '--blur-base', '--blur-heavy', '--blur-xl',
@@ -252,7 +252,7 @@ const OLD_VARS = [
   '--folder-mini-letter-size',
 ];
 
-// JS 写入的运行时变量：10 个（spec §9）加 G-1 的壁纸压暗不透明度。
+// JS 写入的运行时变量：10 个加壁纸压暗不透明度。
 const RT_VARS = [
   '--rt-main-grid-max-width', '--rt-main-content-max-width', '--rt-base-card-size', '--rt-card-w', '--rt-card-h',
   '--rt-preview-icon-size', '--rt-preview-letter-size', '--rt-folder-mini-gap', '--rt-folder-mini-radius',
@@ -281,7 +281,7 @@ describe('cssVars：变量定义与引用扫描', () => {
   });
 });
 
-describe('B5 清理：style.css 与 JS', () => {
+describe('旧变量清理：style.css 与 JS', () => {
   const style = readStyleCss();
   const sources = Object.fromEntries([['style.css', style], ...SCAN_FILES.map((f) => [f, readRepo(f)])]);
 
@@ -317,7 +317,7 @@ describe('B5 清理：style.css 与 JS', () => {
     expect([...written].sort()).toEqual([...RT_VARS].sort());
   });
 
-  it('运行时变量的默认值与使用处都改成 --rt-：主网格 / 内容宽度的默认值来自 size token（G-2）', () => {
+  it('运行时变量的默认值与使用处都改成 --rt-：主网格 / 内容宽度的默认值来自 size token', () => {
     const rules = parseCss(style);
     const decls = (sel) => rules.filter((r) => r.media === null && r.selectors.some((s) => s.text === sel)).flatMap((r) => r.decls);
     const last = (sel, prop) => decls(sel).filter((d) => d.prop === prop).at(-1)?.value;
@@ -327,7 +327,7 @@ describe('B5 清理：style.css 与 JS', () => {
     expect(last('.grid-item-wrap', '--rt-preview-letter-size')).toBe('30px');
   });
 
-  it('壁纸压暗（G-1 方案 a）：#wallpaper-dim 用 --color-wallpaper-dim 做底，opacity 由 --rt-wallpaper-dim-opacity 控制，默认 0', () => {
+  it('壁纸压暗：#wallpaper-dim 用 --color-wallpaper-dim 做底，opacity 由 --rt-wallpaper-dim-opacity 控制，默认 0', () => {
     const decl = parseCss(style).filter((r) => r.media === null && r.selectors.some((s) => s.text === '#wallpaper-dim'))
       .flatMap((r) => r.decls);
     const last = (prop) => decl.filter((d) => d.prop === prop).at(-1)?.value;
@@ -344,7 +344,7 @@ describe('B5 清理：style.css 与 JS', () => {
     expect(readRepo('app.js')).not.toMatch(/stroke="#/);
   });
 
-  it('首字母占位（G-3）：颜色在 .icon-letter / .icon-letter-sm 上；ICON_FALLBACK_STYLE 只剩 display 与 pointer-events', () => {
+  it('首字母占位：颜色在 .icon-letter / .icon-letter-sm 上；ICON_FALLBACK_STYLE 只剩 display 与 pointer-events', () => {
     const rules = parseCss(style);
     for (const sel of ['.icon-letter', '.icon-letter-sm']) {
       const d = rules.filter((r) => r.media === null && r.selectors.some((s) => s.text === sel)).flatMap((r) => r.decls);

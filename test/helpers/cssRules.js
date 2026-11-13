@@ -1,4 +1,4 @@
-// 测试用的 CSS 解析器（Task 27）。不引入依赖，只覆盖 style.css 实际用到的语法：
+// 测试用的 CSS 解析器。不引入依赖，只覆盖 style.css 实际用到的语法：
 // 普通规则、一层 @media（及 @supports 等块级 at-rule，记入 media）、跳过 @keyframes。
 // 它服务于层叠判定（cssCascade.js）和 lint（styleLint.js），不是通用 CSS 解析器：
 // 遇到不认识的结构（比如 CSS 嵌套）直接抛错，而不是悄悄解析错。
@@ -433,7 +433,7 @@ function parse(source, includeAll) {
 }
 
 // ---------------------------------------------------------------------------
-// B6-U 的自动部分：静态无法判定的选择器清单。
+// 需要浏览器目检的选择器清单（自动部分）：静态无法判定的选择器。
 
 const REDUCED_MOTION = /^\(\s*prefers-reduced-motion\s*:\s*[\w-]+\s*\)$/i;
 

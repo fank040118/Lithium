@@ -1,5 +1,5 @@
-// CSS 解析器与静态层叠判定（Task 27）。全部用内联 CSS 夹具，不读 style.css（唯一例外：
-// 最后一条把 style.css 的 unsupported 选择器与 b6-unverified.json 做只读比对）。
+// CSS 解析器与静态层叠判定。全部用内联 CSS 夹具，不读 style.css（唯一例外：
+// 最后一条把 style.css 的 unsupported 选择器与 undecidable-selectors.json 做只读比对）。
 // 每条用例对应一种「测不出来」的失败模式。
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -11,7 +11,7 @@ import {
 } from './helpers/cssCascade.js';
 
 const { REST, HOVER, PRESSED, FOCUS_KB, FOCUS_KB_HOVER, PRESSED_FOCUS } = STATE_SETS;
-const FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/b6-unverified.json');
+const FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/undecidable-selectors.json');
 
 function mount(html) {
   document.body.innerHTML = html;
@@ -456,7 +456,7 @@ describe('cascade：伪元素与 unsupported', () => {
   });
 });
 
-describe('B6-U 清单', () => {
+describe('无法静态判定的选择器清单', () => {
   it('unsupportedSelectors：包含 :has、:focus-within，以及 prefers-reduced-motion 以外的 @media / @supports', () => {
     const list = unsupportedSelectors(parseCss(`
       .a:has(.b){color:red}
@@ -471,12 +471,12 @@ describe('B6-U 清单', () => {
     expect(list.every((x) => typeof x.reason === 'string' && x.reason)).toBe(true);
   });
 
-  it('style.css 的 unsupported 选择器清单与 test/fixtures/b6-unverified.json 一致', () => {
+  it('style.css 的 unsupported 选择器清单与 test/fixtures/undecidable-selectors.json 一致', () => {
     const actual = unsupportedSelectors(parseCss(readStyleCss()));
     const expected = JSON.parse(readFileSync(FIXTURE, 'utf8'));
     const render = (v) => JSON.stringify(v, null, 2);
-    // 不一致时先人工确认新增项确属「静态无法判定」，再把下面打印的 JSON 写入 fixtures/b6-unverified.json。
-    if (render(actual) !== render(expected)) console.log('期望的 b6-unverified.json：\n' + render(actual));
+    // 不一致时先人工确认新增项确属「静态无法判定」，再把下面打印的 JSON 写入 fixtures/undecidable-selectors.json。
+    if (render(actual) !== render(expected)) console.log('期望的 undecidable-selectors.json：\n' + render(actual));
     expect(actual).toEqual(expected);
   });
 });

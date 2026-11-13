@@ -1,7 +1,7 @@
-// z-index 命名分层与动效 token（阶段 B4，Task 36；spec §5.7、§5.8、§9）。
+// z-index 命名分层与动效 token。
 //
 // 做法：
-//   - 全局层按 spec §5.7 表逐个断言（经 cssCascade 判定最终生效的值）；局部层按局部层表。
+//   - 全局层按设计规范的全局层表逐个断言（经 cssCascade 判定最终生效的值）；局部层按局部层表。
 //   - 「先后顺序不变」不硬编码期望序列：用 git show b733093:style.css 的旧值排一次序，再拿现在的新值排一次序，
 //     比较两个序列。同值的元素按 newtab.html 里的 DOM 顺序决定先后（后面的在上），与浏览器一致。
 //   - 动效：只扫声明，没有 transition: all，时长与缓动全部走 token；减少动效的 @media 块直接解析声明
@@ -58,7 +58,7 @@ function mk(sel, parentSel = null) {
 // ---------------------------------------------------------------------------
 // z-index：全局层
 
-// 元素 → spec §5.7 全局层表里的 token。选择器用 mk 搭出元素；多 class 的弹窗按 newtab.html 里的实际写法。
+// 元素 → 设计规范全局层表里的 token。选择器用 mk 搭出元素；多 class 的弹窗按 newtab.html 里的实际写法。
 const GLOBAL_LAYERS = [
   ['#wallpaper-bg', 'var(--z-wallpaper)'],
   ['#wallpaper-dim', 'var(--z-dim)'],
@@ -74,7 +74,7 @@ const GLOBAL_LAYERS = [
   ['.app-toast', 'var(--z-toast)'],
 ];
 
-// 局部层（spec §5.7 局部层表）：元素 → 新值。小整数不进 token，只要求保持原有先后。
+// 局部层（设计规范局部层表）：元素 → 新值。小整数不进 token，只要求保持原有先后。
 const LOCAL_LAYERS = [
   { sel: '.grid-area', parent: '.main-content', value: '1' },
   { sel: '.main-hero', parent: '.main-content', value: '2' },
@@ -85,7 +85,7 @@ const LOCAL_LAYERS = [
   { sel: '.left-sidebar-handle', parent: '.left-sidebar', value: '1' },
 ];
 
-describe('z-index：全局层只用 var(--z-*)，取值与 spec §5.7 全局层表一致', () => {
+describe('z-index：全局层只用 var(--z-*)，取值与设计规范全局层表一致', () => {
   it('逐个元素最终生效的 z-index 是表里的 token', () => {
     for (const [sel, token] of GLOBAL_LAYERS) {
       expect(cascade(mk(sel), 'z-index'), sel).toBe(token);
@@ -127,7 +127,7 @@ function cssZ(value) {
 }
 
 describe('z-index：局部层', () => {
-  it('局部层取值与 spec §5.7 局部层表一致', () => {
+  it('局部层取值与设计规范局部层表一致', () => {
     for (const { sel, parent, value } of LOCAL_LAYERS) {
       expect(cascade(mk(sel, parent), 'z-index'), sel).toBe(value);
     }
@@ -259,9 +259,9 @@ const TIME = /^-?(?:\d+\.?\d*|\.\d+)m?s$/;
 const EASING_KEYWORD = /^(?:ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)$|^(?:cubic-bezier|steps)\(/;
 const MOTION_PROP = /^(?:transition|transition-duration|transition-timing-function|animation|animation-duration|animation-timing-function)$/;
 
-// 例外：spec §5.8 没有给它们定 token。每一项必须仍然命中。
+// 例外：设计规范没有给它们定 token。每一项必须仍然命中。
 const MOTION_EXCEPTIONS = {
-  // .move-to-main-hint 的无限呼吸动画，2 秒循环、缓动 ease-in-out；不在 §5.8 的 4 档时长里，留给后续决定。
+  // .move-to-main-hint 的无限呼吸动画，2 秒循环、缓动 ease-in-out；不在 4 档时长里，留给后续决定。
   '.move-to-main-hint | animation': 'pulse 2s ease-in-out infinite',
 };
 
@@ -301,7 +301,7 @@ describe('动效 token', () => {
     }
   });
 
-  it('时长按 spec §5.8 并入：0.15s → fast；0.18s、0.2s → base；0.24s、260ms → slow；340ms、0.36s → slower', () => {
+  it('时长按设计规范并入：0.15s → fast；0.18s、0.2s → base；0.24s、260ms → slow；340ms、0.36s → slower', () => {
     const get = (sel, prop = 'transition') => cascade(mk(sel), prop);
     expect(get('.left-sidebar')).toBe('transform var(--motion-duration-slow) var(--motion-ease-standard)');      // 0.24s
     expect(get('.sidebar-action-btn')).toContain('background var(--motion-duration-base)');                       // 0.18s
