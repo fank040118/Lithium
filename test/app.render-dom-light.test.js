@@ -437,7 +437,8 @@ describe('app.js render/dom-light layer', () => {
 
       app.addEngine();
 
-      expect(nameInput.style.borderColor).toBe('rgb(239, 68, 68)');
+      expect(nameInput.classList.contains('is-invalid')).toBe(true);
+      expect(nameInput.style.borderColor).toBe('');
       expect(document.activeElement).toBe(nameInput);
       expect(cs._data.startpage_engines).toBeUndefined();
     });
@@ -448,7 +449,8 @@ describe('app.js render/dom-light layer', () => {
 
       app.addEngine();
 
-      expect(urlInput.style.borderColor).toBe('rgb(239, 68, 68)');
+      expect(urlInput.classList.contains('is-invalid')).toBe(true);
+      expect(urlInput.style.borderColor).toBe('');
       expect(document.activeElement).toBe(urlInput);
       expect(cs._data.startpage_engines).toBeUndefined();
     });
@@ -459,9 +461,31 @@ describe('app.js render/dom-light layer', () => {
 
       app.addEngine();
 
-      expect(urlInput.style.borderColor).toBe('rgb(239, 68, 68)');
+      expect(urlInput.classList.contains('is-invalid')).toBe(true);
+      expect(urlInput.style.borderColor).toBe('');
       expect(document.activeElement).toBe(urlInput);
       expect(cs._data.startpage_engines).toBeUndefined();
+    });
+
+    it('marks only the offending input, and a later attempt clears the previous marks (class, not inline style)', () => {
+      nameInput.value = '';
+      urlInput.value = 'https://x.example/?q=%s';
+      app.addEngine();
+      expect(nameInput.classList.contains('is-invalid')).toBe(true);
+      expect(urlInput.classList.contains('is-invalid')).toBe(false);
+
+      nameInput.value = 'My Engine';
+      urlInput.value = '';
+      app.addEngine();
+      expect(nameInput.classList.contains('is-invalid')).toBe(false);
+      expect(urlInput.classList.contains('is-invalid')).toBe(true);
+
+      urlInput.value = 'https://x.example/?q=%s';
+      app.addEngine();
+      expect(nameInput.classList.contains('is-invalid')).toBe(false);
+      expect(urlInput.classList.contains('is-invalid')).toBe(false);
+      expect(nameInput.style.borderColor).toBe('');
+      expect(urlInput.style.borderColor).toBe('');
     });
 
     it('adds a valid engine: persists, re-renders the list, clears the inputs, and hides the form', () => {

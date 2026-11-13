@@ -17,7 +17,8 @@ const rulesOf = (css, opts) => lintStyle(css, opts).map((v) => v.rule);
 // 2026-11-13 Task 30（侧栏）：颜色类 29 -> 18（-11）。
 // 2026-11-13 Task 31（弹窗与表单）：颜色类 18 -> 14（-4，裁剪框 4 处）。
 // 2026-11-13 Task 32（浮层）：颜色类 14 -> 13（-1，toast 的 color: #fff）。
-const BASELINE_COLOR = 13;
+// 2026-11-13 Task 33（交互状态）：颜色类 13 -> 12（-1，滑块拇指两处同一条投影合为 --range-thumb-shadow 一处）。
+const BASELINE_COLOR = 12;
 const BASELINE_DIM = 149;
 
 describe('lintStyle', () => {

@@ -510,11 +510,6 @@ body {
   transform: translateX(0);
 }
 
-.left-sidebar-handle:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: -2px;
-}
-
 .sidebar-section {
   display: flex;
   flex-direction: column;
@@ -570,6 +565,8 @@ body {
   height: 2.5rem;
   background: transparent;
   cursor: ew-resize;
+  /* 拇指投影只写这一处，供悬停光圈叠加；Task 35 改用 --shadow-thumb 后删除 */
+  --range-thumb-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
 }
 
 .sidebar-range::-webkit-slider-runnable-track {
@@ -587,7 +584,8 @@ body {
   border: none;
   border-radius: 50%;
   background: var(--color-range-thumb);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--range-thumb-shadow);
+  transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .sidebar-range::-moz-range-track {
@@ -602,7 +600,16 @@ body {
   border: none;
   border-radius: 50%;
   background: var(--color-range-thumb);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--range-thumb-shadow);
+  transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* 悬停：拇指外加 4px control.panel.hover 光圈，尺寸不变（spec §6.7，D5-31）；原投影保留在光圈之下。 */
+.sidebar-range:not(:disabled):hover::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--color-control-panel-hover), var(--range-thumb-shadow);
+}
+.sidebar-range:not(:disabled):hover::-moz-range-thumb {
+  box-shadow: 0 0 0 4px var(--color-control-panel-hover), var(--range-thumb-shadow);
 }
 
 .sidebar-range-labels {
@@ -749,13 +756,13 @@ body {
   transition: background 0.18s ease, opacity 0.18s ease, color 0.18s ease;
 }
 
-.sidebar-action-btn:hover {
+.sidebar-action-btn:not(:disabled):hover {
   background: var(--color-control-panel-hover);
 }
 
-.sidebar-action-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+/* 按下回落到普通与悬停之间：白 18%（spec §6.2，D5-7） */
+.sidebar-action-btn:not(:disabled):active {
+  background: var(--color-control-panel-pressed);
 }
 
 .sidebar-action-btn-danger {
@@ -889,10 +896,13 @@ body {
   font-size: 0.875rem;
   transition: all 0.2s;
 }
-.clock-add-entry:hover {
+.clock-add-entry:not(:disabled):hover {
   border-color: var(--color-border-strong);
   color: var(--color-text-secondary);
   background: var(--color-control-bg-hover);
+}
+.clock-add-entry:not(:disabled):active {
+  background: var(--color-control-bg-pressed);
 }
 .clock-limit-msg {
   margin: 0;
@@ -1010,6 +1020,10 @@ body {
   background: var(--color-selection-bg);
   color: var(--color-text-accent);
 }
+/* 选中 + 悬停：悬停底，文字保持 text.accent（spec §6.5） */
+.engine-item.selected:hover {
+  background: var(--color-list-hover);
+}
 .engine-delete-btn {
   opacity: 0;
   border: none;
@@ -1021,7 +1035,8 @@ body {
   justify-content: center;
   transition: all 0.15s;
 }
-.engine-item:hover .engine-delete-btn {
+.engine-item:hover .engine-delete-btn,
+.engine-delete-btn:focus-visible {
   opacity: 1;
 }
 .engine-dropdown-footer {
@@ -1079,7 +1094,8 @@ body {
   min-height: 0;
   overflow-y: auto;
   overflow-x: auto;
-  padding: 0 0.25rem 2rem;
+  /* 四周至少 4px，外扩焦点环（2px + 2px 间隔）不被 overflow 裁掉（spec §6.1.1） */
+  padding: 0.25rem 0.25rem 2rem;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
   scrollbar-width: auto;
@@ -1481,7 +1497,7 @@ body {
   flex-shrink: 0;
   transition: opacity 0.15s, background-color 0.15s;
 }
-.folder-rename-btn:hover {
+.folder-rename-btn:not(:disabled):hover {
   opacity: 1;
 }
 .folder-name-input {
@@ -1572,11 +1588,6 @@ body {
 }
 .dialog-text-danger p + p { margin-top: 0; }
 .delete-account-card .dialog-actions { gap: 8px; }
-.btn-danger:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn-danger:disabled:hover { background: var(--color-action-danger-default); }
 
 /* Login-consent dialog — Figma node 191:447.
    400px wide, vertical flex with 14px gap, body 13/20, footnote 12/18.
@@ -1715,10 +1726,6 @@ body {
 }
 .sync-conflict-actions { gap: 8px; }
 .sync-conflict-actions button { flex: 1; }
-.sync-conflict-actions .btn-secondary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed; /* same as the disabled links (.forgot-password-btn:disabled) */
-}
 /* Footer row under the buttons. Same account: "Decide later" alone, centred.
    Account switch: "Decide later" on the left, "Wrong account? Sign out" on the
    right (Penpot 04 Dialogs). Both links are underlined, disabled or not. */
@@ -1767,7 +1774,8 @@ body {
 }
 
 /* 颜色按变体合并（spec §6.2，P-2）：同一变体的选择器共用一套规则，尺寸与排版留在各自的规则里。
-   按下态（:active）与禁用态的统一归 B3（Task 33）。 */
+   悬停、按下都写成 :not(:disabled)，禁用态不响应；:active 规则必须排在 :hover 之后（同特异性，按下 = hover + active，后者胜出）。
+   焦点环与禁用态的统一规则在「键盘焦点环」「禁用态」两节。 */
 
 /* secondary × default × default：弹窗里的次要按钮 */
 .btn-secondary,
@@ -1779,13 +1787,17 @@ body {
 .btn-secondary:not(:disabled):hover,
 .icon-upload-btn:not(:disabled):hover,
 .engine-form-cancel:not(:disabled):hover { background: var(--color-control-bg-hover); }
+.btn-secondary:not(:disabled):active,
+.icon-upload-btn:not(:disabled):active,
+.engine-form-cancel:not(:disabled):active { background: var(--color-control-bg-pressed); }
 
 /* primary × danger */
 .btn-danger {
   background: var(--color-action-danger-default);
   color: var(--color-text-onaccent);
 }
-.btn-danger:hover { background: var(--color-action-danger-hover); }
+.btn-danger:not(:disabled):hover { background: var(--color-action-danger-hover); }
+.btn-danger:not(:disabled):active { background: var(--color-action-danger-pressed); }
 
 /* primary × default */
 .btn-primary,
@@ -1793,8 +1805,10 @@ body {
   background: var(--color-action-primary-default);
   color: var(--color-text-onaccent);
 }
-.btn-primary:hover,
-.engine-form-save:hover { background: var(--color-action-primary-hover); }
+.btn-primary:not(:disabled):hover,
+.engine-form-save:not(:disabled):hover { background: var(--color-action-primary-hover); }
+.btn-primary:not(:disabled):active,
+.engine-form-save:not(:disabled):active { background: var(--color-action-primary-pressed); }
 
 /* ghost × default：普通态透明 + text.muted，悬停叠白 + text.primary。
    .folder-rename-btn 的普通态靠 opacity 变暗，只共用悬停。 */
@@ -1803,10 +1817,16 @@ body {
   background: transparent;
   color: var(--color-text-muted);
 }
-.close-btn:hover,
-.folder-rename-btn:hover,
-.add-engine-btn:hover {
+.close-btn:not(:disabled):hover,
+.folder-rename-btn:not(:disabled):hover,
+.add-engine-btn:not(:disabled):hover {
   background: var(--color-control-bg-hover);
+  color: var(--color-text-primary);
+}
+.close-btn:not(:disabled):active,
+.folder-rename-btn:not(:disabled):active,
+.add-engine-btn:not(:disabled):active {
+  background: var(--color-control-bg-pressed);
   color: var(--color-text-primary);
 }
 
@@ -1817,11 +1837,73 @@ body {
   background: transparent;
   color: var(--color-text-muted);
 }
-.clock-remove-btn:hover,
-.engine-delete-btn:hover,
-.icon-clear-btn:hover {
+.clock-remove-btn:not(:disabled):hover,
+.engine-delete-btn:not(:disabled):hover,
+.icon-clear-btn:not(:disabled):hover {
   background: var(--color-danger-bg);
   color: var(--color-text-danger);
+}
+/* 按下 = 悬停（danger.bg，spec §6.2）：PRESSED 含 hover，不需要单独的 :active 规则 */
+
+/* 键盘焦点环（spec §6.1、§6.1.1）：只在 :focus-visible 出现，鼠标点击聚焦不画环。
+   外扩：元素四周有 >= 4px 空间（弹窗内容区、侧栏分组卡片、直接在壁纸上的语言切换）。 */
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.btn-danger:focus-visible,
+.icon-upload-btn:focus-visible,
+.icon-clear-btn:focus-visible,
+.close-btn:focus-visible,
+.folder-rename-btn:focus-visible,
+.clock-remove-btn:focus-visible,
+.clock-add-entry:focus-visible,
+.forgot-password-btn:focus-visible,
+.sidebar-action-btn:focus-visible,
+.sidebar-range:focus-visible,
+.lang-toggle:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+/* 内缩：被 overflow: hidden 或 4px 内边距包住、相邻间距 4px 的元素（搜索栏、引擎下拉、右键菜单、分段切换、侧栏把手），
+   环画在元素内侧，不会被父容器裁掉也不压邻居。 */
+.engine-trigger:focus-visible,
+.engine-item:focus-visible,
+.engine-delete-btn:focus-visible,
+.engine-form-save:focus-visible,
+.engine-form-cancel:focus-visible,
+.add-engine-btn:focus-visible,
+.ctx-item:focus-visible,
+.ctx-size-btn:focus-visible,
+.type-btn:focus-visible,
+.auth-tab:focus-visible,
+.left-sidebar-handle:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+/* 禁用态（spec §5.9、§6.1）：整体 opacity.disabled + cursor: not-allowed，悬停与按下规则都带 :not(:disabled)，不响应。 */
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-danger:disabled,
+.engine-form-save:disabled,
+.engine-form-cancel:disabled,
+.icon-upload-btn:disabled,
+.icon-clear-btn:disabled,
+.close-btn:disabled,
+.folder-rename-btn:disabled,
+.add-engine-btn:disabled,
+.clock-remove-btn:disabled,
+.clock-add-entry:disabled,
+.engine-delete-btn:disabled,
+.sidebar-action-btn:disabled,
+.forgot-password-btn:disabled,
+.lang-toggle:disabled,
+.sidebar-range:disabled,
+.form-input:disabled,
+.engine-form-input:disabled,
+.folder-name-input:disabled,
+.clock-entry select:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
 }
 
 /* Edit form */
@@ -1893,6 +1975,16 @@ body {
 .folder-name-input:focus {
   border-color: var(--color-focus-border);
   box-shadow: 0 0 0 3px var(--color-focus-glow);
+}
+/* 校验错误（spec §6.3）：描边 danger.border，聚焦时保持；由 JS 加 / 去 .is-invalid，不再写行内 borderColor。
+   必须排在 :focus 规则之后。 */
+.form-input.is-invalid,
+.engine-form-input.is-invalid,
+.folder-name-input.is-invalid,
+.form-input.is-invalid:focus,
+.engine-form-input.is-invalid:focus,
+.folder-name-input.is-invalid:focus {
+  border-color: var(--color-danger-border);
 }
 .form-input::placeholder,
 .engine-form-input::placeholder { color: var(--color-text-placeholder); }
@@ -2092,6 +2184,10 @@ body {
   color: var(--color-text-accent);
   background: var(--color-selection-bg);
 }
+/* 选中 + 悬停 / 按下：menu.hover，文字保持 text.accent（spec §6.4、§6.5） */
+.ctx-item.ctx-item-active:hover {
+  background: var(--color-menu-hover);
+}
 
 .ctx-size-grid {
   display: grid;
@@ -2121,6 +2217,9 @@ body {
 .ctx-size-btn.size-active {
   background: var(--color-selection-bg);
   color: var(--color-text-accent);
+}
+.ctx-size-btn.size-active:hover {
+  background: var(--color-menu-hover);
 }
 .ctx-item.ctx-danger svg {
   opacity: 1;
@@ -2162,6 +2261,11 @@ body {
   background: var(--color-surface-glass-default);
   backdrop-filter: blur(var(--blur-base));
   box-shadow: var(--surface-shadow);
+}
+/* 悬停叠白，替换底色，同主页卡片（spec §6.7，D5-8） */
+.folder-slot-folder:hover,
+.folder-mini-folder-slot:hover {
+  background: var(--color-surface-glass-hover);
 }
 
 .folder-slot-normal[data-preview-child-id] {
@@ -2419,11 +2523,7 @@ body {
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.forgot-password-btn:hover { opacity: 0.8; }
-.forgot-password-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+.forgot-password-btn:not(:disabled):hover { opacity: 0.8; }
 
 .verify-desc {
   color: var(--color-text-tertiary);
@@ -2561,15 +2661,10 @@ body {
   transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
-.lang-toggle:hover {
+.lang-toggle:not(:disabled):hover {
   background: var(--color-surface-glass-hover);
   border-color: var(--color-border-strong);
   color: var(--color-text-primary);
-}
-
-.lang-toggle:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 2px;
 }
 
 .lang-toggle-icon {

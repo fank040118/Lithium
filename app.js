@@ -804,21 +804,21 @@ function addEngine() {
   const name = nameInput.value.trim();
   const url = urlInput.value.trim();
 
-  nameInput.style.borderColor = '';
-  urlInput.style.borderColor = '';
+  nameInput.classList.remove('is-invalid');
+  urlInput.classList.remove('is-invalid');
 
   if (!name) {
-    nameInput.style.borderColor = '#ef4444';
+    nameInput.classList.add('is-invalid');
     nameInput.focus();
     return;
   }
   if (!url) {
-    urlInput.style.borderColor = '#ef4444';
+    urlInput.classList.add('is-invalid');
     urlInput.focus();
     return;
   }
   if (!url.includes('%s')) {
-    urlInput.style.borderColor = '#ef4444';
+    urlInput.classList.add('is-invalid');
     urlInput.focus();
     return;
   }

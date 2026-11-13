@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { cascade, rulesMentioning, STATE_SETS } from './helpers/cssCascade.js';
 
-const { REST, HOVER, PRESSED, FOCUS_KB } = STATE_SETS;
+const { REST, HOVER, PRESSED, FOCUS_KB, FOCUS_KB_HOVER, PRESSED_FOCUS } = STATE_SETS;
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -687,5 +687,300 @@ describe('浮层', () => {
     expect(win(mount('.signin-notice-text', '<p class="signin-notice-title"></p>'), 'color')).toBe('var(--color-text-primary)');
     expect(win(mount('.signin-notice-text', '<p class="signin-notice-sub"></p>'), 'color')).toBe('var(--color-text-tertiary)');
     for (const c of ['signin-notice', 'signin-notice-icon', 'signin-notice-title', 'signin-notice-sub']) noOld(c);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 阶段 B3（Task 33，spec §6）：焦点环、按下态、禁用态、输入框聚焦与错误态、滑块悬停。
+
+describe('交互状态', () => {
+  // [class, 祖先链, 标签]：按真实 DOM 的位置搭，免得祖先上的选择器（.engine-item .x 之类）被漏判。
+  const make = ([cls, parent, tag = 'button', extra = '']) => mount(parent, `<${tag} class="${cls}" ${extra}></${tag}>`);
+  const decl = (selectorText, prop, className = selectorText.match(/\.([\w-]+)/)[1]) => {
+    const r = rulesMentioning(className).find((x) => x.selectors.some((s) => s.text === selectorText) && x.decls.some((d) => d.prop === prop));
+    expect(r, `找不到声明了 ${prop} 的规则 ${selectorText}`).toBeTruthy();
+    return r.decls.find((d) => d.prop === prop).value;
+  };
+  const RING = (offset) => ({ color: 'var(--color-focus-ring)', width: '2px', style: 'solid', offset });
+
+  // 外扩环：四周有 >= 4px 空间的元素（弹窗内容区、侧栏分组卡片、直接在壁纸上的语言切换）
+  const OUTSET = [
+    ['btn-primary', '.dialog-actions'], ['btn-secondary', '.dialog-actions'], ['btn-danger', '.dialog-actions'],
+    ['sidebar-action-btn', '.sidebar-panel'], ['lang-toggle', 'body'], ['close-btn', '.modal-header'],
+    ['sidebar-range', '.sidebar-panel', 'input', 'type="range"'],
+    ['icon-upload-btn', '.icon-upload-row'], ['icon-clear-btn', '.icon-upload-row'],
+    ['clock-remove-btn', '.clock-entry'], ['clock-add-entry', '.clock-list'],
+    ['folder-rename-btn', '#folder-title'], ['forgot-password-btn', '.login-card'],
+  ];
+  // 内缩环：被 overflow: hidden 或 4px 内边距包住的元素（§6.1.1）
+  const INSET = [
+    ['engine-trigger', '.search-bar'], ['engine-item', '.engine-list', 'div'], ['ctx-item', '.context-menu', 'div'],
+    ['ctx-size-btn', '.ctx-size-grid', 'div'], ['type-btn', '.type-toggle'], ['auth-tab', '.auth-tabs'],
+    ['left-sidebar-handle', '.left-sidebar'],
+    ['engine-form-save', '.add-engine-form'], ['engine-form-cancel', '.add-engine-form'],
+    ['add-engine-btn', '.engine-dropdown-footer'], ['engine-delete-btn', '.engine-item'],
+  ];
+
+  for (const state of [FOCUS_KB, FOCUS_KB_HOVER]) {
+    const name = state === FOCUS_KB ? '键盘聚焦' : '键盘聚焦且鼠标悬停';
+    it(`外扩环清单（${name}）：2px focus.ring，间隔 2px`, () => {
+      for (const row of OUTSET) expect(win(make(row), 'outline', { state }), row[0]).toEqual(RING('2px'));
+    });
+    it(`内缩环清单（${name}）：2px focus.ring，offset -2px`, () => {
+      for (const row of INSET) expect(win(make(row), 'outline', { state }), row[0]).toEqual(RING('-2px'));
+    });
+  }
+
+  it('焦点环只在键盘焦点（:focus-visible）出现：悬停、按下、鼠标点击聚焦（focus 而非 focus-visible）都没有环', () => {
+    for (const row of [...OUTSET, ...INSET]) {
+      const el = make(row);
+      for (const state of [REST, HOVER, PRESSED, PRESSED_FOCUS]) {
+        expect(win(el, 'outline', { state }), `${row[0]} ${[...state].join('+') || 'rest'}`).toBeNull();
+      }
+    }
+  });
+
+  it('焦点环颜色统一为 focus.ring，含把手与语言切换（D5-22）', () => {
+    for (const cls of ['left-sidebar-handle', 'lang-toggle']) {
+      const row = [...OUTSET, ...INSET].find((r) => r[0] === cls);
+      expect(win(make(row), 'outline', { state: FOCUS_KB }).color, cls).toBe('var(--color-focus-ring)');
+    }
+    // 环的取值只能来自 focus.ring，不再有白 42% / 白 40% 的旧写法
+    for (const cls of ['left-sidebar-handle', 'lang-toggle']) {
+      for (const r of rulesMentioning(cls)) {
+        for (const d of r.decls.filter((x) => /^outline/.test(x.prop))) expect(d.value, `${r.selectors[0].text} ${d.prop}`).not.toMatch(/rgba?\(|#[0-9a-f]{3}/i);
+      }
+    }
+  });
+
+  it('文本输入聚焦：不另画 outline（outline: none），描边与光晕由各自规则负责', () => {
+    const inputs = [['form-input', '.form-fields', 'input'], ['engine-form-input', '.add-engine-form', 'input'],
+      ['folder-name-input', '.modal-title', 'input'], ['search-input', '.search-input-wrap', 'input']];
+    for (const row of inputs) expect(win(make(row), 'outline', { state: FOCUS_KB }).style, row[0]).toBe('none');
+    expect(win(mount('.clock-entry', '<select></select>'), 'outline', { state: FOCUS_KB }).style).toBe('none');
+  });
+
+  it('.engine-delete-btn 平时透明、悬停行时才出现；键盘聚焦它本身时必须可见，否则环画在透明按钮上', () => {
+    const b = make(['engine-delete-btn', '.engine-item']);
+    // 祖先上的 :hover 无法静态判定（已登记 b6-unverified.json 的 .engine-item:hover .engine-delete-btn）：断言它抛错，再直接断言声明
+    let err;
+    try { win(b, 'opacity'); } catch (e) { err = e; }
+    expect(err?.name).toBe('CascadeUndecidable');
+    expect(err.selector).toBe('.engine-item:hover .engine-delete-btn');
+    expect(decl('.engine-item:hover .engine-delete-btn', 'opacity', 'engine-delete-btn')).toBe('1');
+    expect(decl('.engine-delete-btn', 'opacity')).toBe('0');
+    expect(decl('.engine-delete-btn:focus-visible', 'opacity')).toBe('1');
+  });
+
+  // -------------------------------------------------------------------------
+  // 按下与悬停
+
+  const DISABLEABLE = [
+    ['btn-primary', '.dialog-actions'], ['btn-secondary', '.dialog-actions'], ['btn-danger', '.dialog-actions'],
+    ['engine-form-save', '.add-engine-form'], ['engine-form-cancel', '.add-engine-form'],
+    ['icon-upload-btn', '.icon-upload-row'], ['icon-clear-btn', '.icon-upload-row'],
+    ['close-btn', '.modal-header'], ['add-engine-btn', '.engine-dropdown-footer'],
+    ['sidebar-action-btn', '.sidebar-panel'], ['forgot-password-btn', '.login-card'],
+    ['lang-toggle', 'body'], ['clock-remove-btn', '.clock-entry'], ['clock-add-entry', '.clock-list'],
+    ['folder-rename-btn', '#folder-title'],
+  ];
+
+  it('实心按钮按下态（PRESSED = hover + active，悬停规则写在后面也必须被按下规则压住）：blue.800 / red.800（Q1，D5-37）', () => {
+    for (const cls of ['btn-primary', 'engine-form-save']) {
+      const b = make([cls, '.dialog-actions']);
+      expect(win(b, 'background', { state: PRESSED }), cls).toBe('var(--color-action-primary-pressed)');
+      expect(win(b, 'background', { state: HOVER }), cls).toBe('var(--color-action-primary-hover)');
+      expect(win(b, 'color', { state: PRESSED }), cls).toBe('var(--color-text-onaccent)');
+    }
+    const d = make(['btn-danger', '.dialog-actions']);
+    expect(win(d, 'background', { state: PRESSED })).toBe('var(--color-action-danger-pressed)');
+    expect(win(d, 'background', { state: HOVER })).toBe('var(--color-action-danger-hover)');
+  });
+
+  it('secondary × default × default 按下 control.bg.pressed（15%，介于普通 10% 与悬停 20% 之间）', () => {
+    for (const cls of ['btn-secondary', 'icon-upload-btn', 'engine-form-cancel']) {
+      const b = make([cls, '.dialog-actions']);
+      expect(win(b, 'background', { state: PRESSED }), cls).toBe('var(--color-control-bg-pressed)');
+      expect(win(b, 'color', { state: PRESSED }), cls).toBe('var(--color-text-tertiary)');
+      noBorder(b, PRESSED);
+    }
+    const add = make(['clock-add-entry', '.clock-list']);
+    expect(win(add, 'background', { state: PRESSED })).toBe('var(--color-control-bg-pressed)');
+    expect(win(add, 'background', { state: HOVER })).toBe('var(--color-control-bg-hover)');
+  });
+
+  it('ghost × default 按下 control.bg.pressed + text.primary；ghost × danger 按下 = 悬停（danger.bg + text.danger）', () => {
+    for (const [cls, parent] of [['close-btn', '.modal-header'], ['add-engine-btn', '.engine-dropdown-footer'], ['folder-rename-btn', '#folder-title']]) {
+      const b = make([cls, parent]);
+      expect(win(b, 'background', { state: PRESSED }), cls).toBe('var(--color-control-bg-pressed)');
+      expect(win(b, 'color', { state: PRESSED }), cls).toBe('var(--color-text-primary)');
+      expect(win(b, 'background', { state: HOVER }), cls).toBe('var(--color-control-bg-hover)');
+      noBorder(b, PRESSED);
+    }
+    for (const [cls, parent] of [['clock-remove-btn', '.clock-entry'], ['engine-delete-btn', '.engine-list'], ['icon-clear-btn', '.icon-upload-row']]) {
+      const b = make([cls, parent]);
+      expect(win(b, 'background', { state: PRESSED }), cls).toBe('var(--color-danger-bg)');
+      expect(win(b, 'color', { state: PRESSED }), cls).toBe('var(--color-text-danger)');
+    }
+  });
+
+  it('侧栏按钮按下 control.panel.pressed（白 18%，D5-7），危险款同；文字不变', () => {
+    const b = make(['sidebar-action-btn', '.sidebar-panel']);
+    expect(win(b, 'background', { state: PRESSED })).toBe('var(--color-control-panel-pressed)');
+    expect(win(b, 'background', { state: HOVER })).toBe('var(--color-control-panel-hover)');
+    expect(win(b, 'color', { state: PRESSED })).toBe('var(--color-text-primary)');
+    const danger = mount('.sidebar-panel', '<button class="sidebar-action-btn sidebar-action-btn-danger"></button>');
+    expect(win(danger, 'background', { state: PRESSED })).toBe('var(--color-control-panel-pressed)');
+    expect(win(danger, 'color', { state: PRESSED })).toBe('var(--color-text-dangeronfill)');
+    noBorder(b, PRESSED);
+  });
+
+  it('分段切换、菜单项、列表项、引擎触发按下 = 悬停（§6.3、§6.5）', () => {
+    for (const cls of ['type-btn', 'auth-tab']) {
+      const b = make([cls, cls === 'type-btn' ? '.type-toggle' : '.auth-tabs']);
+      expect(win(b, 'color', { state: PRESSED }), cls).toBe('var(--color-text-primary)');
+    }
+    expect(win(make(['ctx-item', '.context-menu', 'div']), 'background', { state: PRESSED })).toBe('var(--color-menu-hover)');
+    expect(win(mount('.context-menu', '<div class="ctx-item ctx-danger"></div>'), 'background', { state: PRESSED })).toBe('var(--color-danger-bg)');
+    expect(win(make(['ctx-size-btn', '.ctx-size-grid', 'div']), 'background', { state: PRESSED })).toBe('var(--color-menu-hover)');
+    expect(win(make(['engine-item', '.engine-list', 'div']), 'background', { state: PRESSED })).toBe('var(--color-list-hover)');
+    expect(win(make(['engine-trigger', '.search-bar']), 'background', { state: PRESSED })).toBe('var(--color-surface-glass-hover)');
+  });
+
+  it('选中 + 悬停 / 按下：尺寸按钮 menu.hover + text.accent（§6.4）；菜单项同理；引擎项 list.hover + text.accent（§6.5）', () => {
+    const size = mount('.ctx-size-grid', '<div class="ctx-size-btn size-active"></div>');
+    for (const state of [HOVER, PRESSED]) {
+      expect(win(size, 'background', { state })).toBe('var(--color-menu-hover)');
+      expect(win(size, 'color', { state })).toBe('var(--color-text-accent)');
+    }
+    expect(win(size, 'background')).toBe('var(--color-selection-bg)');
+    const item = mount('.context-menu', '<div class="ctx-item ctx-item-active"></div>');
+    for (const state of [HOVER, PRESSED]) {
+      expect(win(item, 'background', { state })).toBe('var(--color-menu-hover)');
+      expect(win(item, 'color', { state })).toBe('var(--color-text-accent)');
+    }
+    expect(win(item, 'background')).toBe('var(--color-selection-bg)');
+    const eng = mount('.engine-list', '<div class="engine-item selected"></div>');
+    for (const state of [HOVER, PRESSED]) {
+      expect(win(eng, 'background', { state })).toBe('var(--color-list-hover)');
+      expect(win(eng, 'color', { state })).toBe('var(--color-text-accent)');
+    }
+    expect(win(eng, 'background')).toBe('var(--color-selection-bg)');
+  });
+
+  it('文件夹格悬停叠白 surface.glass.hover，替换底色（D5-8）', () => {
+    const slot = mount('.folder-slot-grid', '<div class="folder-slot-normal folder-slot-folder"></div>');
+    const mini = mount('.folder-slot-mini-group', '<div class="folder-mini-icon folder-mini-folder-slot"></div>');
+    for (const [el, name] of [[slot, 'folder-slot-folder'], [mini, 'folder-mini-folder-slot']]) {
+      expect(win(el, 'background'), name).toBe('var(--color-surface-glass-default)');
+      expect(win(el, 'background', { state: HOVER }), name).toBe('var(--color-surface-glass-hover)');
+      expect(win(el, 'background', { state: PRESSED }), name).toBe('var(--color-surface-glass-hover)');
+    }
+    // 普通的预览格（非文件夹）没有悬停底
+    const normal = mount('.folder-slot-grid', '<div class="folder-slot-normal"></div>');
+    expect(win(normal, 'background', { state: HOVER })).toBe('transparent');
+  });
+
+  // -------------------------------------------------------------------------
+  // 禁用
+
+  it('禁用态不响应悬停与按下：底、字色、描边、透明度都等于禁用的普通态', () => {
+    for (const row of DISABLEABLE) {
+      const el = make([...row.slice(0, 2), 'button', 'disabled']);
+      for (const family of ['background', 'color', 'border', 'opacity']) {
+        const rest = win(el, family);
+        for (const state of [HOVER, PRESSED]) {
+          expect(win(el, family, { state }), `${row[0]} ${family} ${[...state].join('+')}`).toEqual(rest);
+        }
+      }
+    }
+    const range = make(['sidebar-range', '.sidebar-panel', 'input', 'type="range" disabled']);
+    for (const pe of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
+      expect(win(range, 'box-shadow', { state: HOVER, pseudoEl: pe }), pe).toBe(win(range, 'box-shadow', { pseudoEl: pe }));
+    }
+  });
+
+  it('禁用态 = opacity var(--opacity-disabled) + cursor not-allowed（统一 0.4 / 0.55 / 0.6 / 0.7 与 cursor: default）', () => {
+    for (const row of DISABLEABLE) {
+      const off = make([...row.slice(0, 2), 'button', 'disabled']);
+      expect(win(off, 'opacity'), row[0]).toBe('var(--opacity-disabled)');
+      expect(win(off, 'cursor'), row[0]).toBe('not-allowed');
+      const on = make(row);
+      expect(win(on, 'opacity'), `${row[0]} 可用时`).not.toBe('var(--opacity-disabled)');
+      expect(win(on, 'cursor'), `${row[0]} 可用时`).not.toBe('not-allowed');
+    }
+    // 输入框、下拉、滑块
+    for (const row of [['form-input', '.form-fields', 'input'], ['engine-form-input', '.add-engine-form', 'input'],
+      ['folder-name-input', '.modal-title', 'input'], ['sidebar-range', '.sidebar-panel', 'input', 'type="range"']]) {
+      const off = make([row[0], row[1], row[2], `${row[3] ?? ''} disabled`]);
+      expect(win(off, 'opacity'), row[0]).toBe('var(--opacity-disabled)');
+      expect(win(off, 'cursor'), row[0]).toBe('not-allowed');
+    }
+    const sel = mount('.clock-entry', '<select disabled></select>');
+    expect(win(sel, 'opacity')).toBe('var(--opacity-disabled)');
+    expect(win(sel, 'cursor')).toBe('not-allowed');
+    // .engine-delete-btn 在 .engine-item 里，opacity 族会撞上祖先 :hover 的规则（无法静态判定），直接断言规则里有它
+    const unified = rulesMentioning('engine-delete-btn').find((r) => r.selectors.some((s) => s.text === '.engine-delete-btn:disabled'));
+    expect(unified?.decls.find((d) => d.prop === 'opacity').value).toBe('var(--opacity-disabled)');
+    expect(unified?.decls.find((d) => d.prop === 'cursor').value).toBe('not-allowed');
+  });
+
+  it('旧的禁用写法都收进统一规则：不再有 opacity 0.4 / 0.55 / 0.6 / 0.7 做禁用，也没有 cursor: default', () => {
+    for (const cls of ['forgot-password-btn', 'sidebar-action-btn', 'btn-danger', 'btn-secondary']) {
+      for (const r of rulesMentioning(cls)) {
+        if (!r.selectors.some((s) => s.text.endsWith(':disabled'))) continue;
+        const vals = Object.fromEntries(r.decls.map((d) => [d.prop, d.value]));
+        expect(vals.opacity, r.selectors[0].text).toBe('var(--opacity-disabled)');
+        expect(vals.cursor, r.selectors[0].text).toBe('not-allowed');
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 输入框聚焦、错误态
+
+  it('.form-input:focus 用 focus.border + 3px focus.glow（三种输入框同）', () => {
+    for (const row of [['form-input', '.form-fields', 'input'], ['engine-form-input', '.add-engine-form', 'input'], ['folder-name-input', '.modal-title', 'input']]) {
+      const i = make(row);
+      expect(win(i, 'border', { state: FOCUS_KB }), row[0]).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-focus-border)' });
+      expect(win(i, 'box-shadow', { state: FOCUS_KB }), row[0]).toBe('0 0 0 3px var(--color-focus-glow)');
+    }
+  });
+
+  it('.is-invalid 描边为 danger.border，聚焦时保持（替代 JS 写入的 #ef4444）', () => {
+    for (const cls of ['form-input', 'engine-form-input', 'folder-name-input']) {
+      const parent = { 'form-input': '.form-fields', 'engine-form-input': '.add-engine-form', 'folder-name-input': '.modal-title' }[cls];
+      const bad = mount(parent, `<input class="${cls} is-invalid">`);
+      const red = { kind: 'set', width: '1px', style: 'solid', color: 'var(--color-danger-border)' };
+      for (const state of [REST, HOVER, FOCUS_KB, FOCUS_KB_HOVER]) expect(win(bad, 'border', { state }), `${cls} ${[...state].join('+') || 'rest'}`).toEqual(red);
+      // 没有 .is-invalid 的同类输入框不受影响
+      expect(win(mount(parent, `<input class="${cls}">`), 'border', { state: FOCUS_KB }).color).toBe('var(--color-focus-border)');
+      expect(win(mount(parent, `<input class="${cls}">`), 'border').color).toBe('var(--color-input-border)');
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 焦点环不被裁掉、滑块悬停
+
+  it('.grid-scroll-region 四周 padding >= 4px（外扩环不被 overflow 裁掉，§6.1.1）', () => {
+    const region = mount('.main-content', '<section class="grid-scroll-region"></section>');
+    const px = (v) => (/rem$/.test(v) ? parseFloat(v) * 16 : parseFloat(v));
+    const [t, r = t, b = t, l = r] = win(region, 'padding').trim().split(/\s+/).map(px);
+    for (const [side, v] of Object.entries({ top: t, right: r, bottom: b, left: l })) expect(v, side).toBeGreaterThanOrEqual(4);
+  });
+
+  it('滑块拇指悬停有 4px control.panel.hover 光圈，保留原有投影；时长 fast（D5-31）', () => {
+    const range = make(['sidebar-range', '.sidebar-panel', 'input', 'type="range"']);
+    for (const pe of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
+      const rest = win(range, 'box-shadow', { pseudoEl: pe });
+      const hover = win(range, 'box-shadow', { state: HOVER, pseudoEl: pe });
+      expect(rest, pe).not.toContain('var(--color-control-panel-hover)');
+      expect(hover, pe).toContain('0 0 0 4px var(--color-control-panel-hover)');
+      expect(hover, `${pe} 保留原投影`).toContain(rest);
+      expect(win(range, 'box-shadow', { state: PRESSED, pseudoEl: pe }), `${pe} 按下同悬停`).toBe(hover);
+      expect(win(range, 'transition', { pseudoEl: pe }), pe).toContain('box-shadow var(--motion-duration-fast)');
+      // 尺寸不变
+      expect(win(range, 'width', { state: HOVER, pseudoEl: pe })).toBe(win(range, 'width', { pseudoEl: pe }));
+    }
   });
 });
