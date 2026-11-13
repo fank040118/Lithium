@@ -728,6 +728,24 @@ describe('app.js render/dom-light layer', () => {
       delete globalThis.chrome;
     });
 
+    it('pins .clock-text to lang="en" but leaves the language-dependent date and timezone labels alone', async () => {
+      const cs = createMockChromeStorage({
+        startpage_clocks: [{ tz: 'Asia/Shanghai', key: 'beijing' }],
+      });
+      globalThis.chrome = { storage: { local: cs.storage.local } };
+      const localApp = loadAppModule();
+      await localApp.loadAll();
+      const wrap = document.getElementById('clocks-wrap');
+
+      localApp.updateClock();
+
+      expect(wrap.querySelector('.clock-text').getAttribute('lang')).toBe('en');
+      expect(wrap.querySelector('.date-text').hasAttribute('lang')).toBe(false);
+      expect(wrap.querySelector('.tz-label').hasAttribute('lang')).toBe(false);
+
+      delete globalThis.chrome;
+    });
+
     it('does not rebuild existing .clock-container elements on a second call with the same count', async () => {
       const cs = createMockChromeStorage({
         startpage_clocks: [{ tz: 'Asia/Shanghai', key: 'beijing' }],

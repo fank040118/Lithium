@@ -846,8 +846,14 @@ function updateClock() {
   if (existingContainers.length !== count) {
     let html = '';
     for (let i = 0; i < count; i++) {
+      // The time digits do not depend on the interface language, but browsers
+      // resolve system and generic font families by the element's language, so
+      // inheriting the page language (zh/en) picks different fonts and the
+      // digits change height when the language is switched. Pinning lang="en"
+      // keeps the font resolution identical. The date and timezone label below
+      // change with the language, so they keep inheriting the page language.
       html += `<div class="clock-container">
-        <h1 class="clock-text" data-clock-idx="${i}"></h1>
+        <h1 class="clock-text" lang="en" data-clock-idx="${i}"></h1>
         <p class="date-text" data-clock-idx="${i}"></p>
         <p class="tz-label" data-clock-idx="${i}"></p>
       </div>`;

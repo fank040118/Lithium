@@ -22,6 +22,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Search bar placeholder text looked the same as typed text
 - Danger button text in the sidebar had too little contrast
 - Some buttons fell back to the browser's default font
+- The clock digits no longer shift in height when switching the interface language
 
 ### Changed
 - All cloud operations now run through a single serial queue; cloud sync requests (Firestore reads and writes, token refresh) and account deletion time out after 20 seconds; sign-in, sign-up and email requests have no timeout
