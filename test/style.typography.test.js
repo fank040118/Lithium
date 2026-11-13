@@ -13,16 +13,16 @@ const BASE_COMMIT = 'b733093';
 
 const css = readStyleCss();
 const rules = parseCss(css);
-// 浅克隆或 gc 之后读不到基线提交时，比对组整体跳过（而不是抛 git 错误）；正常仓库里 b733093 在历史中。
-let baseCss = null;
+// 读不到基线提交（浅克隆、gc、git 不可用）时明确失败，不允许静默跳过：没有这份比对，「字号只变确认过的 7 项」就没有证据。
+let baseCss;
 try {
   baseCss = execFileSync('git', ['show', `${BASE_COMMIT}:style.css`], {
-    cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
   });
-} catch {
-  baseCss = null;
+} catch (e) {
+  const detail = [e.message, e.stderr && String(e.stderr).trim()].filter(Boolean).join(' | ');
+  throw new Error(`需要 git 历史 ${BASE_COMMIT} 才能做字号比对（读不到 ${BASE_COMMIT}:style.css，需要完整的 git 历史）：${detail}`);
 }
-const describeWithBase = baseCss === null ? describe.skip : describe;
 
 // 某个选择器在顶层（不在 @media 里）所有规则的声明，按源码顺序合并。
 function declsOf(ruleList, selector) {
@@ -238,7 +238,7 @@ describe('排版角色表（§4.4）：每个有字号的选择器都归到一�
   });
 
   it('除首字母占位和 .sync-conflict-warn 外，没有规则单独写 font-size（都用 font 简写）', () => {
-    const allowed = new Set([...LETTER_SELECTORS, ...UNMAPPED_WITH_SIZE, ...FORM_TAGS]);
+    const allowed = new Set([...LETTER_SELECTORS, ...UNMAPPED_WITH_SIZE]);   // 不含四个表单标签：它们只有 font: inherit
     const offenders = rules.filter((r) => r.decls.some((d) => d.prop === 'font-size')
       && !r.selectors.every((s) => allowed.has(s.text)))
       .map((r) => `${r.line} ${r.selectors.map((s) => s.text).join(', ')}`);
@@ -318,7 +318,7 @@ describe('button, input, select, textarea { font: inherit }', () => {
   });
 });
 
-describeWithBase('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
+describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
   const oldMap = fontSizeMap(baseCss);
   const newMap = fontSizeMap(css);
   const keyOf = (sel) => `|${sel}`;
