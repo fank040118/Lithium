@@ -358,3 +358,240 @@ describe('侧栏', () => {
     noOld('sidebar-sync-hint');
   });
 });
+
+describe('弹窗与表单', () => {
+  // 合并后的选择器列表：取「选择器文本含 selectorText 且声明了 prop」的规则（同一选择器可能有布局规则与颜色规则两条）。
+  const selectorsOf = (className, selectorText, prop) => {
+    const r = rulesMentioning(className)
+      .find((x) => x.selectors.some((s) => s.text === selectorText) && x.decls.some((d) => d.prop === prop));
+    expect(r, `找不到声明了 ${prop} 的规则 ${selectorText}`).toBeTruthy();
+    return r.selectors.map((s) => s.text);
+  };
+
+  it('遮罩 .overlay：scrim；#folder-overlay 保持无底（只靠模糊）', () => {
+    const overlay = mount('body', '<div class="overlay"></div>');
+    expect(win(overlay, 'background')).toBe('var(--color-scrim)');
+    const folder = mount('body', '<div id="folder-overlay" class="overlay"></div>');
+    expect(win(folder, 'background')).toBe('transparent');
+    noOld('overlay');
+  });
+
+  it('.dialog-card：surface.dialog，没有描边（定稿「弹窗边框 无」），各变体也没有', () => {
+    const card = mount('.overlay', '<div class="dialog-card"></div>');
+    expect(win(card, 'background')).toBe('var(--color-surface-dialog)');
+    noBorder(card, REST);
+    for (const extra of ['dialog-card-wide', 'login-consent-card', 'sync-conflict-card', 'icon-crop-card', 'delete-account-card']) {
+      const v = mount('.overlay', `<div class="dialog-card ${extra}"></div>`);
+      expect(win(v, 'background'), extra).toBe('var(--color-surface-dialog)');
+      noBorder(v, REST);
+    }
+    noOld('dialog-card');
+  });
+
+  it('.folder-modal：surface.panel + border.strong；头部分隔线 border.subtle；标题图标底 surface.sunken', () => {
+    const modal = mount('#folder-overlay', '<div id="folder-modal" class="folder-modal"></div>');
+    expect(win(modal, 'background')).toBe('var(--color-surface-panel)');
+    expect(win(modal, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-strong)' });
+    const header = mount('#folder-modal', '<div class="modal-header"></div>');
+    expect(win(header, 'border', { side: 'bottom' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(mount('.modal-title', '<span class="folder-title-icon"></span>'), 'background')).toBe('var(--color-surface-sunken)');
+    noOld('folder-modal'); noOld('folder-title-icon'); noOld('modal-title');
+  });
+
+  it('按钮 primary × default：.btn-primary 与 .engine-form-save 共用一套规则（P-2、D5-36），悬停 blue.700（Q1）', () => {
+    expect(selectorsOf('btn-primary', '.btn-primary', 'background')).toEqual(expect.arrayContaining(['.engine-form-save']));
+    for (const cls of ['btn-primary', 'engine-form-save']) {
+      const b = mount('.dialog-actions', `<button class="${cls}"></button>`);
+      expect(win(b, 'background'), cls).toBe('var(--color-action-primary-default)');
+      expect(win(b, 'background', { state: HOVER }), cls).toBe('var(--color-action-primary-hover)');
+      expect(win(b, 'color'), cls).toBe('var(--color-text-onaccent)');
+      expect(win(b, 'color', { state: HOVER }), cls).toBe('var(--color-text-onaccent)');
+      noBorder(b, REST); noBorder(b, HOVER);
+    }
+    noOld('btn-primary'); noOld('engine-form-save');
+  });
+
+  it('按钮 primary × danger：.btn-danger 悬停 red.700（Q1），禁用态悬停不变深', () => {
+    const b = mount('.dialog-actions', '<button class="btn-danger"></button>');
+    expect(win(b, 'background')).toBe('var(--color-action-danger-default)');
+    expect(win(b, 'background', { state: HOVER })).toBe('var(--color-action-danger-hover)');
+    expect(win(b, 'color')).toBe('var(--color-text-onaccent)');
+    noBorder(b, REST);
+    const off = mount('.dialog-actions', '<button class="btn-danger" disabled></button>');
+    expect(win(off, 'background', { state: HOVER })).toBe('var(--color-action-danger-default)');
+    noOld('btn-danger');
+  });
+
+  it('按钮 secondary × default：.btn-secondary 与 .icon-upload-btn、.engine-form-cancel 共用一套规则（D5-18）', () => {
+    expect(selectorsOf('btn-secondary', '.btn-secondary', 'background')).toEqual(expect.arrayContaining(['.icon-upload-btn', '.engine-form-cancel']));
+    for (const cls of ['btn-secondary', 'icon-upload-btn', 'engine-form-cancel']) {
+      const b = mount('.dialog-actions', `<button class="${cls}"></button>`);
+      expect(win(b, 'color'), cls).toBe('var(--color-text-tertiary)');
+      expect(win(b, 'color', { state: HOVER }), cls).toBe('var(--color-text-tertiary)');
+      expect(win(b, 'background'), cls).toBe('var(--color-control-bg-default)');
+      expect(win(b, 'background', { state: HOVER }), cls).toBe('var(--color-control-bg-hover)');
+      noBorder(b, REST); noBorder(b, HOVER);
+    }
+    noOld('btn-secondary'); noOld('icon-upload-btn'); noOld('engine-form-cancel');
+  });
+
+  it('按钮 ghost × default：.close-btn、.add-engine-btn 普通态透明 + text.muted；悬停 control.bg.hover + text.primary（D5-17、D5-18）', () => {
+    for (const cls of ['close-btn', 'add-engine-btn']) {
+      const b = mount('.modal-header', `<button class="${cls}"></button>`);
+      expect(win(b, 'background'), cls).toBe('transparent');
+      expect(win(b, 'color'), cls).toBe('var(--color-text-muted)');
+      expect(win(b, 'background', { state: HOVER }), cls).toBe('var(--color-control-bg-hover)');
+      expect(win(b, 'color', { state: HOVER }), cls).toBe('var(--color-text-primary)');
+      noBorder(b, REST); noBorder(b, HOVER);
+      noOld(cls);
+    }
+    // .folder-rename-btn 的「不那么亮」靠 opacity 表达（不是颜色，不动）：字色保持 text.primary，悬停叠白
+    const rename = mount('#folder-title', '<button class="folder-rename-btn"></button>');
+    expect(win(rename, 'color')).toBe('var(--color-text-primary)');
+    expect(win(rename, 'background', { state: HOVER })).toBe('var(--color-control-bg-hover)');
+    expect(win(rename, 'color', { state: HOVER })).toBe('var(--color-text-primary)');
+    noBorder(rename, REST); noBorder(rename, HOVER);
+    noOld('folder-rename-btn');
+  });
+
+  it('按钮 ghost × danger：三个按钮共用一套规则，普通态透明 + text.muted，悬停 danger.bg + text.danger（D5-34、D5-38、D5-23）', () => {
+    expect(selectorsOf('clock-remove-btn', '.clock-remove-btn', 'background')).toEqual(expect.arrayContaining(['.engine-delete-btn', '.icon-clear-btn']));
+    for (const [parent, cls] of [['.clock-entry', 'clock-remove-btn'], ['.engine-item', 'engine-delete-btn'], ['.icon-upload-row', 'icon-clear-btn']]) {
+      const b = mount(parent, `<button class="${cls}"></button>`);
+      expect(win(b, 'background'), cls).toBe('transparent');
+      expect(win(b, 'color'), cls).toBe('var(--color-text-muted)');
+      expect(win(b, 'background', { state: HOVER }), cls).toBe('var(--color-danger-bg)');
+      expect(win(b, 'color', { state: HOVER }), cls).toBe('var(--color-text-danger)');
+      noBorder(b, REST); noBorder(b, HOVER);
+      noOld(cls);
+    }
+  });
+
+  it('.icon-red：text.danger（D5-23，#ef4444 -> #f87171）', () => {
+    expect(win(mount('.dialog-title', '<svg class="icon-red"></svg>'), 'color')).toBe('var(--color-text-danger)');
+    noOld('icon-red');
+  });
+
+  it('条目行叠白（D5-1）：.clock-entry、.sync-conflict-side 用 surface.group + border.subtle', () => {
+    const entry = mount('.clock-list', '<div class="clock-entry"></div>');
+    expect(win(entry, 'background')).toBe('var(--color-surface-group)');
+    expect(win(entry, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(mount('.clock-entry', '<span class="clock-entry-index"></span>'), 'color')).toBe('var(--color-text-muted)');
+    const side = mount('.sync-conflict-compare', '<div class="sync-conflict-side"></div>');
+    expect(win(side, 'background')).toBe('var(--color-surface-group)');
+    expect(win(side, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(side, 'color')).toBe('var(--color-text-muted)');
+    noOld('clock-entry'); noOld('clock-entry-index'); noOld('sync-conflict-side');
+  });
+
+  it('.clock-add-entry：secondary 底、虚线框 border.subtle / 悬停 border.strong（D5-18）', () => {
+    const b = mount('.clock-list', '<button class="clock-add-entry"></button>');
+    expect(win(b, 'background')).toBe('var(--color-control-bg-default)');
+    expect(win(b, 'background', { state: HOVER })).toBe('var(--color-control-bg-hover)');
+    expect(win(b, 'border')).toEqual({ kind: 'set', width: '1px', style: 'dashed', color: 'var(--color-border-subtle)' });
+    expect(win(b, 'border', { state: HOVER })).toEqual({ kind: 'set', width: '1px', style: 'dashed', color: 'var(--color-border-strong)' });
+    expect(win(b, 'color')).toBe('var(--color-text-muted)');
+    expect(win(b, 'color', { state: HOVER })).toBe('var(--color-text-secondary)');
+    noOld('clock-add-entry'); noOld('clock-limit-msg');
+  });
+
+  it('冲突弹窗警告条：warning.bg + warning.border + text.warning；标题图标 icon.warning；说明字', () => {
+    const warn = mount('.sync-conflict-card', '<p class="sync-conflict-warn"></p>');
+    expect(win(warn, 'background')).toBe('var(--color-warning-bg)');
+    expect(win(warn, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-warning-border)' });
+    expect(win(warn, 'color')).toBe('var(--color-text-warning)');
+    expect(win(mount('.sync-conflict-title', '<svg></svg>'), 'color')).toBe('var(--color-icon-warning)');
+    expect(win(mount('.sync-conflict-card', '<p class="sync-conflict-limit"></p>'), 'color')).toBe('var(--color-text-warning)');
+    expect(win(mount('.sync-conflict-card', '<p class="sync-conflict-error"></p>'), 'color')).toBe('var(--color-text-danger)');
+    expect(win(mount('.sync-conflict-card', '<div class="sync-conflict-signout"></div>'), 'color')).toBe('var(--color-text-muted)');
+    for (const c of ['sync-conflict-warn', 'sync-conflict-title', 'sync-conflict-limit', 'sync-conflict-error', 'sync-conflict-signout',
+      'sync-conflict-text', 'sync-conflict-side-label', 'sync-conflict-side-time', 'sync-conflict-side-empty']) noOld(c);
+  });
+
+  it('分段切换：槽 surface.sunken（含 .auth-tabs，D5-15），选中段 selection.solid + onaccent，未选中 muted、悬停 primary', () => {
+    expect(selectorsOf('type-toggle', '.type-toggle', 'background')).toEqual(expect.arrayContaining(['.auth-tabs']));
+    expect(win(mount('.edit-form', '<div class="type-toggle"></div>'), 'background')).toBe('var(--color-surface-sunken)');
+    expect(win(mount('.login-card', '<div class="auth-tabs"></div>'), 'background')).toBe('var(--color-surface-sunken)');
+    for (const [parent, cls, active] of [['.type-toggle', 'type-btn', 'type-btn-active'], ['.auth-tabs', 'auth-tab', 'auth-tab active']]) {
+      const off = mount(parent, `<button class="${cls}"></button>`);
+      expect(win(off, 'background'), cls).toBe('transparent');
+      expect(win(off, 'color'), cls).toBe('var(--color-text-muted)');
+      expect(win(off, 'color', { state: HOVER }), cls).toBe('var(--color-text-primary)');
+      noBorder(off, REST);
+      const on = mount(parent, `<button class="${active}"></button>`);
+      expect(win(on, 'background'), active).toBe('var(--color-selection-solid)');
+      expect(win(on, 'color'), active).toBe('var(--color-text-onaccent)');
+      expect(win(on, 'color', { state: HOVER }), active).toBe('var(--color-text-onaccent)');
+      expect(win(on, 'background', { state: HOVER }), active).toBe('var(--color-selection-solid)');
+    }
+    noOld('type-toggle'); noOld('type-btn'); noOld('type-btn-active'); noOld('auth-tabs'); noOld('auth-tab');
+  });
+
+  it('输入框：input.bg + input.border，聚焦描边 focus.border + 3px focus.glow，占位 text.placeholder', () => {
+    for (const [parent, cls] of [['.form-fields', 'form-input'], ['.add-engine-form', 'engine-form-input'], ['.modal-title', 'folder-name-input']]) {
+      const i = mount(parent, `<input class="${cls}">`);
+      expect(win(i, 'background'), cls).toBe('var(--color-input-bg)');
+      expect(win(i, 'border'), cls).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-input-border)' });
+      expect(win(i, 'color'), cls).toBe('var(--color-text-primary)');
+      expect(win(i, 'border', { state: FOCUS_KB }), cls).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-focus-border)' });
+      expect(win(i, 'box-shadow', { state: FOCUS_KB }), cls).toBe('0 0 0 3px var(--color-focus-glow)');
+      noOld(cls);
+    }
+    for (const [parent, cls] of [['.form-fields', 'form-input'], ['.add-engine-form', 'engine-form-input']]) {
+      expect(win(mount(parent, `<input class="${cls}">`), 'color', { pseudoEl: '::placeholder' }), cls).toBe('var(--color-text-placeholder)');
+    }
+  });
+
+  it('时钟下拉 .clock-entry select：input.bg + input.border，聚焦 focus.border（D5-21，不加光晕）；选项底不透明', () => {
+    const sel = mount('.clock-entry', '<select></select>');
+    expect(win(sel, 'background')).toBe('var(--color-input-bg)');
+    expect(win(sel, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-input-border)' });
+    expect(win(sel, 'color')).toBe('var(--color-text-secondary)');
+    expect(win(sel, 'border', { state: FOCUS_KB })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-focus-border)' });
+    expect(win(mount('.clock-entry select', '<option></option>'), 'background')).toBe('var(--color-bg-page)');
+    const group = mount('.clock-entry select', '<optgroup></optgroup>');
+    expect(win(group, 'background')).toBe('var(--color-bg-page)');
+    expect(win(group, 'color')).toBe('var(--color-text-muted)');
+  });
+
+  it('图标预览框 input.bg（D5-19）、占位字 muted；字段标签、弹窗说明 muted（D5-24）', () => {
+    expect(win(mount('.icon-upload-row', '<div class="icon-preview-box"></div>'), 'background')).toBe('var(--color-input-bg)');
+    expect(win(mount('.icon-preview-box', '<span class="icon-preview-placeholder"></span>'), 'color')).toBe('var(--color-text-muted)');
+    for (const cls of ['form-label', 'dialog-text', 'login-desc', 'verify-status']) {
+      expect(win(mount('.dialog-card', `<p class="${cls}"></p>`), 'color'), cls).toBe('var(--color-text-muted)');
+      noOld(cls);
+    }
+    noOld('icon-preview-box'); noOld('icon-preview-placeholder');
+  });
+
+  it('弹窗里其余文字按同名 token 换引用：标题、正文、链接、错误', () => {
+    const t = (cls, color) => {
+      expect(win(mount('.dialog-card', `<div class="${cls}"></div>`), 'color'), cls).toBe(color);
+      noOld(cls);
+    };
+    t('dialog-title', 'var(--color-text-primary)');
+    t('dialog-plain-title', 'var(--color-text-primary)');
+    t('dialog-text-danger', 'var(--color-text-secondary)');
+    t('login-consent-title', 'var(--color-text-primary)');
+    t('login-consent-text', 'var(--color-text-secondary)');
+    t('login-consent-footnote', 'var(--color-text-tertiary)');
+    t('login-error', 'var(--color-text-danger)');
+    t('verify-desc', 'var(--color-text-tertiary)');
+    t('verify-email-target', 'var(--color-text-accent)');
+    t('forgot-password-btn', 'var(--color-text-accent)');
+    expect(win(mount('.dialog-card', '<h2 class="dialog-title dialog-title-danger"></h2>'), 'color')).toBe('var(--color-text-danger)');
+    noOld('dialog-title-danger');
+  });
+
+  it('图标裁剪：舞台 surface.sunken，裁剪框 1px crop.line（原 1.5px），框外压暗 crop.mask，三分线 crop.grid，手柄 crop.line', () => {
+    expect(win(mount('.icon-crop-card', '<div class="icon-crop-stage"></div>'), 'background')).toBe('var(--color-surface-sunken)');
+    const box = mount('.icon-crop-stage', '<div class="icon-crop-box"></div>');
+    expect(win(box, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-crop-line)' });
+    expect(win(box, 'box-shadow')).toBe('0 0 0 9999px var(--color-crop-mask)');
+    expect(win(mount('.icon-crop-box', '<div class="icon-crop-grid icon-crop-grid-v"></div>'), 'background')).toBe('var(--color-crop-grid)');
+    expect(win(mount('.icon-crop-box', '<div class="icon-crop-handle" data-handle="nw"></div>'), 'background')).toBe('var(--color-crop-line)');
+    expect(win(mount('.icon-crop-card', '<h2 class="icon-crop-title"></h2>'), 'color')).toBe('var(--color-text-primary)');
+    expect(win(mount('.icon-crop-title', '<svg></svg>'), 'color')).toBe('var(--color-text-tertiary)');
+    for (const c of ['icon-crop-stage', 'icon-crop-box', 'icon-crop-grid', 'icon-crop-title']) noOld(c);
+  });
+});

@@ -828,13 +828,13 @@ body {
   align-items: center;
   gap: 12px;
   padding: 12px;
-  background: var(--bg-input-soft);  /* Figma color/black-alpha/40 */
+  background: var(--color-surface-group);   /* D5-1：叠白，与侧栏分组卡片同理 */
   border-radius: 8px;
-  border: 1px solid var(--border-black-soft);
+  border: 1px solid var(--color-border-subtle);
 }
 .clock-entry-index {
   font-size: 12px;
-  color: var(--text-placeholder);
+  color: var(--color-text-muted);
   font-weight: 600;
   flex-shrink: 0;
   width: 20px;
@@ -842,32 +842,31 @@ body {
 }
 .clock-entry select {
   flex: 1;
-  background: var(--bg-input);
-  border: 1px solid var(--bg-input-border);
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-input-border);
   border-radius: 4px;
   padding: 8px 12px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   font-size: 14px;
   outline: none;
   cursor: pointer;
 }
 .clock-entry select:focus {
-  border-color: var(--action-primary-hover);
+  border-color: var(--color-focus-border);
 }
+/* 原生下拉弹层里的选项必须不透明（input.bg 是白 5%，叠在弹层默认底上会读不出字），取页面底色 */
 .clock-entry select option {
-  background: var(--bg-input);
+  background: var(--color-bg-page);
 }
 .clock-entry select optgroup {
-  background: var(--bg-input);
-  color: var(--text-placeholder);
+  background: var(--color-bg-page);
+  color: var(--color-text-muted);
   font-weight: 600;
   font-style: normal;
 }
 .clock-remove-btn {
   padding: 6px;
-  background: none;
   border: none;
-  color: var(--text-placeholder);
   cursor: pointer;
   border-radius: 6px;
   display: flex;
@@ -876,33 +875,29 @@ body {
   transition: all 0.15s;
   flex-shrink: 0;
 }
-.clock-remove-btn:hover {
-  color: var(--action-danger-hover);
-  background: var(--accent-red-bg-hover);
-}
 .clock-add-entry {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
   padding: 0.75rem;
-  background: var(--glass-l2);
+  background: var(--color-control-bg-default);
   border-radius: 0.5rem;
-  border: 1px dashed var(--border-black-medium);
+  border: 1px dashed var(--color-border-subtle);
   cursor: pointer;
-  color: var(--text-placeholder);
+  color: var(--color-text-muted);
   font-size: 0.875rem;
   transition: all 0.2s;
 }
 .clock-add-entry:hover {
-  border-color: var(--text-quaternary);
-  color: var(--text-secondary);
-  background: var(--glass-l3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+  background: var(--color-control-bg-hover);
 }
 .clock-limit-msg {
   margin: 0;
   font-size: 12px;
-  color: var(--text-placeholder);
+  color: var(--color-text-muted);
   text-align: center;
 }
 
@@ -1017,9 +1012,7 @@ body {
 }
 .engine-delete-btn {
   opacity: 0;
-  background: none;
   border: none;
-  color: var(--text-quaternary);
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
@@ -1031,10 +1024,6 @@ body {
 .engine-item:hover .engine-delete-btn {
   opacity: 1;
 }
-.engine-delete-btn:hover {
-  color: var(--action-danger-hover);
-  background: var(--accent-red-bg-hover);
-}
 .engine-dropdown-footer {
   border-top: 1px solid var(--border-black-medium);
   padding: 8px;
@@ -1042,41 +1031,25 @@ body {
 .add-engine-btn {
   width: 100%;
   padding: 10px 14px;
-  background: none;
   border: none;
-  color: var(--text-quaternary);
   font-size: 14px;
   cursor: pointer;
   border-radius: 10px;
   text-align: left;
   transition: all 0.15s;
 }
-.add-engine-btn:hover {
-  background: var(--glass-l2);
-  color: var(--text-primary);
-}
 .add-engine-form {
   padding: 8px 4px 4px 4px;
 }
 .engine-form-input {
   width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--bg-input-border);
   border-radius: 8px;
   padding: 8px 12px;
-  color: var(--text-primary);
   font-size: 13px;
   outline: none;
   margin-bottom: 8px;
   transition: border-color 0.2s, box-shadow 0.2s;
   box-sizing: border-box;
-}
-.engine-form-input:focus {
-  border-color: var(--action-primary);
-  box-shadow: 0 0 0 3px var(--focus-ring-blue);
-}
-.engine-form-input::placeholder {
-  color: var(--text-placeholder);
 }
 .engine-form-actions {
   display: flex;
@@ -1085,28 +1058,19 @@ body {
 }
 .engine-form-save {
   padding: 6px 16px;
-  background: var(--action-primary-hover);
   border: none;
   border-radius: 8px;
-  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   transition: background-color 0.15s;
 }
-.engine-form-save:hover { background: var(--action-primary); }
 .engine-form-cancel {
   padding: 6px 16px;
-  background: var(--glass-l2);
   border: none;
   border-radius: 8px;
-  color: var(--text-quaternary);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
-}
-.engine-form-cancel:hover {
-  background: var(--glass-l3-hover);
-  color: var(--text-primary);
 }
 
 /* Grid area */
@@ -1425,7 +1389,7 @@ body {
   justify-content: center;
   padding: 1rem;
   z-index: 40;
-  background: var(--glass-l3);
+  background: var(--color-scrim);
   backdrop-filter: blur(var(--blur-light));
 }
 #folder-overlay {
@@ -1442,14 +1406,14 @@ body {
 
 /* Folder modal */
 .folder-modal {
-  background: var(--glass-l3);
+  background: var(--color-surface-panel);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border-radius: 1.5rem;
   width: 100%;
   max-width: 50rem;  /* 800px — inner = 800 - 48 padding = 752, matches main grid (8×80 + 7×16) */
   min-height: 400px;
-  border: 1px solid var(--border-white-soft);
+  border: 1px solid var(--color-border-strong);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
@@ -1460,7 +1424,7 @@ body {
    visually separates from the body grid. */
 #folder-modal .modal-header {
   padding: 24px;
-  border-bottom: 1px solid var(--border-white-hairline);
+  border-bottom: 1px solid var(--color-border-subtle);
   background: transparent;
 }
 
@@ -1478,7 +1442,7 @@ body {
   font-size: 20px;
   font-weight: 500;
   line-height: 1;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1490,7 +1454,7 @@ body {
 }
 .folder-title-icon {
   padding: 8px;
-  background: var(--glass-l0);
+  background: var(--color-surface-sunken);
   border-radius: 12px;
   display: flex;
   flex-shrink: 0;
@@ -1508,7 +1472,7 @@ body {
   border: none;
   padding: 4px;
   border-radius: 6px;
-  color: var(--text-primary);
+  color: var(--color-text-primary);   /* 「不那么亮」靠 opacity 表达，字色不换成 text.muted */
   opacity: 0.55;
   cursor: pointer;
   display: inline-flex;
@@ -1519,25 +1483,17 @@ body {
 }
 .folder-rename-btn:hover {
   opacity: 1;
-  background: var(--glass-l3-hover);
 }
 .folder-name-input {
   font: inherit;            /* match modal-title font sizing/weight */
   font-size: 20px;
   font-weight: 500;
-  color: var(--text-primary);
-  background: var(--bg-input);
-  border: 1px solid var(--bg-input-border);
   border-radius: 6px;
   padding: 4px 8px;
   max-width: 360px;
   width: 240px;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
-}
-.folder-name-input:focus {
-  border-color: var(--action-primary);
-  box-shadow: 0 0 0 3px var(--focus-ring-blue);
 }
 .modal-body {
   padding: 24px;
@@ -1547,8 +1503,6 @@ body {
 
 .close-btn {
   padding: 8px;
-  color: var(--text-quaternary);
-  background: none;
   border: none;
   border-radius: 9999px;
   cursor: pointer;
@@ -1557,20 +1511,15 @@ body {
   align-items: center;
   justify-content: center;
 }
-.close-btn:hover {
-  color: var(--text-primary);
-  background: var(--glass-l3-hover);
-}
 
 /* Dialog card (delete/edit/login/clock) — Figma v1.1 */
 .dialog-card {
-  background: var(--glass-l4);
+  background: var(--color-surface-dialog);
   border-radius: 16px;
   width: 100%;
   max-width: 384px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
   overflow: hidden;
-  border: 1px solid var(--glass-l3);   /* Figma rgba(0,0,0,0.6) */
   padding: 24px;
 }
 .dialog-card-wide {
@@ -1584,7 +1533,7 @@ body {
   font-weight: 500;
   line-height: 1;
   margin-bottom: 12px;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1594,10 +1543,10 @@ body {
   font-size: 20px;
   font-weight: 500;
   line-height: 1;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
 }
 .dialog-text {
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
   margin-bottom: 24px;
   font-size: 14px;
   line-height: 1.5;
@@ -1611,9 +1560,9 @@ body {
 /* Delete-account dialog — Figma node 160:392.
    Title is danger-red, body uses text-secondary at 22px line-height with
    stacked lines, and the buttons row gets an extra 12px spacer before it. */
-.dialog-title-danger { color: var(--text-danger); }
+.dialog-title-danger { color: var(--color-text-danger); }
 .dialog-text-danger {
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   font-size: 14px;
   margin-bottom: 36px; /* body 24px gap + 12px spacer per Figma */
 }
@@ -1627,7 +1576,7 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.btn-danger:disabled:hover { background: var(--action-danger); }
+.btn-danger:disabled:hover { background: var(--color-action-danger-default); }
 
 /* Login-consent dialog — Figma node 191:447.
    400px wide, vertical flex with 14px gap, body 13/20, footnote 12/18.
@@ -1642,12 +1591,12 @@ body {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
 }
 .login-consent-text {
   margin: 0;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   line-height: 20px;
 }
 .login-consent-bullets {
@@ -1658,7 +1607,7 @@ body {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 .login-consent-bullets li::before {
   content: "· ";
@@ -1667,7 +1616,7 @@ body {
 .login-consent-footnote {
   margin: 0;
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
   line-height: 18px;
 }
 .login-consent-card .dialog-actions { gap: 8px; }
@@ -1691,25 +1640,25 @@ body {
   gap: 8px;
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
 }
 .sync-conflict-title svg {
   flex: none;
-  color: var(--accent-amber-500);
+  color: var(--color-icon-warning);
 }
 .sync-conflict-text {
   margin: 0;
   font-size: 13px;
   line-height: 20px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 .sync-conflict-warn {
   margin: 0;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid var(--warning-border);
-  background: var(--warning-bg);
-  color: var(--text-warning);
+  border: 1px solid var(--color-warning-border);
+  background: var(--color-warning-bg);
+  color: var(--color-text-warning);
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
@@ -1725,20 +1674,20 @@ body {
   gap: 6px;
   padding: 14px;
   border-radius: 12px;
-  background: var(--glass-l1);
-  border: 1px solid var(--glass-l3);
+  background: var(--color-surface-group);   /* D5-1：叠白 */
+  border: 1px solid var(--color-border-subtle);
   font-size: 12px;
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
 }
 .sync-conflict-side-label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
 }
 .sync-conflict-side-time {
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
 }
 /* Cloud absent: the cloud card drops its time and counts for one empty line. */
 .sync-conflict-side.is-empty [data-field="timeLabel"],
@@ -1749,7 +1698,7 @@ body {
 }
 .sync-conflict-side-empty {
   font-size: 13px;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
 }
 /* Persistent note while the local data is over the upload limit (explains the
    disabled "Use local"); the inline error line below is the transient one. */
@@ -1757,12 +1706,12 @@ body {
   margin: 0;
   font-size: 13px;
   line-height: 18px;
-  color: var(--text-warning);
+  color: var(--color-text-warning);
 }
 .sync-conflict-error {
   margin: 0;
   font-size: 13px;
-  color: var(--text-danger);
+  color: var(--color-text-danger);
 }
 .sync-conflict-actions { gap: 8px; }
 .sync-conflict-actions button { flex: 1; }
@@ -1793,11 +1742,11 @@ body {
   align-items: baseline;
   gap: 6px;
   font-size: 13px;
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
 }
 /* Semantic danger signal — kept red even inside .dialog-title where text
-   otherwise inherits --text-primary. */
-.icon-red { color: var(--action-danger-hover); }
+   otherwise inherits --color-text-primary. */
+.icon-red { color: var(--color-text-danger); }
 
 /* Buttons — Figma v1.1: 37px h, 10/16 padding, 8 radius, 14 Medium */
 .btn-secondary,
@@ -1817,23 +1766,63 @@ body {
   transition: background-color 0.2s;
 }
 
-.btn-secondary {
-  color: var(--text-tertiary);
-  background: var(--action-secondary);
-}
-.btn-secondary:not(:disabled):hover { background: var(--action-secondary-hover); }
+/* 颜色按变体合并（spec §6.2，P-2）：同一变体的选择器共用一套规则，尺寸与排版留在各自的规则里。
+   按下态（:active）与禁用态的统一归 B3（Task 33）。 */
 
+/* secondary × default × default：弹窗里的次要按钮 */
+.btn-secondary,
+.icon-upload-btn,
+.engine-form-cancel {
+  color: var(--color-text-tertiary);
+  background: var(--color-control-bg-default);
+}
+.btn-secondary:not(:disabled):hover,
+.icon-upload-btn:not(:disabled):hover,
+.engine-form-cancel:not(:disabled):hover { background: var(--color-control-bg-hover); }
+
+/* primary × danger */
 .btn-danger {
-  background: var(--action-danger);
-  color: var(--text-primary);
+  background: var(--color-action-danger-default);
+  color: var(--color-text-onaccent);
 }
-.btn-danger:hover { background: var(--action-danger-hover); }
+.btn-danger:hover { background: var(--color-action-danger-hover); }
 
-.btn-primary {
-  background: var(--action-primary);
-  color: var(--text-primary);
+/* primary × default */
+.btn-primary,
+.engine-form-save {
+  background: var(--color-action-primary-default);
+  color: var(--color-text-onaccent);
 }
-.btn-primary:hover { background: var(--action-primary-hover); }
+.btn-primary:hover,
+.engine-form-save:hover { background: var(--color-action-primary-hover); }
+
+/* ghost × default：普通态透明 + text.muted，悬停叠白 + text.primary。
+   .folder-rename-btn 的普通态靠 opacity 变暗，只共用悬停。 */
+.close-btn,
+.add-engine-btn {
+  background: transparent;
+  color: var(--color-text-muted);
+}
+.close-btn:hover,
+.folder-rename-btn:hover,
+.add-engine-btn:hover {
+  background: var(--color-control-bg-hover);
+  color: var(--color-text-primary);
+}
+
+/* ghost × danger：普通态透明 + text.muted，悬停 danger.bg + text.danger */
+.clock-remove-btn,
+.engine-delete-btn,
+.icon-clear-btn {
+  background: transparent;
+  color: var(--color-text-muted);
+}
+.clock-remove-btn:hover,
+.engine-delete-btn:hover,
+.icon-clear-btn:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-text-danger);
+}
 
 /* Edit form */
 .edit-form {
@@ -1842,13 +1831,31 @@ body {
   flex-direction: column;
   gap: 20px;
 }
+/* 分段切换（spec §6.3）：.type-toggle / .type-btn 与登录页签 .auth-tabs / .auth-tab 共用颜色规则 */
+.type-toggle,
+.auth-tabs {
+  background: var(--color-surface-sunken);
+}
 .type-toggle {
   display: flex;
   gap: 8px;
   padding: 4px;
-  background: var(--bg-input);
   border-radius: 8px;
 }
+.type-btn,
+.auth-tab {
+  background: transparent;
+  color: var(--color-text-muted);
+}
+.type-btn:hover,
+.auth-tab:hover { color: var(--color-text-primary); }
+.type-btn-active,
+.auth-tab.active {
+  background: var(--color-selection-solid);
+  color: var(--color-text-onaccent);
+}
+.type-btn-active:hover,
+.auth-tab.active:hover { color: var(--color-text-onaccent); }
 .type-btn {
   flex: 1;
   padding: 8px 16px;
@@ -1859,15 +1866,7 @@ body {
   border: none;
   cursor: pointer;
   transition: all 0.2s;
-  background: transparent;
-  color: var(--text-quaternary);
 }
-.type-btn:hover { color: var(--text-primary); }
-.type-btn-active {
-  background: var(--action-primary);
-  color: var(--text-primary);
-}
-.type-btn-active:hover { color: var(--text-primary); }
 
 .form-fields {
   display: flex;
@@ -1878,26 +1877,34 @@ body {
   display: block;
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
   margin-bottom: 8px;
 }
+/* 输入框颜色（spec §6.3）：.form-input、搜索引擎表单输入、文件夹改名输入共用 */
+.form-input,
+.engine-form-input,
+.folder-name-input {
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-input-border);
+  color: var(--color-text-primary);
+}
+.form-input:focus,
+.engine-form-input:focus,
+.folder-name-input:focus {
+  border-color: var(--color-focus-border);
+  box-shadow: 0 0 0 3px var(--color-focus-glow);
+}
+.form-input::placeholder,
+.engine-form-input::placeholder { color: var(--color-text-placeholder); }
 .form-input {
   width: 100%;
   height: 37px;
-  background: var(--bg-input);
-  border: 1px solid var(--bg-input-border);
   border-radius: 8px;
   padding: 10px 16px;
-  color: var(--text-primary);
   font-size: 14px;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
-.form-input:focus {
-  border-color: var(--action-primary);
-  box-shadow: 0 0 0 3px var(--focus-ring-blue);
-}
-.form-input::placeholder { color: var(--text-placeholder); }
 .form-field-spacing { margin-bottom: 16px; }
 
 .icon-upload-row {
@@ -1910,7 +1917,7 @@ body {
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  background: var(--bg-input-faint);
+  background: var(--color-input-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1924,35 +1931,25 @@ body {
 }
 .icon-preview-placeholder {
   font-size: 12px;
-  color: var(--text-placeholder);
+  color: var(--color-text-muted);
 }
 .icon-upload-btn {
   flex: 1;
   padding: 8px 12px;
-  background: var(--bg-input);
   border: none;
   border-radius: 8px;
   font-size: 13px;
-  color: var(--text-placeholder);
   cursor: pointer;
   text-align: left;
   transition: color 0.2s, background 0.2s;
 }
-.icon-upload-btn:hover {
-  color: var(--text-primary);
-}
 .icon-clear-btn {
   padding: 8px 12px;
-  background: var(--bg-input);
   border: none;
   border-radius: 8px;
   font-size: 13px;
-  color: var(--text-quaternary);
   cursor: pointer;
   transition: color 0.2s, background 0.2s;
-}
-.icon-clear-btn:hover {
-  color: var(--text-danger);
 }
 
 .form-footer {
@@ -1980,15 +1977,15 @@ body {
   font-size: 16px;
   font-weight: 500;
   line-height: 1;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   margin: 0;
 }
-.icon-crop-title svg { color: var(--text-tertiary); }
+.icon-crop-title svg { color: var(--color-text-tertiary); }
 .icon-crop-stage {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 10;
-  background: var(--glass-l0);
+  background: var(--color-surface-sunken);
   border-radius: 12px;
   overflow: hidden;
   user-select: none;
@@ -2003,13 +2000,13 @@ body {
 .icon-crop-box {
   position: absolute;
   box-sizing: border-box;
-  border: 1.5px solid #ffffff;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--color-crop-line);
+  box-shadow: 0 0 0 9999px var(--color-crop-mask);
   cursor: move;
 }
 .icon-crop-grid {
   position: absolute;
-  background: rgba(255, 255, 255, 0.45);
+  background: var(--color-crop-grid);
   pointer-events: none;
 }
 .icon-crop-grid-v {
@@ -2030,7 +2027,7 @@ body {
   position: absolute;
   width: 12px;
   height: 12px;
-  background: #ffffff;
+  background: var(--color-crop-line);
   border-radius: 2px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
@@ -2368,7 +2365,7 @@ body {
 }
 
 .login-desc {
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
   font-size: 14px;
   line-height: 1.5;
   margin: 0 0 16px;
@@ -2380,28 +2377,18 @@ body {
   gap: 4px;
   margin-bottom: 16px;
   padding: 4px;
-  background: var(--glass-l3);
   border-radius: 8px;
 }
 
 .auth-tab {
   flex: 1;
   padding: 8px 12px;
-  background: transparent;
   border: none;
   border-radius: 4px;
-  color: var(--text-quaternary);
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
-}
-
-.auth-tab:hover { color: var(--text-secondary); }
-
-.auth-tab.active {
-  background: var(--action-primary);
-  color: var(--text-primary);
 }
 
 .auth-pane {
@@ -2415,7 +2402,7 @@ body {
 }
 
 .login-error {
-  color: var(--text-danger);
+  color: var(--color-text-danger);
   font-size: 13px;
   min-height: 1.1em;
   margin: 0;
@@ -2428,7 +2415,7 @@ body {
   padding: 0;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-accent);
+  color: var(--color-text-accent);
   cursor: pointer;
   transition: opacity 0.15s;
 }
@@ -2439,20 +2426,20 @@ body {
 }
 
 .verify-desc {
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
   font-size: 14px;
   line-height: 1.5;
   margin: 0;
 }
 
 .verify-email-target {
-  color: var(--text-accent);
+  color: var(--color-text-accent);
   font-weight: 500;
   word-break: break-all;
 }
 
 .verify-status {
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
   font-size: 13px;
   min-height: 1.1em;
   margin: 0;

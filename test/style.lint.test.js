@@ -15,7 +15,8 @@ const rulesOf = (css, opts) => lintStyle(css, opts).map((v) => v.rule);
 //   尺寸类：transition-all 8 + raw-font-size 65 + raw-radius 60 + raw-z 16（已扣除 DEFAULT_ALLOW）= 149
 // 2026-11-13 Task 29（主区玻璃）：颜色类 50 -> 29（-21）。
 // 2026-11-13 Task 30（侧栏）：颜色类 29 -> 18（-11）。
-const BASELINE_COLOR = 18;
+// 2026-11-13 Task 31（弹窗与表单）：颜色类 18 -> 14（-4，裁剪框 4 处）。
+const BASELINE_COLOR = 14;
 const BASELINE_DIM = 149;
 
 describe('lintStyle', () => {
