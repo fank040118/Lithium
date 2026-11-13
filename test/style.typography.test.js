@@ -13,9 +13,16 @@ const BASE_COMMIT = 'b733093';
 
 const css = readStyleCss();
 const rules = parseCss(css);
-const baseCss = execFileSync('git', ['show', `${BASE_COMMIT}:style.css`], {
-  cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
-});
+// 浅克隆或 gc 之后读不到基线提交时，比对组整体跳过（而不是抛 git 错误）；正常仓库里 b733093 在历史中。
+let baseCss = null;
+try {
+  baseCss = execFileSync('git', ['show', `${BASE_COMMIT}:style.css`], {
+    cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+  });
+} catch {
+  baseCss = null;
+}
+const describeWithBase = baseCss === null ? describe.skip : describe;
 
 // 某个选择器在顶层（不在 @media 里）所有规则的声明，按源码顺序合并。
 function declsOf(ruleList, selector) {
@@ -50,7 +57,7 @@ function expandVars(value, vars) {
 
 function sizeToPx(value, vars) {
   const v = expandVars(value.trim(), vars);
-  if (/^inherit$/i.test(v)) return 'inherit';
+  if (/^(inherit|unset|initial|revert|revert-layer)$/i.test(v)) return 'inherit';
   const m = /(?:^|\s)(\d*\.?\d+)(px|rem)(?:\/\S+)?(?=\s|$)/.exec(v);
   if (m) return Number(m[1]) * (m[2] === 'rem' ? 16 : 1);
   const rt = /^var\((--[\w-]+)\)$/.exec(v);
@@ -68,7 +75,7 @@ function fontSizeMap(cssText) {
     for (const d of r.decls) {
       if (d.prop === 'font-size' || d.prop === 'font') size = sizeToPx(d.value, vars);
     }
-    if (size === null || size === 'inherit') continue;
+    if (size === null) continue;   // inherit / unset 也要记入：后置的 font-size: inherit 会把字号改成继承值
     for (const s of r.selectors) map.set(`${r.media ?? ''}|${s.text.replace(/\s+/g, ' ')}`, size);
   }
   return map;
@@ -87,6 +94,7 @@ const CONFIRMED_CHANGES = {
 // M-F 选「保持」的紧凑表单选择器（spec §4.4「紧凑表单例外」）。
 const KEPT_AT_13 = ['.engine-form-input', '.engine-form-save', '.engine-form-cancel', '.icon-upload-btn', '.icon-clear-btn'];
 const NEW_SELECTORS = ['.icon-letter', '.icon-letter-sm'];
+const FORM_TAGS = ['button', 'input', 'select', 'textarea'];
 
 describe('raw-font-size 归零', () => {
   it('style.css 里没有 font-size / font 的字面值（白名单只有 G-3 的 30px、10px）', () => {
@@ -169,6 +177,93 @@ describe('type token 的使用', () => {
   });
 });
 
+// spec §4.4 角色表 + 迁移对照（字号 / 字重 -> token）落到选择器：每条都锁住字号、字重、行高（token 自带）。
+// 依据列：R = §4.4「用于」列点名；M = §4.4 迁移对照（按字号 / 现有字重机械归档）；U = 用户裁定。
+const ROLE_MAP = {
+  'type-clock': ['.clock-text'],
+  'type-title-lg': ['.modal-title', '.dialog-title', '.dialog-plain-title', '.login-consent-title',
+    '.sync-conflict-title', '.folder-name-input', '.move-to-main-hint'],
+  'type-title-md': ['.sidebar-title', '.icon-crop-title'],
+  'type-label-md': ['.btn-secondary', '.btn-danger', '.btn-primary', '.type-btn', '.sidebar-action-btn',
+    '.sidebar-effect-label', '.clock-add-entry', '.engine-trigger', '.engine-item', '.add-engine-btn',
+    '.form-label', '.ctx-item', '.signin-notice-title', '.auth-tab'],
+  'type-label-sm': ['.sidebar-value', '.lang-toggle', '.sidebar-wallpaper-preview-label', '.engine-form-save',
+    '.engine-form-cancel', '.icon-upload-btn', '.icon-clear-btn', '.sync-conflict-side-label', '.sync-delete-btn'],
+  'type-label-xs': ['.tz-label', '.clock-entry-index', '.ctx-size-btn'],
+  'type-body-lg': ['.search-input', '.sync-conflict-side-time'],
+  'type-body-md': ['.sidebar-range-labels', '.date-text', '.clock-entry select', '.dialog-text', '.dialog-text-danger',
+    '.form-input', '.login-desc', '.verify-desc', '.app-toast'],
+  'type-body-sm': ['.sidebar-note', '.login-consent-text', '.login-consent-bullets', '.sync-conflict-text',
+    '.engine-form-input', '.sync-conflict-side-empty', '.sync-conflict-limit', '.sync-conflict-error',
+    '.sync-conflict-signout', '.login-error', '.verify-status', '.forgot-password-btn'],
+  'type-caption': ['.login-consent-footnote', '.sidebar-sync-hint', '.grid-item-name', '.clock-limit-msg',
+    '.sync-conflict-side', '.icon-preview-placeholder', '.signin-notice-sub'],
+};
+// §4.4 里找不到对应角色、保留 size / weight / leading 分开写的选择器，以及固定尺寸的首字母占位。
+const UNMAPPED_WITH_SIZE = ['.sync-conflict-warn'];
+const LETTER_SELECTORS = ['.icon-letter', '.icon-letter-sm', '.folder-slot-letter', '.folder-mini-letter'];
+
+describe('排版角色表（§4.4）：每个有字号的选择器都归到一个 type token', () => {
+  const entries = Object.entries(ROLE_MAP).flatMap(([token, sels]) => sels.map((sel) => [sel, token]));
+
+  it('角色表里没有重复的选择器', () => {
+    const names = entries.map(([sel]) => sel);
+    expect(names.filter((n, i) => names.indexOf(n) !== i)).toEqual([]);
+  });
+
+  it.each(entries)('%s 的 font 是 var(--%s)，字号 / 字重 / 行高由 token 决定，没有后置覆写', (sel, token) => {
+    const d = declsOf(rules, sel);
+    expect(lastOf(d, 'font'), sel).toBe(`var(--${token})`);
+    const iFont = idxOf(d, 'font');
+    const after = d.slice(iFont + 1).map((x) => x.prop).filter((p) => ['font-size', 'font-weight', 'line-height', 'font-family'].includes(p));
+    expect(after, sel).toEqual([]);
+    // 同一选择器在 @media 里的规则也不能再动字号 / 字重 / 行高
+    const inMedia = rules.filter((r) => r.media !== null && r.selectors.some((x) => x.text === sel))
+      .flatMap((r) => r.decls).filter((x) => ['font', 'font-size', 'font-weight', 'line-height'].includes(x.prop));
+    expect(inMedia, sel).toEqual([]);
+  });
+
+  it('token 展开后的字号 / 字重 / 行高与 §4.4 表一致', () => {
+    const vars = rootVars(rules);
+    const expected = {
+      'type-clock': '300 60px/1', 'type-title-lg': '600 20px/1.25', 'type-title-md': '600 16px/1.25',
+      'type-body-lg': '400 16px/1.5', 'type-body-md': '400 14px/1.5', 'type-body-sm': '400 13px/1.5',
+      'type-label-md': '500 14px/1', 'type-label-sm': '500 13px/1', 'type-label-xs': '500 12px/1',
+      'type-caption': '400 12px/1.5',
+    };
+    for (const [token, want] of Object.entries(expected)) {
+      const got = expandVars(vars.get(`--${token}`), vars).replace(/\s+(-apple-system|BlinkMacSystemFont).*$/, '');
+      expect(got.split(/\s+/).slice(0, 2).join(' '), token).toBe(want);
+    }
+  });
+
+  it('除首字母占位和 .sync-conflict-warn 外，没有规则单独写 font-size（都用 font 简写）', () => {
+    const allowed = new Set([...LETTER_SELECTORS, ...UNMAPPED_WITH_SIZE, ...FORM_TAGS]);
+    const offenders = rules.filter((r) => r.decls.some((d) => d.prop === 'font-size')
+      && !r.selectors.every((s) => allowed.has(s.text)))
+      .map((r) => `${r.line} ${r.selectors.map((s) => s.text).join(', ')}`);
+    expect(offenders).toEqual([]);
+  });
+
+  it('.sync-conflict-warn（多行 500 字重提示，§4.4 无对应角色）：13 / 500 / 1.5 用原始 token', () => {
+    const d = declsOf(rules, '.sync-conflict-warn');
+    expect(lastOf(d, 'font-size')).toBe('var(--font-size-sm)');
+    expect(lastOf(d, 'font-weight')).toBe('var(--font-weight-medium)');
+    expect(lastOf(d, 'line-height')).toBe('var(--font-leading-normal)');
+  });
+
+  it('仅改字重的规则（.verify-email-target、optgroup）用字重 token', () => {
+    expect(lastOf(declsOf(rules, '.verify-email-target'), 'font-weight')).toBe('var(--font-weight-medium)');
+    expect(lastOf(declsOf(rules, '.clock-entry select optgroup'), 'font-weight')).toBe('var(--font-weight-semibold)');
+  });
+
+  it('M-F 与用户裁定：.grid-item-name 取 caption，.sync-conflict-side-time 取 body.lg（400）', () => {
+    expect(lastOf(declsOf(rules, '.grid-item-name'), 'font')).toBe('var(--type-caption)');
+    expect(lastOf(declsOf(rules, '.sync-conflict-side-time'), 'font')).toBe('var(--type-body-lg)');
+    expect(lastOf(declsOf(rules, '.sync-conflict-side-time'), 'font-weight')).toBeUndefined();
+  });
+});
+
 describe('字间距', () => {
   it('只有时钟与拖放提示有非 0 letter-spacing，且都用 token', () => {
     const nonZero = [];
@@ -223,7 +318,7 @@ describe('button, input, select, textarea { font: inherit }', () => {
   });
 });
 
-describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
+describeWithBase('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
   const oldMap = fontSizeMap(baseCss);
   const newMap = fontSizeMap(css);
   const keyOf = (sel) => `|${sel}`;
@@ -249,9 +344,15 @@ describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
     expect(diffs).toEqual(CONFIRMED_CHANGES);
   });
 
-  it('新出现的有字号的选择器只有 G-3 的两个类', () => {
+  it('新出现的有字号的选择器只有 G-3 的两个类，加上 font: inherit 的四个标签', () => {
     const added = [...newMap.keys()].filter((k) => !oldMap.has(k)).map((k) => k.replace(/^\|/, ''));
-    expect(added.sort()).toEqual([...NEW_SELECTORS].sort());
+    expect(added.sort()).toEqual([...NEW_SELECTORS, ...FORM_TAGS].sort());
+    for (const tag of FORM_TAGS) expect(newMap.get(keyOf(tag)), tag).toBe('inherit');
+  });
+
+  it('旧版没有、现在也不能有「后置 inherit」：除四个标签外，没有选择器的最终字号是 inherit', () => {
+    const inherits = [...newMap].filter(([k, v]) => v === 'inherit').map(([k]) => k.replace(/^\|/, ''));
+    expect(inherits.sort()).toEqual([...FORM_TAGS].sort());
   });
 
   it('M-F 选「保持」的选择器，字号与 b733093 相同（逐条）', () => {
