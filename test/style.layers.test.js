@@ -320,27 +320,29 @@ describe('动效 token', () => {
 // 原来写 transition: all 的 8 个元素：改成列出属性后，必须仍覆盖各状态规则里真正变化的属性。
 // 时长不变（0.15s → fast，0.2s → base）。focus-visible 的 outline 不列入：同一组控件
 // （.btn-*、.sidebar-action-btn 等）的 transition 都不含 outline，焦点环瞬间出现（见 task-36-report.md）。
+// tag 是该 class 在 newtab.html / app.js 里实际用的元素；jsdom 的 :disabled 只匹配表单控件，用 div 建会让禁用态判定落空。
+// disableRule：该元素有 :disabled 规则（改 opacity）。.type-btn 没有；.ctx-size-btn 是 div，不可禁用。
 const ALL_REWRITES = [
-  { sel: '.clock-remove-btn',    duration: 'fast', props: ['background', 'color', 'opacity'] },
-  { sel: '.clock-add-entry',     duration: 'base', props: ['background', 'color', 'border-color', 'opacity'] },
-  { sel: '.engine-delete-btn',   duration: 'fast', props: ['opacity', 'background', 'color'] },
-  { sel: '.add-engine-btn',      duration: 'fast', props: ['background', 'color', 'opacity'] },
-  { sel: '.engine-form-cancel',  duration: 'fast', props: ['background', 'opacity'] },
-  { sel: '.close-btn',           duration: 'base', props: ['background', 'color', 'opacity'] },
-  { sel: '.type-btn',            duration: 'base', props: ['background', 'color'] },
-  { sel: '.ctx-size-btn',        duration: 'fast', props: ['background', 'color'] },
+  { sel: '.clock-remove-btn', tag: 'button', disableRule: true,    duration: 'fast', props: ['background', 'color', 'opacity'] },
+  { sel: '.clock-add-entry', tag: 'button', disableRule: true,     duration: 'base', props: ['background', 'color', 'border-color', 'opacity'] },
+  { sel: '.engine-delete-btn', tag: 'button', disableRule: true,   duration: 'fast', props: ['opacity', 'background', 'color'] },
+  { sel: '.add-engine-btn', tag: 'button', disableRule: true,      duration: 'fast', props: ['background', 'color', 'opacity'] },
+  { sel: '.engine-form-cancel', tag: 'button', disableRule: true,  duration: 'fast', props: ['background', 'opacity'] },
+  { sel: '.close-btn', tag: 'button', disableRule: true,           duration: 'base', props: ['background', 'color', 'opacity'] },
+  { sel: '.type-btn', tag: 'button', disableRule: false,            duration: 'base', props: ['background', 'color'] },
+  { sel: '.ctx-size-btn', tag: 'div', disableRule: false,        duration: 'fast', props: ['background', 'color'] },
 ];
 
 describe('transition: all 改成列出属性', () => {
-  const listed = (sel) => splitTopLevel(cascade(mk(sel), 'transition'), ',')
+  const listed = (sel, tag) => splitTopLevel(cascade(mk(`${tag}${sel}`), 'transition'), ',')
     .map((item) => {
       const [prop, dur, ease] = splitTopLevel(item.trim(), ' ');
       return { prop, dur, ease };
     });
 
   it('8 个元素的属性与时长与表一致', () => {
-    for (const { sel, duration, props } of ALL_REWRITES) {
-      const got = listed(sel);
+    for (const { sel, tag, duration, props } of ALL_REWRITES) {
+      const got = listed(sel, tag);
       expect(got.map((x) => x.prop), sel).toEqual(props);
       for (const x of got) {
         expect(x.dur, sel).toBe(`var(--motion-duration-${duration})`);
@@ -352,14 +354,24 @@ describe('transition: all 改成列出属性', () => {
   it('列出的属性覆盖各状态下实际变化的属性：悬停、按下、禁用逐一对照最终生效值', () => {
     const FAMILIES = ['background', 'color', 'opacity'];
     const norm = (p) => (p === 'background-color' ? 'background' : p);
-    for (const { sel, props } of ALL_REWRITES) {
+    for (const { sel, tag, disableRule, props } of ALL_REWRITES) {
+      // 防止禁用态这一支再次落空：有 :disabled 规则的元素，禁用与否的 opacity 必须真的不同
+      const opacityOf = (disabled) => {
+        const el = mk(`${tag}${sel}`);
+        if (disabled) el.setAttribute('disabled', '');
+        return cascade(el, 'opacity');
+      };
+      if (disableRule) {
+        expect(opacityOf(true), `${sel} 禁用态 opacity`).toBe('var(--opacity-disabled)');
+        expect(opacityOf(false), `${sel} 可用态 opacity`).not.toBe('var(--opacity-disabled)');
+      }
       const states = [
         [STATE_SETS.REST, false], [STATE_SETS.HOVER, false], [STATE_SETS.PRESSED, false], [STATE_SETS.REST, true],
       ];
       const changed = new Set();
       for (const family of [...FAMILIES, 'border']) {
         const vals = states.map(([state, disabled]) => {
-          const el = mk(sel);
+          const el = mk(`${tag}${sel}`);
           if (disabled) el.setAttribute('disabled', '');
           try {
             const r = cascade(el, family, { state, ...(family === 'border' ? { side: 'top' } : {}) });
