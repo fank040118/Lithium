@@ -246,3 +246,115 @@ describe('主区玻璃', () => {
     for (const c of ['drag-indicator', 'grid-item-combine', 'drag-over-folder-bg', 'move-to-main-hint']) noOld(c);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe('侧栏', () => {
+  it('.left-sidebar：面板底 surface.panel，右边线 border.subtle，其余三边无边框', () => {
+    const bar = mount('body', '<aside class="left-sidebar"></aside>');
+    expect(win(bar, 'background')).toBe('var(--color-surface-panel)');
+    expect(win(bar, 'border', { side: 'right' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(bar, 'border', { side: 'left' })).toEqual({ kind: 'none' });
+    noOld('left-sidebar');
+  });
+
+  it('把手：三条纹统一 handle（D5-30），键盘焦点内缩环 focus.ring（D5-22）', () => {
+    const handle = mount('.left-sidebar', '<button class="left-sidebar-handle"></button>');
+    expect(win(handle, 'background')).toBe('transparent');
+    expect(win(handle, 'background', { pseudoEl: '::before' })).toBe('var(--color-handle)');
+    const stripes = win(handle, 'box-shadow', { pseudoEl: '::before' });
+    expect(stripes.match(/var\(--color-handle\)/g)).toHaveLength(2);
+    expect(stripes).not.toMatch(/rgba?\(/);
+    expect(win(handle, 'outline', { state: FOCUS_KB })).toEqual({
+      color: 'var(--color-focus-ring)', width: '2px', style: 'solid', offset: '-2px',
+    });
+    noOld('left-sidebar-handle');
+  });
+
+  it('.sidebar-panel：分组卡片底 surface.group（白 6%），边框 border.subtle，顶部内高光 shadow.highlight', () => {
+    const panel = mount('.sidebar-stack', '<section class="sidebar-section sidebar-panel"></section>');
+    expect(win(panel, 'background')).toBe('var(--color-surface-group)');
+    expect(win(panel, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(panel, 'box-shadow')).toBe('var(--shadow-highlight)');
+    noOld('sidebar-panel');
+  });
+
+  it('标题、chip（.sidebar-value）、说明、滑块标签、效果标签的文字与底', () => {
+    expect(win(mount('.sidebar-head', '<h2 class="sidebar-title"></h2>'), 'color')).toBe('var(--color-text-primary)');
+    const chip = mount('.sidebar-head', '<span class="sidebar-value"></span>');
+    expect(win(chip, 'background')).toBe('var(--color-chip-bg)');
+    expect(win(chip, 'color')).toBe('var(--color-text-primary)');
+    noBorder(chip, REST); noBorder(chip, HOVER);
+    expect(win(mount('.sidebar-panel', '<p class="sidebar-note"></p>'), 'color')).toBe('var(--color-text-tertiary)'); // D5-27
+    expect(win(mount('.sidebar-panel', '<div class="sidebar-range-labels"></div>'), 'color')).toBe('var(--color-text-muted)');
+    expect(win(mount('.sidebar-head', '<span class="sidebar-effect-label"></span>'), 'color')).toBe('var(--color-text-muted)');
+    for (const c of ['sidebar-title', 'sidebar-value', 'sidebar-note', 'sidebar-range-labels', 'sidebar-effect-label']) noOld(c);
+  });
+
+  it('滑块：轨道 range.track，拇指 range.thumb（webkit 与 moz 各一套）', () => {
+    const range = mount('.sidebar-panel', '<input class="sidebar-range" type="range">');
+    for (const pe of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
+      expect(win(range, 'background', { pseudoEl: pe }), pe).toBe('var(--color-range-track)');
+    }
+    for (const pe of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
+      expect(win(range, 'background', { pseudoEl: pe }), pe).toBe('var(--color-range-thumb)');
+    }
+    noOld('sidebar-range');
+  });
+
+  it('壁纸预览：底 bg.page（与页面底同色），轮廓 border.subtle', () => {
+    const preview = mount('.sidebar-wallpaper-layout', '<div class="sidebar-wallpaper-preview"></div>');
+    expect(win(preview, 'background')).toBe('var(--color-bg-page)');
+    expect(win(preview, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    noOld('sidebar-wallpaper-preview');
+  });
+
+  it('.sidebar-action-btn：secondary × default × panel，无描边（spec §6.2）', () => {
+    const btn = mount('.sidebar-panel', '<button class="sidebar-action-btn"></button>');
+    expect(win(btn, 'background')).toBe('var(--color-control-panel-default)');
+    expect(win(btn, 'background', { state: HOVER })).toBe('var(--color-control-panel-hover)');
+    expect(win(btn, 'color')).toBe('var(--color-text-primary)');
+    expect(win(btn, 'color', { state: HOVER })).toBe('var(--color-text-primary)');
+    noBorder(btn, REST); noBorder(btn, HOVER);
+    noOld('sidebar-action-btn');
+  });
+
+  it('.sidebar-action-btn-danger：只改文字为 text.dangeronfill（Q2 / D5-5），底与悬停同普通按钮', () => {
+    const btn = mount('.sidebar-panel', '<button class="sidebar-action-btn sidebar-action-btn-danger"></button>');
+    expect(win(btn, 'color')).toBe('var(--color-text-dangeronfill)');
+    expect(win(btn, 'color', { state: HOVER })).toBe('var(--color-text-dangeronfill)');
+    expect(win(btn, 'background')).toBe('var(--color-control-panel-default)');
+    expect(win(btn, 'background', { state: HOVER })).toBe('var(--color-control-panel-hover)');
+    noBorder(btn, REST); noBorder(btn, HOVER);
+    noOld('sidebar-action-btn-danger');
+  });
+
+  it('.sync-delete-btn 并入 secondary × danger × panel：无描边、常态不半透明、悬停白 22%（D5-2、D5-33）', () => {
+    const btn = mount('#sync-logged-section', '<button class="sidebar-action-btn sidebar-action-btn-danger sync-delete-btn"></button>');
+    noBorder(btn, REST); noBorder(btn, HOVER);
+    expect(win(btn, 'opacity')).toBeNull();
+    expect(win(btn, 'opacity', { state: HOVER })).toBeNull();
+    expect(win(btn, 'background')).toBe('var(--color-control-panel-default)');
+    expect(win(btn, 'background', { state: HOVER })).toBe('var(--color-control-panel-hover)');
+    expect(win(btn, 'color')).toBe('var(--color-text-dangeronfill)');
+    expect(win(btn, 'color', { state: HOVER })).toBe('var(--color-text-dangeronfill)');
+    noOld('sync-delete-btn');
+  });
+
+  it('同步状态胶囊：默认沿用 chip.bg，冲突态 warning.bg + warning.border 内描边 + text.warning', () => {
+    const pill = mount('.sidebar-head', '<span class="sidebar-value sidebar-sync-status"></span>');
+    expect(win(pill, 'background')).toBe('var(--color-chip-bg)');
+    expect(win(pill, 'color')).toBe('var(--color-text-primary)');
+    const conflict = mount('.sidebar-head', '<span class="sidebar-value sidebar-sync-status is-conflict"></span>');
+    expect(win(conflict, 'background')).toBe('var(--color-warning-bg)');
+    expect(win(conflict, 'box-shadow')).toBe('inset 0 0 0 1px var(--color-warning-border)');
+    expect(win(conflict, 'color')).toBe('var(--color-text-warning)');
+    noBorder(conflict, REST);
+    noOld('sidebar-sync-status');
+  });
+
+  it('同步提示 .sidebar-sync-hint：text.muted（D5-24，--text-quaternary 的去向）', () => {
+    expect(win(mount('.sidebar-panel', '<p class="sidebar-sync-hint"></p>'), 'color')).toBe('var(--color-text-muted)');
+    noOld('sidebar-sync-hint');
+  });
+});

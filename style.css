@@ -438,9 +438,9 @@ body {
   height: 100vh;
   transform: translateX(calc(-100% + var(--sidebar-peek)));
   border: none;
-  border-right: 1px solid var(--border-white-hairline);
+  border-right: 1px solid var(--color-border-subtle);
   border-radius: 0 1.5rem 1.5rem 0;
-  background: var(--glass-l3);
+  background: var(--color-surface-panel);
   backdrop-filter: blur(var(--blur-soft));
   -webkit-backdrop-filter: blur(var(--blur-soft));
   box-shadow: var(--sidebar-shadow);
@@ -470,10 +470,10 @@ body {
   height: 44px;
   transform: translateY(-50%);
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.32);
+  background: var(--color-handle);
   box-shadow:
-    -6px 0 0 rgba(255, 255, 255, 0.18),
-    -12px 0 0 rgba(255, 255, 255, 0.12);
+    -6px 0 0 var(--color-handle),
+    -12px 0 0 var(--color-handle);
 }
 
 .left-sidebar-content {
@@ -511,7 +511,7 @@ body {
 }
 
 .left-sidebar-handle:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.42);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: -2px;
 }
 
@@ -524,9 +524,9 @@ body {
 .sidebar-panel {
   padding: 16px;
   border-radius: 16px;
-  background: var(--glass-l0);
-  border: 1px solid var(--sidebar-panel-border);
-  box-shadow: var(--sidebar-panel-inset);
+  background: var(--color-surface-group);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-highlight);
 }
 
 .sidebar-head {
@@ -540,18 +540,18 @@ body {
   font-size: 1rem;
   font-weight: 600;
   line-height: 1;
-  color: #fff;
+  color: var(--color-text-primary);
 }
 
 .sidebar-value {
   min-width: 0;
   padding: 3px 9px;
   border-radius: 999px;
-  background: var(--sidebar-chip-bg);
+  background: var(--color-chip-bg);
   text-align: center;
   font-size: 13px;
   font-weight: 600;
-  color: #fff;
+  color: var(--color-text-primary);
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
@@ -575,7 +575,7 @@ body {
 .sidebar-range::-webkit-slider-runnable-track {
   height: 0.25rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--color-range-track);
 }
 
 .sidebar-range::-webkit-slider-thumb {
@@ -586,14 +586,14 @@ body {
   margin-top: -0.5rem;
   border: none;
   border-radius: 50%;
-  background: #fff;
+  background: var(--color-range-thumb);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
 }
 
 .sidebar-range::-moz-range-track {
   height: 0.25rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--color-range-track);
 }
 
 .sidebar-range::-moz-range-thumb {
@@ -601,19 +601,19 @@ body {
   height: 1.25rem;
   border: none;
   border-radius: 50%;
-  background: #fff;
+  background: var(--color-range-thumb);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
 }
 
 .sidebar-range-labels {
   display: flex;
   justify-content: space-between;
-  color: var(--sidebar-fg-muted);
+  color: var(--color-text-muted);
   font-size: 14px;
 }
 
 .sidebar-note {
-  color: var(--fg-soft);
+  color: var(--color-text-tertiary);
   font-size: 0.82rem;
   line-height: 1.5;
 }
@@ -630,7 +630,7 @@ body {
 }
 .sidebar-effect-label {
   font-size: 14px;
-  color: var(--sidebar-fg-muted);
+  color: var(--color-text-muted);
   font-weight: 500;
 }
 /* Figma v1.1: both the main chip and the effect chips are the same size.
@@ -655,8 +655,8 @@ body {
   min-height: 99px;
   border-radius: 16px;
   overflow: hidden;
-  border: 1px solid var(--sidebar-panel-border);
-  background-color: #0f172a;
+  border: 1px solid var(--color-border-subtle);
+  background-color: var(--color-bg-page);
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
@@ -738,8 +738,8 @@ body {
   padding: 9px 12px;
   border: none;
   border-radius: 8px;
-  background: var(--sidebar-button-bg);
-  color: #fff;
+  background: var(--color-control-panel-default);
+  color: var(--color-text-primary);
   font: inherit;
   font-size: 14px;
   font-weight: 500;
@@ -750,7 +750,7 @@ body {
 }
 
 .sidebar-action-btn:hover {
-  background: var(--sidebar-button-bg-hover);
+  background: var(--color-control-panel-hover);
 }
 
 .sidebar-action-btn:disabled {
@@ -759,7 +759,7 @@ body {
 }
 
 .sidebar-action-btn-danger {
-  color: var(--sidebar-danger-fg);
+  color: var(--color-text-dangeronfill);
 }
 
 /* Clock */
@@ -2474,43 +2474,33 @@ body {
   min-width: 0;
 }
 
-/* "Delete account" — Figma v1.1 hollow danger variant:
-   1.5px red border, transparent fill, 13px Medium, opacity 0.7 by default
-   to read as a destructive secondary action. */
+/* "Delete account" — merged into secondary × danger × panel (spec §6.2, D5-2):
+   colour, fill and hover all come from .sidebar-action-btn(-danger); only the
+   layout overrides stay here. No border, no resting opacity. */
 .sync-delete-btn {
   margin-top: 0.5rem;
   width: 100%;
   height: auto;
   padding: 8px 12px;
-  background: transparent;
-  border: 1.5px solid var(--sidebar-danger-border);
   border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--sidebar-danger-fg);
-  opacity: 0.7;
-  transition: opacity 0.15s, background 0.15s;
-}
-
-.sync-delete-btn:hover {
-  opacity: 1;
-  background: var(--accent-red-bg-soft);
 }
 
 /* Sync status in sidebar — inherits .sidebar-value chip styling.
    Empty-state hiding is handled by the generic .sidebar-value:empty rule. */
 
 .sidebar-sync-status.is-conflict {
-  background: var(--warning-bg);
-  box-shadow: inset 0 0 0 1px var(--warning-border);
-  color: var(--text-warning);
+  background: var(--color-warning-bg);
+  box-shadow: inset 0 0 0 1px var(--color-warning-border);
+  color: var(--color-text-warning);
 }
 
 .sidebar-sync-hint {
   margin: 0 0 8px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-quaternary);
+  color: var(--color-text-muted);
 }
 
 /* Folder open/close animations */
