@@ -595,3 +595,97 @@ describe('弹窗与表单', () => {
     for (const c of ['icon-crop-stage', 'icon-crop-box', 'icon-crop-grid', 'icon-crop-title']) noOld(c);
   });
 });
+
+describe('浮层', () => {
+  const MENU_BORDER = { kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-menu)' };
+
+  it('右键菜单容器：surface.menu 底 + border.menu 描边（定稿 黑 78% / 黑 40%）', () => {
+    const m = mount('body', '<div class="context-menu"></div>');
+    expect(win(m, 'background')).toBe('var(--color-surface-menu)');
+    expect(win(m, 'border')).toEqual(MENU_BORDER);
+    noOld('context-menu');
+  });
+
+  it('菜单项：text.secondary，悬停 menu.hover，选中 selection.bg + text.accent（§6.5）', () => {
+    const item = mount('.context-menu', '<div class="ctx-item"></div>');
+    expect(win(item, 'color')).toBe('var(--color-text-secondary)');
+    expect(win(item, 'background')).toBeNull();
+    expect(win(item, 'background', { state: HOVER })).toBe('var(--color-menu-hover)');
+    expect(win(item, 'color', { state: HOVER })).toBe('var(--color-text-secondary)');
+    const active = mount('.context-menu', '<div class="ctx-item ctx-item-active"></div>');
+    expect(win(active, 'background')).toBe('var(--color-selection-bg)');
+    expect(win(active, 'color')).toBe('var(--color-text-accent)');
+    noBorder(item, REST); noBorder(item, HOVER); noBorder(active, REST);
+    noOld('ctx-item'); noOld('ctx-item-active');
+  });
+
+  it('危险菜单项：text.danger，悬停 danger.bg', () => {
+    const d = mount('.context-menu', '<div class="ctx-item ctx-danger"></div>');
+    expect(win(d, 'color')).toBe('var(--color-text-danger)');
+    expect(win(d, 'background')).toBeNull();
+    expect(win(d, 'background', { state: HOVER })).toBe('var(--color-danger-bg)');
+    expect(win(d, 'color', { state: HOVER })).toBe('var(--color-text-danger)');
+    noOld('ctx-danger');
+  });
+
+  it('菜单分隔线 divider（Q3，D5-6：黑 50% -> 白 10%）', () => {
+    expect(win(mount('.context-menu', '<div class="ctx-sep"></div>'), 'background')).toBe('var(--color-divider)');
+    noOld('ctx-sep');
+  });
+
+  it('尺寸按钮：普通 surface.sunken + text.muted（D5-16），悬停 menu.hover + text.secondary，选中 selection.bg + text.accent（D5-28）', () => {
+    const b = mount('.ctx-size-grid', '<div class="ctx-size-btn"></div>');
+    expect(win(b, 'background')).toBe('var(--color-surface-sunken)');
+    expect(win(b, 'color')).toBe('var(--color-text-muted)');
+    expect(win(b, 'background', { state: HOVER })).toBe('var(--color-menu-hover)');
+    expect(win(b, 'color', { state: HOVER })).toBe('var(--color-text-secondary)');
+    const on = mount('.ctx-size-grid', '<div class="ctx-size-btn size-active"></div>');
+    expect(win(on, 'background')).toBe('var(--color-selection-bg)');
+    expect(win(on, 'color')).toBe('var(--color-text-accent)');
+    noBorder(b, REST); noBorder(b, HOVER); noBorder(on, REST);
+    noOld('ctx-size-btn'); noOld('size-active');
+  });
+
+  it('引擎下拉容器：surface.menu 底 + border.menu 描边（D5-13，黑 50% -> 40%）；页脚顶边 divider（D5-35）', () => {
+    const dd = mount('.search-bar', '<div class="engine-dropdown"></div>');
+    expect(win(dd, 'background')).toBe('var(--color-surface-menu)');
+    expect(win(dd, 'border')).toEqual(MENU_BORDER);
+    const foot = mount('.engine-dropdown', '<div class="engine-dropdown-footer"></div>');
+    expect(win(foot, 'border', { side: 'top' })).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-divider)' });
+    noOld('engine-dropdown'); noOld('engine-dropdown-footer');
+  });
+
+  it('引擎列表项：text.secondary，悬停 list.hover，选中 selection.bg + text.accent', () => {
+    const item = mount('.engine-list', '<div class="engine-item"></div>');
+    expect(win(item, 'color')).toBe('var(--color-text-secondary)');
+    expect(win(item, 'background')).toBeNull();
+    expect(win(item, 'background', { state: HOVER })).toBe('var(--color-list-hover)');
+    const sel = mount('.engine-list', '<div class="engine-item selected"></div>');
+    expect(win(sel, 'background')).toBe('var(--color-selection-bg)');
+    expect(win(sel, 'color')).toBe('var(--color-text-accent)');
+    noBorder(item, REST); noBorder(sel, REST);
+    noOld('engine-item'); noOld('selected');
+  });
+
+  it('toast：surface.menu 底 + border.subtle 描边 + text.primary（D5-14）；错误态 text.danger + danger.border', () => {
+    const t = mount('body', '<div class="app-toast"></div>');
+    expect(win(t, 'background')).toBe('var(--color-surface-menu)');
+    expect(win(t, 'color')).toBe('var(--color-text-primary)');
+    expect(win(t, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    const err = mount('body', '<div class="app-toast" data-variant="error"></div>');
+    expect(win(err, 'color')).toBe('var(--color-text-danger)');
+    expect(win(err, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-danger-border)' });
+    expect(win(err, 'background')).toBe('var(--color-surface-menu)');
+    noOld('app-toast');
+  });
+
+  it('登录提示：surface.menu 底 + border.subtle 描边，图标 text.accent，标题 primary，副文 tertiary', () => {
+    const n = mount('body', '<div class="signin-notice"></div>');
+    expect(win(n, 'background')).toBe('var(--color-surface-menu)');
+    expect(win(n, 'border')).toEqual({ kind: 'set', width: '1px', style: 'solid', color: 'var(--color-border-subtle)' });
+    expect(win(mount('.signin-notice', '<svg class="signin-notice-icon"></svg>'), 'color')).toBe('var(--color-text-accent)');
+    expect(win(mount('.signin-notice-text', '<p class="signin-notice-title"></p>'), 'color')).toBe('var(--color-text-primary)');
+    expect(win(mount('.signin-notice-text', '<p class="signin-notice-sub"></p>'), 'color')).toBe('var(--color-text-tertiary)');
+    for (const c of ['signin-notice', 'signin-notice-icon', 'signin-notice-title', 'signin-notice-sub']) noOld(c);
+  });
+});
