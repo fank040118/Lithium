@@ -2,7 +2,7 @@
 #wallpaper-bg {
   position: fixed;
   inset: -40px; /* extend beyond viewport to hide blur edge artifacts */
-  z-index: -2;
+  z-index: var(--z-wallpaper);
   pointer-events: none;
   background-size: cover;
   background-position: center;
@@ -11,7 +11,7 @@
 #wallpaper-dim {
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: var(--z-dim);
   pointer-events: none;
 }
 
@@ -375,6 +375,17 @@
   --shadow-highlight: inset 0 1px 0 0 var(--color-border-highlight);
 }
 
+/* 减少动效（spec §5.8）：时长 token 全部置 0，transition / animation 立即完成。
+   只管 CSS；JS 里写死的 FLIP 与文件夹关闭 setTimeout 见 todos/reduced-motion-js.md。 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-fast: 0ms;
+    --motion-duration-base: 0ms;
+    --motion-duration-slow: 0ms;
+    --motion-duration-slower: 0ms;
+  }
+}
+
 body {
   min-height: 100vh;
   background: var(--color-bg-page);
@@ -416,7 +427,8 @@ body {
   padding-right: var(--space-6);
   padding-bottom: var(--space-6);
   position: relative;
-  z-index: 10;
+  z-index: var(--z-content);
+  isolation: isolate; /* 显式形成层叠上下文：内部的局部层（1、2）不与全局层比较（spec §5.7） */
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -426,7 +438,7 @@ body {
 .main-hero {
   flex-shrink: 0;
   position: relative;
-  z-index: 20;
+  z-index: 2;
 }
 
 .left-sidebar {
@@ -444,8 +456,8 @@ body {
   backdrop-filter: blur(var(--blur-sidebar));
   -webkit-backdrop-filter: blur(var(--blur-sidebar));
   box-shadow: var(--shadow-panel);
-  z-index: 15;
-  transition: transform 0.24s ease;
+  z-index: var(--z-sidebar);
+  transition: transform var(--motion-duration-slow) var(--motion-ease-standard);
   overflow: hidden;
 }
 
@@ -458,7 +470,7 @@ body {
   border: none;
   background: transparent;
   cursor: pointer;
-  z-index: 2;
+  z-index: 1;
 }
 
 .left-sidebar-handle::before {
@@ -488,7 +500,7 @@ body {
   visibility: hidden;
   pointer-events: none;
   transform: translateX(-10px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity var(--motion-duration-base) var(--motion-ease-standard), transform var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .sidebar-stack {
@@ -682,7 +694,7 @@ body {
   border-radius: var(--radius-full);
   filter: blur(28px);
   opacity: 0;
-  transition: opacity 0.18s ease;
+  transition: opacity var(--motion-duration-base) var(--motion-ease-standard);
   z-index: -1;
 }
 
@@ -758,7 +770,7 @@ body {
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.18s ease, opacity 0.18s ease, color 0.18s ease;
+  transition: background var(--motion-duration-base) var(--motion-ease-standard), opacity var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .sidebar-action-btn:not(:disabled):hover {
@@ -884,7 +896,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) var(--motion-ease-standard);
   flex-shrink: 0;
 }
 .clock-add-entry {
@@ -899,7 +911,7 @@ body {
   cursor: pointer;
   color: var(--color-text-muted);
   font-size: 0.875rem;
-  transition: all 0.2s;
+  transition: background var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard), border-color var(--motion-duration-base) var(--motion-ease-standard), opacity var(--motion-duration-base) var(--motion-ease-standard);
 }
 .clock-add-entry:not(:disabled):hover {
   border-color: var(--color-border-strong);
@@ -921,7 +933,7 @@ body {
   max-width: var(--size-search-max);
   margin: 0 auto var(--space-16);
   position: relative;
-  z-index: 20;
+  z-index: 2;
 }
 .search-form {
   display: flex;
@@ -938,7 +950,7 @@ body {
   border: var(--border-width-thin) solid var(--color-input-border);
   box-shadow: var(--shadow-panel);
   overflow: hidden;
-  transition: border-color 0.2s;
+  transition: border-color var(--motion-duration-base) var(--motion-ease-standard);
 }
 .search-bar:focus-within {
   border-color: var(--color-focus-border);
@@ -954,7 +966,7 @@ body {
   color: var(--color-text-primary);
   font-size: 14px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
   white-space: nowrap;
 }
 .engine-trigger:hover {
@@ -1003,7 +1015,7 @@ body {
   border: var(--border-width-thin) solid var(--color-border-menu);
   box-shadow: var(--shadow-popover);
   overflow: hidden;
-  z-index: 25;
+  z-index: 1;
 }
 .engine-list {
   padding: var(--space-1);
@@ -1017,7 +1029,7 @@ body {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   font-size: 14px;
   color: var(--color-text-secondary);
 }
@@ -1041,7 +1053,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard), background var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .engine-item:hover .engine-delete-btn,
 .engine-delete-btn:focus-visible {
@@ -1059,7 +1071,7 @@ body {
   cursor: pointer;
   border-radius: var(--radius-sm);
   text-align: left;
-  transition: all 0.15s;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .add-engine-form {
   padding: var(--space-2) var(--space-1) var(--space-1) var(--space-1);
@@ -1071,7 +1083,7 @@ body {
   font-size: 13px;
   outline: none;
   margin-bottom: var(--space-2);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--motion-duration-base) var(--motion-ease-standard), box-shadow var(--motion-duration-base) var(--motion-ease-standard);
   box-sizing: border-box;
 }
 .engine-form-actions {
@@ -1085,7 +1097,7 @@ body {
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .engine-form-cancel {
   padding: var(--space-2) var(--space-4);
@@ -1093,7 +1105,7 @@ body {
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard), opacity var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 /* Grid area */
@@ -1137,7 +1149,7 @@ body {
 
 .grid-area {
   position: relative;
-  z-index: 10;
+  z-index: 1;
   max-width: var(--main-grid-max-width);
   min-width: var(--main-grid-min-width);
   margin: 0 auto;
@@ -1213,7 +1225,7 @@ body {
   height: var(--card-h);
   margin: 0 auto;
   display: flex;
-  transition: transform 0.2s, opacity 0.2s;
+  transition: transform var(--motion-duration-base) var(--motion-ease-standard), opacity var(--motion-duration-base) var(--motion-ease-standard);
   cursor: grab;
 }
 .grid-item-action-area:active {
@@ -1231,7 +1243,7 @@ body {
   justify-content: center;
   border: none;
   box-shadow: var(--shadow-card);
-  transition: background-color 0.2s, transform 0.2s;
+  transition: background-color var(--motion-duration-base) var(--motion-ease-standard), transform var(--motion-duration-base) var(--motion-ease-standard);
   cursor: pointer;
   overflow: hidden;
   position: relative;
@@ -1277,7 +1289,7 @@ body {
 .grid-item-wrap[data-size="4x2"] .grid-item-name {
   color: var(--color-text-primary);
   text-shadow: var(--shadow-text);
-  z-index: 2;
+  z-index: 1;
   pointer-events: none;
 }
 
@@ -1311,7 +1323,7 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
   color: var(--color-text-primary);
 }
 .add-card:hover {
@@ -1330,7 +1342,7 @@ body {
   background: var(--color-drag-indicator);
   border-radius: var(--radius-full);
   box-shadow: var(--shadow-drag);
-  z-index: 20;
+  z-index: 2;
   pointer-events: none;
 }
 .drag-indicator.left {
@@ -1412,7 +1424,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  z-index: 40;
+  z-index: var(--z-modal-base);
   background: var(--color-scrim);
   backdrop-filter: blur(var(--blur-scrim));
 }
@@ -1422,10 +1434,10 @@ body {
   -webkit-backdrop-filter: blur(var(--blur-backdrop));
 }
 .overlay-mid {
-  z-index: 60;
+  z-index: var(--z-modal-confirm);
 }
 .overlay-edit {
-  z-index: 50;
+  z-index: var(--z-modal-nested);
 }
 
 /* Folder modal */
@@ -1503,7 +1515,7 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: opacity 0.15s, background-color 0.15s;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard), background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .folder-rename-btn:not(:disabled):hover,
 .folder-rename-btn:focus-visible {
@@ -1518,7 +1530,7 @@ body {
   max-width: 360px;
   width: 240px;
   outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--motion-duration-base) var(--motion-ease-standard), box-shadow var(--motion-duration-base) var(--motion-ease-standard);
 }
 .modal-body {
   padding: var(--space-6);
@@ -1531,7 +1543,7 @@ body {
   border: none;
   border-radius: var(--radius-full);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard), opacity var(--motion-duration-base) var(--motion-ease-standard);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1644,9 +1656,10 @@ body {
 /* Sync-conflict dialog — the only way out besides choosing a side is the
    "Decide later" link (or Esc), which just hides it while the conflict stays pending.
    Amber is reserved for the conflict state (see --warning-* in :root). */
-/* Above every other overlay (max 60, incl. the later-in-DOM icon-crop overlay);
-   below the toast (70). It must never be covered by another dialog. */
-.sync-conflict-overlay { z-index: 65; }
+/* Above every other overlay (--z-modal-confirm, incl. the later-in-DOM icon-crop overlay);
+   below the signin notice, context menu and toast (--z-notice / --z-menu / --z-toast).
+   It must never be covered by another dialog. */
+.sync-conflict-overlay { z-index: var(--z-modal-critical); }
 
 .dialog-card.sync-conflict-card {
   display: flex;
@@ -1779,7 +1792,7 @@ body {
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 /* 颜色按变体合并（spec §6.2，P-2）：同一变体的选择器共用一套规则，尺寸与排版留在各自的规则里。
@@ -1958,7 +1971,7 @@ body {
   line-height: 1;
   border: none;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .form-fields {
@@ -2006,7 +2019,7 @@ body {
   padding: 0 var(--space-4);
   font-size: 14px;
   outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--motion-duration-base) var(--motion-ease-standard), box-shadow var(--motion-duration-base) var(--motion-ease-standard);
 }
 .form-field-spacing { margin-bottom: var(--space-4); }
 
@@ -2044,7 +2057,7 @@ body {
   font-size: 13px;
   cursor: pointer;
   text-align: left;
-  transition: color 0.2s, background 0.2s;
+  transition: color var(--motion-duration-base) var(--motion-ease-standard), background var(--motion-duration-base) var(--motion-ease-standard);
 }
 .icon-clear-btn {
   padding: var(--space-2) var(--space-3);
@@ -2052,7 +2065,7 @@ body {
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
-  transition: color 0.2s, background 0.2s;
+  transition: color var(--motion-duration-base) var(--motion-ease-standard), background var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .form-footer {
@@ -2152,7 +2165,7 @@ body {
 /* Context menu */
 .context-menu {
   position: fixed;
-  z-index: 100;
+  z-index: var(--z-menu);
   background: var(--color-surface-menu);
   backdrop-filter: blur(var(--blur-menu));
   -webkit-backdrop-filter: blur(var(--blur-menu));
@@ -2172,7 +2185,7 @@ body {
   cursor: pointer;
   font-size: 14px;
   color: var(--color-text-secondary);
-  transition: background-color 0.15s;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   white-space: nowrap;
 }
 .ctx-item:hover {
@@ -2218,7 +2231,7 @@ body {
   color: var(--color-text-muted);
   background: var(--color-surface-sunken);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard);
   border: none;
   user-select: none;
 }
@@ -2402,10 +2415,10 @@ body {
   -webkit-backdrop-filter: blur(var(--blur-menu));
   border: var(--border-width-thin) solid var(--color-border-subtle);
   box-shadow: var(--shadow-popover);
-  z-index: 120;
+  z-index: var(--z-toast);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity var(--motion-duration-base) var(--motion-ease-standard), transform var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .app-toast.is-visible {
@@ -2436,12 +2449,11 @@ body {
   -webkit-backdrop-filter: blur(var(--blur-menu));
   border: var(--border-width-thin) solid var(--color-border-subtle);
   box-shadow: var(--shadow-popover);
-  z-index: 70;
+  z-index: var(--z-notice);
   transform: translateX(calc(100% + 24px));
   opacity: 0;
   pointer-events: none;
-  transition: transform 0.36s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-              opacity 0.36s ease;
+  transition: transform var(--motion-duration-slower) var(--motion-ease-move), opacity var(--motion-duration-slower) var(--motion-ease-standard);
 }
 .signin-notice.is-visible {
   transform: translateX(0);
@@ -2504,7 +2516,7 @@ body {
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .auth-pane {
@@ -2533,7 +2545,7 @@ body {
   font-weight: 500;
   color: var(--color-text-accent);
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .forgot-password-btn:not(:disabled):hover { opacity: 0.8; }
 /* 键盘聚焦时恢复不透明（鼠标仍在上面时也一样）；写在悬停规则之后，特异性相同 */
@@ -2631,19 +2643,19 @@ body {
 }
 
 .folder-modal.folder-opening {
-  animation: folder-open 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: folder-open var(--motion-duration-slower) var(--motion-ease-enter) both;
 }
 
 .folder-modal.folder-closing {
-  animation: folder-close 260ms ease-in both;
+  animation: folder-close var(--motion-duration-slow) var(--motion-ease-exit) both;
 }
 
 #folder-overlay.overlay-opening {
-  animation: overlay-open 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: overlay-open var(--motion-duration-slower) var(--motion-ease-enter) both;
 }
 
 #folder-overlay.overlay-closing {
-  animation: overlay-close 260ms ease-in both;
+  animation: overlay-close var(--motion-duration-slow) var(--motion-ease-exit) both;
 }
 
 /* Language toggle (bottom-right pill) — placeholder styling, will be refined
@@ -2668,8 +2680,8 @@ body {
   user-select: none;
   backdrop-filter: blur(var(--blur-glass));
   -webkit-backdrop-filter: blur(var(--blur-glass));
-  z-index: 50;
-  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  z-index: var(--z-floating);
+  transition: background var(--motion-duration-base) var(--motion-ease-standard), color var(--motion-duration-base) var(--motion-ease-standard), border-color var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .lang-toggle:not(:disabled):hover {

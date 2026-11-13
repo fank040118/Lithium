@@ -20,8 +20,9 @@ const rulesOf = (css, opts) => lintStyle(css, opts).map((v) => v.rule);
 // 2026-11-13 Task 33（交互状态）：颜色类 13 -> 12（-1，滑块拇指两处同一条投影合为 --range-thumb-shadow 一处）。
 // 2026-11-13 Task 35（间距、尺寸、圆角、阴影、模糊）：颜色类 12 -> 0（-12，box-shadow / text-shadow 里的 rgba 换成 --shadow-*）；
 //   尺寸类 149 -> 89（-60，raw-radius 全部改为 var(--radius-*)）。
+// 2026-11-13 Task 36（z-index 与动效）：尺寸类 89 -> 65（-24，transition-all 8 + raw-z 16 归零），只剩 raw-font-size 65（留给 Task 34）。
 const BASELINE_COLOR = 0;
-const BASELINE_DIM = 89;
+const BASELINE_DIM = 65;
 
 describe('lintStyle', () => {
   it('在 :root 外命中 #fff、rgba(、var(--color-blue-600)、transition: all', () => {
