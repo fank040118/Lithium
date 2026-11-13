@@ -13,6 +13,9 @@
   inset: 0;
   z-index: var(--z-dim);
   pointer-events: none;
+  /* 压暗强度由 JS 写 --rt-wallpaper-dim-opacity（滑块值 / 85）；底色固定取黑 85%（spec §3.3，G-1） */
+  background: var(--color-wallpaper-dim);
+  opacity: var(--rt-wallpaper-dim-opacity, 0);
 }
 
 *, *::before, *::after {
@@ -27,125 +30,13 @@ button, input, select, textarea {
 }
 
 :root {
-  /* ============================================================
-     GLASS — black-tinted surface tiers
-     L0  most subtle, nested inside another panel
-     L1  ambient (clock pill, hover dim)
-     L2  form input / inset chip
-     L3  primary surface (cards, search, sidebar root, overlay)
-     L4  foreground (dialog, dropdown, ctx menu, login, emoji)
-     ============================================================ */
-  --glass-l0:        rgba(0, 0, 0, 0.20);
-  --glass-l1:        rgba(0, 0, 0, 0.30);
-  --glass-l2:        rgba(0, 0, 0, 0.50);
-  --glass-l3:        rgba(0, 0, 0, 0.60);
-  --glass-l3-hover:  rgba(0, 0, 0, 0.80);  /* generic hover (+0.20 from L3) */
-  --glass-l4:        rgba(0, 0, 0, 0.78);
-  --glass-l4-strong: rgba(0, 0, 0, 0.82);  /* toast max emphasis */
-
-  /* Backdrop blur tiers */
-  --blur-light: 4px;     /* drag dim, overlay subtle */
-  --blur-soft:  8px;     /* sidebar */
-  --blur-base:  12px;    /* L2/L3 main */
-  --blur-heavy: 16px;    /* L4 foreground + overlay backdrops */
-  --blur-xl:    24px;    /* folder overlay scrim (panel itself stays unblurred) */
-
-  /* White hairline borders / inset highlights */
-  --border-white-faint:    rgba(255, 255, 255, 0.06);
-  --border-white-hairline: rgba(255, 255, 255, 0.10);
-  --border-white-soft:     rgba(255, 255, 255, 0.20);
-
-  /* Black borders on glass edges */
-  --border-black-soft:   rgba(0, 0, 0, 0.40);
-  --border-black-medium: rgba(0, 0, 0, 0.50);
-  --border-black-strong: rgba(0, 0, 0, 0.70);
-
-  /* Semantic accent tints */
-  --accent-blue-bg-soft:    rgba(59, 130, 246, 0.10);
-  --accent-blue-bg-hover:   rgba(59, 130, 246, 0.15);
-  --accent-blue-bg-active:  rgba(59, 130, 246, 0.20);
-  --accent-blue-border:     rgba(59, 130, 246, 0.50);
-
-  --accent-red-bg-soft:     rgba(220, 38, 38, 0.10);
-  --accent-red-bg-hover:    rgba(239, 68, 68, 0.15);
-  --accent-red-border-soft: rgba(248, 113, 113, 0.34);
-  --accent-red-border:      rgba(248, 113, 113, 0.50);
-
-  --accent-amber-300:       #fcd34d;
-  --accent-amber-500:       #f59e0b;
-  --warning-bg:             rgba(245, 158, 11, 0.18);
-  --warning-border:         rgba(245, 158, 11, 0.45);
-  --text-warning:           var(--accent-amber-300);
-
-  /* Foreground text on dark surfaces */
-  --fg-muted:  rgba(255, 255, 255, 0.60);
-  --fg-soft:   rgba(255, 255, 255, 0.72);
-  --fg-strong: rgba(255, 255, 255, 0.85);
-
-  /* ============================================================
-     Legacy aliases — kept so Figma Variables bindings still resolve
-     ============================================================ */
-  --surface-bg:           var(--glass-l3);
-  --surface-bg-hover:     var(--glass-l3-hover);
-  --surface-blur:         var(--blur-base);
-  --surface-shadow:       0 4px 6px -1px rgba(0, 0, 0, 0.3);
-  --surface-border-soft:  var(--border-white-hairline);
-
-  --sidebar-blur:            var(--blur-soft);
-  --sidebar-shadow:          0 12px 16px rgba(0, 0, 0, 0.35);
-  --sidebar-panel-bg:        var(--glass-l0);
-  --sidebar-panel-border:    var(--border-white-hairline);
-  --sidebar-panel-inset:     inset 0 1px 0 var(--border-white-faint);
-  --sidebar-chip-bg:         rgba(255, 255, 255, 0.15);
-  --sidebar-button-bg:       rgba(255, 255, 255, 0.15);
-  --sidebar-button-bg-hover: rgba(255, 255, 255, 0.22);
-  --sidebar-fg-muted:        var(--fg-muted);
-  --sidebar-danger-fg:       #f87171;                     /* color/red/400 */
-  --sidebar-danger-border:   #dc2626;                     /* color/red/600 / action/danger */
-
+  /* 布局辅助变量：只给 style.css 里的布局计算用，不是设计 token，Penpot 里没有对应项。 */
   --clock-time-width: calc(8ch + 0.35em);
-  --grid-gap: 1rem;
   --main-grid-track-size: 80px;
   --main-grid-min-width: 560px;   /* MIN cols (6) * track (80) + 5 * gap (16) */
-  --folder-grid-columns: 8;
-  --main-grid-max-width: 752px;
-  --main-content-max-width: 800px;
-  --sidebar-width: 400px;
-  --sidebar-min-width: var(--sidebar-width);
-  --sidebar-preview-width: 11rem;
-  --sidebar-actions-min-width: 7rem;
-  --sidebar-peek: 18px;
-
-  /* ============================================================
-     DIALOG SYSTEM — Figma v1.1
-     ============================================================ */
-
-  /* Dialog text scale — slate ramp from #fff down */
-  --text-primary:    #ffffff;
-  --text-secondary:  #e2e8f0;  /* slate/200, ctx item text */
-  --text-tertiary:   #cbd5e1;  /* slate/300, verify desc / secondary btn text */
-  --text-quaternary: #94a3b8;  /* slate/400, label / 普通描述 */
-  --text-placeholder:#64748b;  /* slate/500, placeholder / 小序号 */
-  --text-accent:     #60a5fa;  /* blue/400, 强调链接、激活 chip 文字 */
-  --text-danger:     #f87171;  /* red/400, 危险文字、删除账户标题 */
-
-  /* Action button fills */
-  --action-primary:        #2563eb;  /* blue/600 */
-  --action-primary-hover:  #3b82f6;  /* blue/500 */
-  --action-danger:         #dc2626;  /* red/600 */
-  --action-danger-hover:   #ef4444;  /* red/500 */
-  --action-secondary:      var(--glass-l3);        /* rgba(0,0,0,0.6) */
-  --action-secondary-hover: var(--glass-l3-hover);
-
-  /* Input / dialog surface */
-  --bg-input:        #000000;
-  --bg-input-border: var(--glass-l3);   /* Figma rgba(0,0,0,0.6) — matches L3 */
-  --bg-input-faint:  rgba(0, 0, 0, 0.05); /* color/black-alpha/05 — icon preview tile */
-  --bg-input-soft:   rgba(0, 0, 0, 0.40); /* color/black-alpha/40 — recessed row inside a dialog */
-  --focus-ring-blue: rgba(37, 99, 235, 0.20);
 }
 
-/* 新 token（design/tokens.json 渲染，Task 28）：与上方旧变量并存，迁移完成后删除旧块。
+/* design token（design/tokens.json 渲染，Task 28）。
    core 放原始层与尺寸；语义色与阴影放主题块（spec §2.3、§2.4）。 */
 :root {
   --color-white: #ffffff;
@@ -425,7 +316,7 @@ body {
 
 /* Main layout */
 .main-content {
-  max-width: max(56rem, var(--main-content-max-width));
+  max-width: max(56rem, var(--rt-main-content-max-width, var(--size-content-max)));
   margin: 0 auto;
   padding-top: var(--space-20);
   padding-left: var(--space-6);
@@ -635,11 +526,6 @@ body {
   justify-content: space-between;
   color: var(--color-text-muted);
   font: var(--type-body-md);
-}
-
-.sidebar-note {
-  color: var(--color-text-tertiary);
-  font: var(--type-body-sm);
 }
 
 /* Wallpaper effects sliders */
@@ -1142,7 +1028,7 @@ body {
 .grid-area {
   position: relative;
   z-index: 1;
-  max-width: var(--main-grid-max-width);
+  max-width: var(--rt-main-grid-max-width, var(--size-grid-max));
   min-width: var(--main-grid-min-width);
   margin: 0 auto;
   width: 100%;
@@ -1166,14 +1052,14 @@ body {
 }
 
 .grid-item-wrap {
-  --base-card-size: min(100%, var(--size-card-base));
-  --card-w: min(100%, var(--size-card-base));
-  --card-h: min(100%, var(--size-card-base));
-  --preview-icon-size: var(--size-card-icon);
-  --preview-letter-size: 30px;
-  --folder-mini-gap: var(--space-2);
-  --folder-mini-radius: 2px;
-  --folder-mini-letter-size: 8px;
+  --rt-base-card-size: min(100%, var(--size-card-base));
+  --rt-card-w: min(100%, var(--size-card-base));
+  --rt-card-h: min(100%, var(--size-card-base));
+  --rt-preview-icon-size: var(--size-card-icon);
+  --rt-preview-letter-size: 30px;
+  --rt-folder-mini-gap: var(--space-2);
+  --rt-folder-mini-radius: 2px;
+  --rt-folder-mini-letter-size: 8px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -1213,8 +1099,8 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  width: var(--card-w);
-  height: var(--card-h);
+  width: var(--rt-card-w);
+  height: var(--rt-card-h);
   margin: 0 auto;
   display: flex;
   transition: transform var(--motion-duration-base) var(--motion-ease-standard), opacity var(--motion-duration-base) var(--motion-ease-standard);
@@ -1255,6 +1141,7 @@ body {
 }
 
 .grid-folder-icon {
+  color: var(--color-text-secondary);
   width: 100%;
   height: 100%;
   display: block;
@@ -1264,8 +1151,8 @@ body {
 }
 
 .grid-item-link-preview {
-  width: var(--base-card-size);
-  height: var(--base-card-size);
+  width: var(--rt-base-card-size);
+  height: var(--rt-base-card-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1288,7 +1175,7 @@ body {
 .grid-item-name {
   position: absolute;
   left: 50%;
-  top: calc(var(--card-h) + 2px);
+  top: calc(var(--rt-card-h) + 2px);
   transform: translateX(-50%);
   font: var(--type-caption);
   color: var(--color-text-primary);
@@ -1370,7 +1257,7 @@ body {
 }
 .folder-preview-cell {
   background: transparent;
-  border-radius: var(--folder-mini-radius);
+  border-radius: var(--rt-folder-mini-radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1489,6 +1376,9 @@ body {
   border-radius: var(--radius-md);
   display: flex;
   flex-shrink: 0;
+}
+.folder-title-icon svg {
+  color: var(--color-text-secondary);
 }
 .folder-name-display {
   display: inline-block;
@@ -2281,13 +2171,15 @@ body {
 .icon-letter {
   font-size: 30px;
   font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
 }
 .icon-letter-sm {
   font-size: 10px;
   font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
 }
 .folder-slot-letter {
-  font-size: var(--preview-letter-size);
+  font-size: var(--rt-preview-letter-size);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-tertiary);
   pointer-events: none;
@@ -2296,6 +2188,7 @@ body {
 }
 
 .folder-slot-folder-icon {
+  color: var(--color-text-secondary);
   width: 100%;
   height: 100%;
   display: block;
@@ -2324,7 +2217,7 @@ body {
   width: 100%;
   height: 100%;
   padding: 0;
-  gap: var(--folder-mini-gap);
+  gap: var(--rt-folder-mini-gap);
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -2337,7 +2230,7 @@ body {
   align-items: center;
   justify-content: center;
   background: transparent;
-  border-radius: var(--folder-mini-radius);
+  border-radius: var(--rt-folder-mini-radius);
 }
 
 .folder-mini-folder-slot {
@@ -2355,6 +2248,7 @@ body {
 }
 
 .folder-mini-folder-icon {
+  color: var(--color-text-secondary);
   width: 100%;
   height: 100%;
   padding: 14%;
@@ -2362,7 +2256,7 @@ body {
 }
 
 .folder-mini-letter {
-  font-size: var(--folder-mini-letter-size);
+  font-size: var(--rt-folder-mini-letter-size);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-tertiary);
   pointer-events: none;

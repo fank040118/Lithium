@@ -279,16 +279,15 @@ describe('侧栏', () => {
     noOld('sidebar-panel');
   });
 
-  it('标题、chip（.sidebar-value）、说明、滑块标签、效果标签的文字与底', () => {
+  it('标题、chip（.sidebar-value）、滑块标签、效果标签的文字与底', () => {
     expect(win(mount('.sidebar-head', '<h2 class="sidebar-title"></h2>'), 'color')).toBe('var(--color-text-primary)');
     const chip = mount('.sidebar-head', '<span class="sidebar-value"></span>');
     expect(win(chip, 'background')).toBe('var(--color-chip-bg)');
     expect(win(chip, 'color')).toBe('var(--color-text-primary)');
     noBorder(chip, REST); noBorder(chip, HOVER);
-    expect(win(mount('.sidebar-panel', '<p class="sidebar-note"></p>'), 'color')).toBe('var(--color-text-tertiary)'); // D5-27
     expect(win(mount('.sidebar-panel', '<div class="sidebar-range-labels"></div>'), 'color')).toBe('var(--color-text-muted)');
     expect(win(mount('.sidebar-head', '<span class="sidebar-effect-label"></span>'), 'color')).toBe('var(--color-text-muted)');
-    for (const c of ['sidebar-title', 'sidebar-value', 'sidebar-note', 'sidebar-range-labels', 'sidebar-effect-label']) noOld(c);
+    for (const c of ['sidebar-title', 'sidebar-value', 'sidebar-range-labels', 'sidebar-effect-label']) noOld(c);
   });
 
   it('滑块：轨道 range.track，拇指 range.thumb（webkit 与 moz 各一套）', () => {

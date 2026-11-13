@@ -361,8 +361,8 @@ function applyMainGridColumns() {
   // The configured column count is treated as an upper bound: it caps the
   // grid container's max-width while auto-fill in CSS picks the actual track
   // count based on available width (see .grid-area > div in style.css).
-  root.style.setProperty('--main-grid-max-width', `${gridWidth}px`);
-  root.style.setProperty('--main-content-max-width', `${gridWidth + MAIN_CONTENT_SIDE_PADDING}px`);
+  root.style.setProperty('--rt-main-grid-max-width', `${gridWidth}px`);
+  root.style.setProperty('--rt-main-content-max-width', `${gridWidth + MAIN_CONTENT_SIDE_PADDING}px`);
   updateGridColumnsControls();
 }
 
@@ -664,7 +664,11 @@ function applyWallpaperEffects() {
   const bg = $('#wallpaper-bg');
   const dim = $('#wallpaper-dim');
   if (bg) bg.style.filter = wallpaperBlur > 0 ? `blur(${wallpaperBlur}px)` : '';
-  if (dim) dim.style.background = wallpaperDim > 0 ? `rgba(0,0,0,${wallpaperDim / 100})` : '';
+  if (dim) {
+    // 底色在 CSS（--color-wallpaper-dim = 黑 85%），这里只写不透明度：滑块值 / 85，合成结果等于 rgba(0,0,0,滑块值/100)
+    if (wallpaperDim > 0) dim.style.setProperty('--rt-wallpaper-dim-opacity', String(wallpaperDim / 85));
+    else dim.style.removeProperty('--rt-wallpaper-dim-opacity');
+  }
 
   const blurRange = $('#wallpaper-blur-range');
   const dimRange = $('#wallpaper-dim-range');
@@ -1255,10 +1259,10 @@ function updateIconPreview(dataUrl) {
   }
 }
 
-const ICON_FALLBACK_STYLE = 'display:none;color:#cbd5e1;pointer-events:none';
-const ICON_FALLBACK_STYLE_SM = 'display:none;color:#cbd5e1;pointer-events:none';
-const FOLDER_PREVIEW_ICON = '<svg class="folder-slot-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
-const FOLDER_PREVIEW_ICON_MINI = '<svg class="folder-mini-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
+const ICON_FALLBACK_STYLE = 'display:none;pointer-events:none';
+const ICON_FALLBACK_STYLE_SM = 'display:none;pointer-events:none';
+const FOLDER_PREVIEW_ICON = '<svg class="folder-slot-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
+const FOLDER_PREVIEW_ICON_MINI = '<svg class="folder-mini-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
 
 // Renders a single normal slot (1 child icon) in the large-folder slot grid.
 function renderFolderNormalSlot(child) {
@@ -1341,7 +1345,7 @@ function renderIcon(item) {
       const content = `${buildManagedImageTag({ src: favicon, style: ICON_STYLE, fallbackSrc: getFaviconFallback(item.url), errorMode: 'show-sibling' })}<span class="icon-letter" style="${ICON_FALLBACK_STYLE}">${ch}</span>`;
       return isExpandedLink ? `<div class="grid-item-link-preview">${content}</div>` : content;
     }
-    const content = `<span class="icon-letter" style="color:#cbd5e1;pointer-events:none">${ch}</span>`;
+    const content = `<span class="icon-letter" style="pointer-events:none">${ch}</span>`;
     return isExpandedLink ? `<div class="grid-item-link-preview">${content}</div>` : content;
   }
 
@@ -1350,7 +1354,7 @@ function renderIcon(item) {
   }
 
   if (children.length === 0) {
-    return `<svg class="grid-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
+    return `<svg class="grid-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
   }
 
   const sz = getItemSize(item);
@@ -1373,7 +1377,7 @@ function renderIcon(item) {
       }
       const fav = getFavicon(c.url);
       if (fav) return `<div class="folder-preview-cell">${buildManagedImageTag({ src: fav, fallbackSrc: getFaviconFallback(c.url), errorMode: 'show-sibling' })}<span class="icon-letter-sm" style="${ICON_FALLBACK_STYLE_SM}">${cch}</span></div>`;
-      return `<div class="folder-preview-cell"><span class="icon-letter-sm" style="color:#cbd5e1;pointer-events:none">${cch}</span></div>`;
+      return `<div class="folder-preview-cell"><span class="icon-letter-sm" style="pointer-events:none">${cch}</span></div>`;
     }).join('');
     for (let i = 0; i < empties; i++) {
       cells += `<div class="folder-preview-cell empty"></div>`;
@@ -1401,7 +1405,7 @@ function renderIcon(item) {
     }
     slotsHtml += renderFolderMiniSlot(miniChildren);
   }
-  return `<div class="folder-slot-grid" style="grid-template-columns:repeat(${cols},var(--base-card-size));grid-template-rows:repeat(${rows},var(--base-card-size))">${slotsHtml}</div>`;
+  return `<div class="folder-slot-grid" style="grid-template-columns:repeat(${cols},var(--rt-base-card-size));grid-template-rows:repeat(${rows},var(--rt-base-card-size))">${slotsHtml}</div>`;
 }
 
 function createGridItemHTML(item) {
@@ -1470,14 +1474,14 @@ function updateGridItemSizes() {
       const miniCell = Math.max(1, (baseCard - miniGap) / 2);
       const miniRadius = Math.max(1, Math.min(Math.floor(miniCell / 2), Math.round(miniCell * 0.25)));
 
-      wrap.style.setProperty('--base-card-size', Math.round(baseCard) + 'px');
-      wrap.style.setProperty('--card-w', Math.round(cardWidth) + 'px');
-      wrap.style.setProperty('--card-h', Math.round(cardHeight) + 'px');
-      wrap.style.setProperty('--preview-icon-size', Math.max(20, Math.round(baseCard * 0.625)) + 'px');
-      wrap.style.setProperty('--preview-letter-size', Math.max(14, Math.round(baseCard * 0.46875)) + 'px');
-      wrap.style.setProperty('--folder-mini-gap', miniGap + 'px');
-      wrap.style.setProperty('--folder-mini-radius', miniRadius + 'px');
-      wrap.style.setProperty('--folder-mini-letter-size', Math.max(8, Math.round(baseCard * 0.125)) + 'px');
+      wrap.style.setProperty('--rt-base-card-size', Math.round(baseCard) + 'px');
+      wrap.style.setProperty('--rt-card-w', Math.round(cardWidth) + 'px');
+      wrap.style.setProperty('--rt-card-h', Math.round(cardHeight) + 'px');
+      wrap.style.setProperty('--rt-preview-icon-size', Math.max(20, Math.round(baseCard * 0.625)) + 'px');
+      wrap.style.setProperty('--rt-preview-letter-size', Math.max(14, Math.round(baseCard * 0.46875)) + 'px');
+      wrap.style.setProperty('--rt-folder-mini-gap', miniGap + 'px');
+      wrap.style.setProperty('--rt-folder-mini-radius', miniRadius + 'px');
+      wrap.style.setProperty('--rt-folder-mini-letter-size', Math.max(8, Math.round(baseCard * 0.125)) + 'px');
       wrap.style.height = wrapHeight ? Math.round(wrapHeight) + 'px' : '';
     });
   });
@@ -1494,7 +1498,7 @@ function render() {
       overlay.classList.remove('hidden');
       $('#folder-title').innerHTML = `
         <div class="folder-title-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
         </div>
         <span class="folder-name-display">${escapeHtml(folder.name)}</span>
         <button type="button" class="folder-rename-btn" data-action="rename-folder" title="${escapeAttr(t('folder.renameTitle'))}" aria-label="${escapeAttr(t('folder.renameTitle'))}">

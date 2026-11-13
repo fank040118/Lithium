@@ -2,7 +2,11 @@
 // lintStyle / lintJsColors 的规则用内联夹具验证；棘轮读真实的 style.css，只允许违规数下降，不允许上升。
 // 每个后续 Task 完成时把 BASELINE_* 下调到新的实测值（B6 归零）。
 import { describe, it, expect } from 'vitest';
-import { readStyleCss } from './helpers/cssRules.js';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { readStyleCss, parseCss } from './helpers/cssRules.js';
+import { undefinedVarRefs, setPropertyVars } from './helpers/cssVars.js';
 import {
   lintStyle, lintJsColors, colorViolations, dimViolations, DEFAULT_ALLOW,
 } from './helpers/styleLint.js';
@@ -181,5 +185,152 @@ describe('棘轮：style.css', () => {
     const vs = lintStyle(css);
     expect(vs.length).toBeGreaterThan(0);
     expect(vs.every((v) => Number.isInteger(v.line) && v.line > 0)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 37（B5，spec §9）：旧变量清零、变量全部有定义、JS 不写颜色、运行时变量统一 --rt- 前缀。
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const readRepo = (f) => readFileSync(resolve(REPO_ROOT, f), 'utf8');
+const JS_FILES = ['app.js', 'firebase.js', 'weather.js', 'iconCache.js'];
+const SCAN_FILES = [...JS_FILES, 'newtab.html'];
+
+// spec §9 的旧变量（改名或删除的全部旧名）；JS 运行时变量的旧名（加 --rt- 前缀之前）也在内。
+// --clock-time-width、--main-grid-track-size、--main-grid-min-width 是 style.css 内部用的布局辅助变量，
+// §9 没有要求改名或删除，不在清单里。
+const OLD_VARS = [
+  '--glass-l0', '--glass-l1', '--glass-l2', '--glass-l3', '--glass-l3-hover', '--glass-l4', '--glass-l4-strong',
+  '--blur-light', '--blur-soft', '--blur-base', '--blur-heavy', '--blur-xl',
+  '--border-white-faint', '--border-white-hairline', '--border-white-soft',
+  '--border-black-soft', '--border-black-medium', '--border-black-strong',
+  '--accent-blue-bg-soft', '--accent-blue-bg-hover', '--accent-blue-bg-active', '--accent-blue-border',
+  '--accent-red-bg-soft', '--accent-red-bg-hover', '--accent-red-border-soft', '--accent-red-border',
+  '--accent-amber-300', '--accent-amber-500', '--warning-bg', '--warning-border', '--text-warning',
+  '--fg-muted', '--fg-soft', '--fg-strong',
+  '--surface-bg', '--surface-bg-hover', '--surface-blur', '--surface-shadow', '--surface-border-soft',
+  '--sidebar-blur', '--sidebar-shadow', '--sidebar-panel-bg', '--sidebar-panel-border', '--sidebar-panel-inset',
+  '--sidebar-chip-bg', '--sidebar-button-bg', '--sidebar-button-bg-hover', '--sidebar-fg-muted',
+  '--sidebar-danger-fg', '--sidebar-danger-border',
+  '--grid-gap', '--folder-grid-columns',
+  '--sidebar-width', '--sidebar-min-width', '--sidebar-preview-width', '--sidebar-actions-min-width', '--sidebar-peek',
+  '--text-primary', '--text-secondary', '--text-tertiary', '--text-quaternary', '--text-placeholder',
+  '--text-accent', '--text-danger',
+  '--action-primary', '--action-primary-hover', '--action-danger', '--action-danger-hover',
+  '--action-secondary', '--action-secondary-hover',
+  '--bg-input', '--bg-input-border', '--bg-input-faint', '--bg-input-soft', '--focus-ring-blue',
+  // JS 运行时变量的旧名
+  '--main-grid-max-width', '--main-content-max-width', '--base-card-size', '--card-w', '--card-h',
+  '--preview-icon-size', '--preview-letter-size', '--folder-mini-gap', '--folder-mini-radius',
+  '--folder-mini-letter-size',
+];
+
+// JS 写入的运行时变量：10 个（spec §9）加 G-1 的壁纸压暗不透明度。
+const RT_VARS = [
+  '--rt-main-grid-max-width', '--rt-main-content-max-width', '--rt-base-card-size', '--rt-card-w', '--rt-card-h',
+  '--rt-preview-icon-size', '--rt-preview-letter-size', '--rt-folder-mini-gap', '--rt-folder-mini-radius',
+  '--rt-folder-mini-letter-size', '--rt-wallpaper-dim-opacity',
+];
+
+describe('cssVars：变量定义与引用扫描', () => {
+  it('CSS 里引用了未定义的变量会被报出；有 :root 声明、组件内声明的都算已定义；注释里的不计', () => {
+    const css = ':root { --a: 1px; } .x { --b: 2px; width: var(--a); height: var(--b); margin: var(--gone, 0); } /* var(--only-in-comment) */';
+    expect(undefinedVarRefs({ 'style.css': css })).toEqual([{ file: 'style.css', name: '--gone' }]);
+  });
+
+  it('JS 字符串里的 var(--x) 要在 CSS 里有声明，或由 setProperty 写入；两处都没有就报出', () => {
+    const css = ':root { --defined: 1px; }';
+    const js = [
+      "el.style.cssText = 'width:var(--defined)';",
+      "el.style.setProperty('--rt-ok', '1px'); el.style.cssText = `top:var(--rt-ok)`;",
+      "el.innerHTML = '<div style=\"width:var(--removed)\">';",
+    ].join('\n');
+    expect(undefinedVarRefs({ 'style.css': css, 'app.js': js })).toEqual([{ file: 'app.js', name: '--removed' }]);
+  });
+
+  it('setPropertyVars 只认字面量变量名', () => {
+    expect([...setPropertyVars("a.setProperty('--rt-a','1'); b.setProperty(`--rt-b`, x); c.setProperty('display','')")].sort())
+      .toEqual(['--rt-a', '--rt-b']);
+  });
+});
+
+describe('B5 清理：style.css 与 JS', () => {
+  const style = readStyleCss();
+  const sources = Object.fromEntries([['style.css', style], ...SCAN_FILES.map((f) => [f, readRepo(f)])]);
+
+  it('style.css 颜色类违规为 0', () => {
+    expect(colorViolations(style, { allow: DEFAULT_ALLOW })).toEqual([]);
+  });
+
+  it('所有 var(--x) 都有定义（扫描 style.css 与 app.js 等 JS、newtab.html 里的字符串）', () => {
+    expect(undefinedVarRefs(sources)).toEqual([]);
+  });
+
+  it('不再存在旧变量名（style.css、JS、newtab.html 里都没有）', () => {
+    const hits = [];
+    for (const [file, text] of Object.entries(sources)) {
+      for (const v of OLD_VARS) {
+        // 边界：前面不能是字母、数字、连字符（--color-text-primary 不算含 --text-primary），后面不能接变量名字符。
+        const re = new RegExp(`(?<![\\w-])${v}(?![\\w-])`);
+        if (re.test(text)) hits.push(`${file}: ${v}`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+
+  it('app.js、firebase.js、weather.js、iconCache.js 没有颜色字面量', () => {
+    for (const f of JS_FILES) {
+      expect(lintJsColors(readRepo(f)), f).toEqual([]);
+    }
+  });
+
+  it('JS 写入的 CSS 变量全部带 --rt- 前缀，且恰好是约定的 11 个', () => {
+    const written = new Set();
+    for (const f of JS_FILES) for (const n of setPropertyVars(readRepo(f))) written.add(n);
+    expect([...written].sort()).toEqual([...RT_VARS].sort());
+  });
+
+  it('运行时变量的默认值与使用处都改成 --rt-：主网格 / 内容宽度的默认值来自 size token（G-2）', () => {
+    const rules = parseCss(style);
+    const decls = (sel) => rules.filter((r) => r.media === null && r.selectors.some((s) => s.text === sel)).flatMap((r) => r.decls);
+    const last = (sel, prop) => decls(sel).filter((d) => d.prop === prop).at(-1)?.value;
+    expect(style).toContain('max-width: var(--rt-main-grid-max-width, var(--size-grid-max));');
+    expect(style).toContain('max-width: max(56rem, var(--rt-main-content-max-width, var(--size-content-max)));');
+    expect(last('.grid-item-wrap', '--rt-base-card-size')).toBe('min(100%, var(--size-card-base))');
+    expect(last('.grid-item-wrap', '--rt-preview-letter-size')).toBe('30px');
+  });
+
+  it('壁纸压暗（G-1 方案 a）：#wallpaper-dim 用 --color-wallpaper-dim 做底，opacity 由 --rt-wallpaper-dim-opacity 控制，默认 0', () => {
+    const decl = parseCss(style).filter((r) => r.media === null && r.selectors.some((s) => s.text === '#wallpaper-dim'))
+      .flatMap((r) => r.decls);
+    const last = (prop) => decl.filter((d) => d.prop === prop).at(-1)?.value;
+    expect(last('background')).toBe('var(--color-wallpaper-dim)');
+    expect(last('opacity')).toBe('var(--rt-wallpaper-dim-opacity, 0)');
+  });
+
+  it('文件夹图标描边走 currentColor：4 个选择器各自设 color: var(--color-text-secondary)；app.js 里没有 stroke="#..."', () => {
+    const rules = parseCss(style);
+    for (const sel of ['.folder-slot-folder-icon', '.folder-mini-folder-icon', '.grid-folder-icon', '.folder-title-icon svg']) {
+      const d = rules.filter((r) => r.media === null && r.selectors.some((s) => s.text === sel)).flatMap((r) => r.decls);
+      expect(d.filter((x) => x.prop === 'color').at(-1)?.value, sel).toBe('var(--color-text-secondary)');
+    }
+    expect(readRepo('app.js')).not.toMatch(/stroke="#/);
+  });
+
+  it('首字母占位（G-3）：颜色在 .icon-letter / .icon-letter-sm 上；ICON_FALLBACK_STYLE 只剩 display 与 pointer-events', () => {
+    const rules = parseCss(style);
+    for (const sel of ['.icon-letter', '.icon-letter-sm']) {
+      const d = rules.filter((r) => r.media === null && r.selectors.some((s) => s.text === sel)).flatMap((r) => r.decls);
+      expect(d.filter((x) => x.prop === 'color').at(-1)?.value, sel).toBe('var(--color-text-tertiary)');
+    }
+    const app = readRepo('app.js');
+    expect(app).toContain("const ICON_FALLBACK_STYLE = 'display:none;pointer-events:none';");
+    expect(app).toContain("const ICON_FALLBACK_STYLE_SM = 'display:none;pointer-events:none';");
+    expect(app).not.toMatch(/class="icon-letter(?:-sm)?" style="[^"]*(?:color|font-size):/);
+  });
+
+  it('死 CSS：.sidebar-note 没有任何使用处，已从 style.css 删除', () => {
+    expect(style).not.toMatch(/\.sidebar-note(?![\w-])/);
+    for (const f of ['app.js', 'newtab.html']) expect(readRepo(f), f).not.toMatch(/sidebar-note(?![\w-])/);
   });
 });

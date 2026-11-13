@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadAppModule } from './helpers/loadAppModule.js';
 import { installAppDomFixture } from './helpers/appDomFixture.js';
 import { createMockChromeStorage } from './helpers/mockChromeStorage.js';
@@ -120,11 +123,29 @@ describe('app.js render/dom-light layer', () => {
       app.applyWallpaperEffects();
 
       expect(document.getElementById('wallpaper-bg').style.filter).toBe('');
-      expect(document.getElementById('wallpaper-dim').style.background).toBe('');
+      expect(document.getElementById('wallpaper-dim').style.getPropertyValue('--rt-wallpaper-dim-opacity')).toBe('');
       expect(document.getElementById('wallpaper-blur-range').value).toBe('0');
       expect(document.getElementById('wallpaper-dim-range').value).toBe('0');
       expect(document.getElementById('wallpaper-blur-value').textContent).toBe('0');
       expect(document.getElementById('wallpaper-dim-value').textContent).toBe('0%');
+    });
+
+    // wallpaperDim 是闭包私有的 let，测试拿不到 setter；这里把初始值改成 40 后重新求值 app.js，只用来走非零分支。
+    it('dim > 0 时只写运行时变量 --rt-wallpaper-dim-opacity = 滑块值 / 85，不再写 rgba 背景（G-1 方案 a）', () => {
+      const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../app.js'), 'utf8')
+        .replace(/\ninit\(\);\s*$/, '\n')
+        .replace('let wallpaperDim = 0;', 'let wallpaperDim = 40;');
+      expect(src).toContain('let wallpaperDim = 40;');
+      (0, eval)(src);
+      globalThis.applyWallpaperEffects();
+
+      const dim = document.getElementById('wallpaper-dim');
+      expect(Number(dim.style.getPropertyValue('--rt-wallpaper-dim-opacity'))).toBeCloseTo(40 / 85, 10);
+      expect(dim.style.background).toBe('');
+      expect(document.getElementById('wallpaper-dim-range').value).toBe('40');
+      expect(document.getElementById('wallpaper-dim-value').textContent).toBe('40%');
+      // 黑 85% x opacity = 原来的 rgba(0,0,0,0.4)
+      expect(0.85 * Number(dim.style.getPropertyValue('--rt-wallpaper-dim-opacity'))).toBeCloseTo(0.4, 10);
     });
   });
 
@@ -251,10 +272,10 @@ describe('app.js render/dom-light layer', () => {
       const wrap2x2 = container.querySelector('[data-size="2x2"]');
       const metrics2x2 = app.getGridItemMetrics('2x2', 80, 16);
 
-      expect(wrap1x1.style.getPropertyValue('--base-card-size')).toBe('64px'); // Math.min(80,64)
+      expect(wrap1x1.style.getPropertyValue('--rt-base-card-size')).toBe('64px'); // Math.min(80,64)
       expect(wrap1x1.style.height).toBe(''); // no FOLDER_SLOT_LAYOUTS entry for 1x1 -> wrapHeight:null
-      expect(wrap2x2.style.getPropertyValue('--card-w')).toBe(`${Math.round(metrics2x2.cardWidth)}px`);
-      expect(wrap2x2.style.getPropertyValue('--card-h')).toBe(`${Math.round(metrics2x2.cardHeight)}px`);
+      expect(wrap2x2.style.getPropertyValue('--rt-card-w')).toBe(`${Math.round(metrics2x2.cardWidth)}px`);
+      expect(wrap2x2.style.getPropertyValue('--rt-card-h')).toBe(`${Math.round(metrics2x2.cardHeight)}px`);
       expect(wrap2x2.style.height).toBe(`${Math.round(metrics2x2.wrapHeight)}px`);
     });
 
@@ -268,8 +289,8 @@ describe('app.js render/dom-light layer', () => {
       expect(() => app.updateGridItemSizes()).not.toThrow();
 
       const wraps = container.querySelectorAll('.grid-item-wrap');
-      expect(wraps[0].style.getPropertyValue('--base-card-size')).toBe(''); // untouched: colWidth was NaN
-      expect(wraps[1].style.getPropertyValue('--base-card-size')).toBe('64px'); // sibling container still processed
+      expect(wraps[0].style.getPropertyValue('--rt-base-card-size')).toBe(''); // untouched: colWidth was NaN
+      expect(wraps[1].style.getPropertyValue('--rt-base-card-size')).toBe('64px'); // sibling container still processed
     });
 
     it('does not throw when no matching elements exist (pristine fixture)', () => {
@@ -278,12 +299,12 @@ describe('app.js render/dom-light layer', () => {
   });
 
   describe('applyMainGridColumns', () => {
-    it('sets --main-grid-max-width/--main-content-max-width and syncs the sidebar controls for the default 8-column state', () => {
+    it('sets --rt-main-grid-max-width/--rt-main-content-max-width and syncs the sidebar controls for the default 8-column state', () => {
       app.applyMainGridColumns();
 
       const root = document.documentElement;
-      expect(root.style.getPropertyValue('--main-grid-max-width')).toBe('752px'); // 8*80 + 7*16
-      expect(root.style.getPropertyValue('--main-content-max-width')).toBe('800px'); // 752 + MAIN_CONTENT_SIDE_PADDING(48)
+      expect(root.style.getPropertyValue('--rt-main-grid-max-width')).toBe('752px'); // 8*80 + 7*16
+      expect(root.style.getPropertyValue('--rt-main-content-max-width')).toBe('800px'); // 752 + MAIN_CONTENT_SIDE_PADDING(48)
       expect(document.getElementById('grid-columns-range').value).toBe('8');
       expect(document.getElementById('grid-columns-value').textContent).toBe('8');
     });
@@ -957,7 +978,7 @@ describe('app.js render/dom-light layer', () => {
 
     it('renders a folder-icon slot when child.type is "folder"', () => {
       const html = app.renderFolderNormalSlot({ id: 'f1', type: 'folder', name: 'Sub', children: [] });
-      expect(html).toBe('<div class="folder-slot-normal folder-slot-folder"><svg class="folder-slot-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></div>');
+      expect(html).toBe('<div class="folder-slot-normal folder-slot-folder"><svg class="folder-slot-folder-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></div>');
     });
 
     it('uses child.icon via buildManagedImageTag when present (link child), with data-preview-child-id', () => {
@@ -1032,7 +1053,8 @@ describe('app.js render/dom-light layer', () => {
         expect(html).not.toContain('grid-item-link-preview');
         expect(html).toContain('src="data:image/png;base64,CCC"');
         expect(html).toContain('style="width:100%;height:100%;display:block;object-fit:cover;pointer-events:none"');
-        expect(html).toContain('<span class="icon-letter" style="display:none;color:#cbd5e1;pointer-events:none">E</span>');
+        expect(html).toContain('<span class="icon-letter" style="display:none;pointer-events:none">E</span>');
+        expect(html).not.toMatch(/color:|font-size:/); // 颜色与字号在 .icon-letter 上（G-3）
       });
 
       it('icon present, non-1x1 size -> wrapped in grid-item-link-preview (isExpandedLink)', () => {
@@ -1061,7 +1083,8 @@ describe('app.js render/dom-light layer', () => {
       it('no icon, no cache, no favicon -> letter fallback span only, non-expanded (1x1)', () => {
         const item = { id: 'l5', type: 'link', name: 'Zeta', url: 'https://zeta.com', size: '1x1' };
         const html = app.renderIcon(item);
-        expect(html).toBe('<span class="icon-letter" style="color:#cbd5e1;pointer-events:none">Z</span>');
+        expect(html).toBe('<span class="icon-letter" style="pointer-events:none">Z</span>');
+        expect(html).not.toMatch(/color:|font-size:/);
       });
     });
 
@@ -1106,8 +1129,8 @@ describe('app.js render/dom-light layer', () => {
         // 2x2 layout: cols=2, rows=2 -> normalCount=3; children.length(2) <= normalCount+1(4).
         const html = app.renderIcon(item);
         expect(html).toContain('folder-slot-grid');
-        expect(html).toContain('grid-template-columns:repeat(2,var(--base-card-size))');
-        expect(html).toContain('grid-template-rows:repeat(2,var(--base-card-size))');
+        expect(html).toContain('grid-template-columns:repeat(2,var(--rt-base-card-size))');
+        expect(html).toContain('grid-template-rows:repeat(2,var(--rt-base-card-size))');
         const wrap = document.createElement('div');
         wrap.innerHTML = html;
         const grid = wrap.querySelector('.folder-slot-grid');

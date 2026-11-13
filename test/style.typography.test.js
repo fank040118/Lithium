@@ -83,7 +83,6 @@ function fontSizeMap(cssText) {
 
 // M-F 确认要变的字号（spec §4.2「M-F 字号结论」），键为选择器，值为 [b733093, 现在]。
 const CONFIRMED_CHANGES = {
-  '.sidebar-note': [13.12, 13],
   '.tz-label': [11.2, 12],
   '.app-toast': [14.4, 14],
   '.move-to-main-hint': [24, 20],
@@ -93,6 +92,8 @@ const CONFIRMED_CHANGES = {
 };
 // M-F 选「保持」的紧凑表单选择器（spec §4.4「紧凑表单例外」）。
 const KEPT_AT_13 = ['.engine-form-input', '.engine-form-save', '.engine-form-cancel', '.icon-upload-btn', '.icon-clear-btn'];
+// Task 37 删掉的死 CSS：页面里没有任何元素使用，b733093 里有字号、现在没有，不算字号变化。
+const REMOVED_DEAD_CSS = ['.sidebar-note'];
 const NEW_SELECTORS = ['.icon-letter', '.icon-letter-sm'];
 const FORM_TAGS = ['button', 'input', 'select', 'textarea'];
 
@@ -193,7 +194,7 @@ const ROLE_MAP = {
   'type-body-lg': ['.search-input', '.sync-conflict-side-time'],
   'type-body-md': ['.sidebar-range-labels', '.date-text', '.clock-entry select', '.dialog-text', '.dialog-text-danger',
     '.form-input', '.login-desc', '.verify-desc', '.app-toast'],
-  'type-body-sm': ['.sidebar-note', '.login-consent-text', '.login-consent-bullets', '.sync-conflict-text',
+  'type-body-sm': ['.login-consent-text', '.login-consent-bullets', '.sync-conflict-text',
     '.engine-form-input', '.sync-conflict-side-empty', '.sync-conflict-limit', '.sync-conflict-error',
     '.sync-conflict-signout', '.login-error', '.verify-status', '.forgot-password-btn'],
   'type-caption': ['.login-consent-footnote', '.sidebar-sync-hint', '.grid-item-name', '.clock-limit-msg',
@@ -295,8 +296,8 @@ describe('首字母占位（G-3）', () => {
   });
 
   it('.folder-slot-letter / .folder-mini-letter 的字号来自 JS 写入的运行时变量，不是字面值', () => {
-    expect(lastOf(declsOf(rules, '.folder-slot-letter'), 'font-size')).toBe('var(--preview-letter-size)');
-    expect(lastOf(declsOf(rules, '.folder-mini-letter'), 'font-size')).toBe('var(--folder-mini-letter-size)');
+    expect(lastOf(declsOf(rules, '.folder-slot-letter'), 'font-size')).toBe('var(--rt-preview-letter-size)');
+    expect(lastOf(declsOf(rules, '.folder-mini-letter'), 'font-size')).toBe('var(--rt-folder-mini-letter-size)');
   });
 });
 
@@ -322,6 +323,20 @@ describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
   const oldMap = fontSizeMap(baseCss);
   const newMap = fontSizeMap(css);
   const keyOf = (sel) => `|${sel}`;
+  // Task 37：运行时变量加了 --rt- 前缀，比对时还原成旧名，只看「是不是同一个变量驱动」。
+  const unRt = (v) => (typeof v === 'string' ? v.replace('runtime:--rt-', 'runtime:--') : v);
+  const dead = new Set(REMOVED_DEAD_CSS.map(keyOf));
+
+  it('Task 37 删掉的死 CSS：旧版有字号、现在整条没了，页面里也没有任何使用处', () => {
+    for (const sel of REMOVED_DEAD_CSS) {
+      expect(oldMap.has(keyOf(sel)), `${sel} @${BASE_COMMIT}`).toBe(true);
+      expect(newMap.has(keyOf(sel)), `${sel} @HEAD`).toBe(false);
+      const cls = sel.slice(1);
+      for (const f of ['app.js', 'newtab.html']) {
+        expect(readFileSync(resolve(REPO_ROOT, f), 'utf8'), `${f} 使用 ${sel}`).not.toContain(cls);
+      }
+    }
+  });
 
   it('解析器能读到足够多的选择器（防止比对空转）', () => {
     expect(oldMap.size).toBeGreaterThan(60);
@@ -329,14 +344,15 @@ describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
   });
 
   it('b733093 里每个有字号的选择器，现在仍有字号声明', () => {
-    const missing = [...oldMap.keys()].filter((k) => !newMap.has(k));
+    const missing = [...oldMap.keys()].filter((k) => !newMap.has(k) && !dead.has(k));
     expect(missing).toEqual([]);
   });
 
   it('差异恰好是确认清单，数值逐条相符', () => {
     const diffs = {};
     for (const [k, oldPx] of oldMap) {
-      const newPx = newMap.get(k);
+      if (dead.has(k)) continue;
+      const newPx = unRt(newMap.get(k));
       const same = typeof oldPx === 'number' && typeof newPx === 'number'
         ? Math.abs(oldPx - newPx) < 1e-9 : oldPx === newPx;
       if (!same) diffs[k.replace(/^\|/, '')] = [oldPx, newPx];
@@ -364,8 +380,8 @@ describe('字号与 b733093 的差异恰好是 M-F 确认的清单', () => {
 
   it('运行时变量驱动的字号没有变', () => {
     for (const sel of ['.folder-slot-letter', '.folder-mini-letter']) {
-      expect(newMap.get(keyOf(sel))).toBe(oldMap.get(keyOf(sel)));
-      expect(String(newMap.get(keyOf(sel)))).toMatch(/^runtime:--/);
+      expect(unRt(newMap.get(keyOf(sel)))).toBe(oldMap.get(keyOf(sel)));
+      expect(String(newMap.get(keyOf(sel)))).toMatch(/^runtime:--rt-/);
     }
   });
 });
