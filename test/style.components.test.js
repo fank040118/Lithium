@@ -711,13 +711,14 @@ describe('交互状态', () => {
     ['icon-upload-btn', '.icon-upload-row'], ['icon-clear-btn', '.icon-upload-row'],
     ['clock-remove-btn', '.clock-entry'], ['clock-add-entry', '.clock-list'],
     ['folder-rename-btn', '#folder-title'], ['forgot-password-btn', '.login-card'],
+    ['engine-form-save', '.add-engine-form'],
   ];
   // 内缩环：被 overflow: hidden 或 4px 内边距包住的元素（§6.1.1）
   const INSET = [
     ['engine-trigger', '.search-bar'], ['engine-item', '.engine-list', 'div'], ['ctx-item', '.context-menu', 'div'],
     ['ctx-size-btn', '.ctx-size-grid', 'div'], ['type-btn', '.type-toggle'], ['auth-tab', '.auth-tabs'],
     ['left-sidebar-handle', '.left-sidebar'],
-    ['engine-form-save', '.add-engine-form'], ['engine-form-cancel', '.add-engine-form'],
+    ['engine-form-cancel', '.add-engine-form'],
     ['add-engine-btn', '.engine-dropdown-footer'], ['engine-delete-btn', '.engine-item'],
   ];
 
@@ -730,6 +731,37 @@ describe('交互状态', () => {
       for (const row of INSET) expect(win(make(row), 'outline', { state }), row[0]).toEqual(RING('-2px'));
     });
   }
+
+  it('实心按钮（primary / danger 两类）只用外扩环：内缩环画在 blue.600 / red.600 上对比不够（§6.1），不得出现在内缩清单', () => {
+    const SOLID = ['btn-primary', 'btn-danger', 'engine-form-save']; // 实心按钮合并规则里的全部 class
+    const solidRule = rulesMentioning('btn-primary').find((r) => r.selectors.some((s) => s.text === '.btn-primary') && r.decls.some((d) => d.prop === 'background'));
+    expect(solidRule.selectors.map((s) => s.text)).toEqual(expect.arrayContaining(['.btn-primary', '.engine-form-save']));
+    for (const cls of SOLID) {
+      expect(INSET.map((r) => r[0]), cls).not.toContain(cls);
+      expect(OUTSET.map((r) => r[0]), cls).toContain(cls);
+      // 样式表里也不能有任何一条内缩规则（offset 为负）选到它们
+      for (const r of rulesMentioning(cls)) {
+        if (!r.decls.some((d) => d.prop === 'outline-offset' && d.value.startsWith('-'))) continue;
+        expect(r.selectors.map((x) => x.text), cls).not.toContain(`.${cls}:focus-visible`);
+      }
+    }
+  });
+
+  it('平时 opacity < 1 的可聚焦元素，键盘聚焦时恢复 1（outline 随元素一起半透明）', () => {
+    const folderRename = make(['folder-rename-btn', '#folder-title']);
+    expect(win(folderRename, 'opacity')).toBe('0.55');
+    for (const state of [FOCUS_KB, FOCUS_KB_HOVER]) expect(win(folderRename, 'opacity', { state }), `folder-rename-btn ${[...state]}`).toBe('1');
+    const link = make(['forgot-password-btn', '.login-card']);
+    for (const state of [FOCUS_KB, FOCUS_KB_HOVER]) expect(win(link, 'opacity', { state }), `forgot-password-btn ${[...state]}`).toBe('1');
+    // 兜底：焦点环清单里的元素，聚焦时 opacity 只能是 1 或没有声明（.engine-delete-btn 在祖先 :hover 规则下无法静态判定，上面有专门的断言）
+    for (const row of [...OUTSET, ...INSET]) {
+      if (row[0] === 'engine-delete-btn') continue;
+      for (const state of [FOCUS_KB, FOCUS_KB_HOVER]) {
+        const o = win(make(row), 'opacity', { state });
+        expect(o === null || o === '1', `${row[0]} ${[...state]} opacity=${o}`).toBe(true);
+      }
+    }
+  });
 
   it('焦点环只在键盘焦点（:focus-visible）出现：悬停、按下、鼠标点击聚焦（focus 而非 focus-visible）都没有环', () => {
     for (const row of [...OUTSET, ...INSET]) {
@@ -977,7 +1009,11 @@ describe('交互状态', () => {
       expect(rest, pe).not.toContain('var(--color-control-panel-hover)');
       expect(hover, pe).toContain('0 0 0 4px var(--color-control-panel-hover)');
       expect(hover, `${pe} 保留原投影`).toContain(rest);
-      expect(win(range, 'box-shadow', { state: PRESSED, pseudoEl: pe }), `${pe} 按下同悬停`).toBe(hover);
+      expect(win(range, 'box-shadow', { state: PRESSED, pseudoEl: pe }), `${pe} 按下（hover + active）同悬停`).toBe(hover);
+      // 拖动时指针可能移出 input 盒子，:hover 失效而 :active 仍在：:active 单独也要显示光圈（预设里没有「只 active」的状态，直接断言规则）
+      const only = rulesMentioning('sidebar-range').find((r) => r.selectors.some((x) => x.text === `.sidebar-range:not(:disabled):active${pe}`));
+      expect(only, `${pe} 缺 :active 规则`).toBeTruthy();
+      expect(only.decls.find((d) => d.prop === 'box-shadow').value, pe).toBe(decl(`.sidebar-range:not(:disabled):hover${pe}`, 'box-shadow', 'sidebar-range'));
       expect(win(range, 'transition', { pseudoEl: pe }), pe).toContain('box-shadow var(--motion-duration-fast)');
       // 尺寸不变
       expect(win(range, 'width', { state: HOVER, pseudoEl: pe })).toBe(win(range, 'width', { pseudoEl: pe }));

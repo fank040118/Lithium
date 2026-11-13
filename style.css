@@ -604,11 +604,14 @@ body {
   transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-/* 悬停：拇指外加 4px control.panel.hover 光圈，尺寸不变（spec §6.7，D5-31）；原投影保留在光圈之下。 */
-.sidebar-range:not(:disabled):hover::-webkit-slider-thumb {
+/* 悬停或按下：拇指外加 4px control.panel.hover 光圈，尺寸不变（spec §6.7，D5-31）；原投影保留在光圈之下。
+   拖动时指针可能移出 input 盒子（:hover 失效），所以 :active 也要单独挂上。两个厂商前缀各写一条规则，不能合并进同一个选择器列表。 */
+.sidebar-range:not(:disabled):hover::-webkit-slider-thumb,
+.sidebar-range:not(:disabled):active::-webkit-slider-thumb {
   box-shadow: 0 0 0 4px var(--color-control-panel-hover), var(--range-thumb-shadow);
 }
-.sidebar-range:not(:disabled):hover::-moz-range-thumb {
+.sidebar-range:not(:disabled):hover::-moz-range-thumb,
+.sidebar-range:not(:disabled):active::-moz-range-thumb {
   box-shadow: 0 0 0 4px var(--color-control-panel-hover), var(--range-thumb-shadow);
 }
 
@@ -1497,8 +1500,9 @@ body {
   flex-shrink: 0;
   transition: opacity 0.15s, background-color 0.15s;
 }
-.folder-rename-btn:not(:disabled):hover {
-  opacity: 1;
+.folder-rename-btn:not(:disabled):hover,
+.folder-rename-btn:focus-visible {
+  opacity: 1; /* 聚焦时恢复不透明：outline 随元素一起半透明，对比会掉 */
 }
 .folder-name-input {
   font: inherit;            /* match modal-title font sizing/weight */
@@ -1846,7 +1850,9 @@ body {
 /* 按下 = 悬停（danger.bg，spec §6.2）：PRESSED 含 hover，不需要单独的 :active 规则 */
 
 /* 键盘焦点环（spec §6.1、§6.1.1）：只在 :focus-visible 出现，鼠标点击聚焦不画环。
-   外扩：元素四周有 >= 4px 空间（弹窗内容区、侧栏分组卡片、直接在壁纸上的语言切换）。 */
+   外扩：元素四周有 >= 4px 空间（弹窗内容区、侧栏分组卡片、直接在壁纸上的语言切换）。
+   实心按钮（.btn-primary / .btn-danger / .engine-form-save）只能用外扩：内缩环画在 blue.600 / red.600 上对比不够（§6.1）。
+   .engine-form-save 在引擎下拉的 overflow: hidden 里，但表单与页脚共有 12px 内边距，外扩放得下。 */
 .btn-primary:focus-visible,
 .btn-secondary:focus-visible,
 .btn-danger:focus-visible,
@@ -1857,6 +1863,7 @@ body {
 .clock-remove-btn:focus-visible,
 .clock-add-entry:focus-visible,
 .forgot-password-btn:focus-visible,
+.engine-form-save:focus-visible,
 .sidebar-action-btn:focus-visible,
 .sidebar-range:focus-visible,
 .lang-toggle:focus-visible {
@@ -1868,7 +1875,6 @@ body {
 .engine-trigger:focus-visible,
 .engine-item:focus-visible,
 .engine-delete-btn:focus-visible,
-.engine-form-save:focus-visible,
 .engine-form-cancel:focus-visible,
 .add-engine-btn:focus-visible,
 .ctx-item:focus-visible,
@@ -2524,6 +2530,8 @@ body {
   transition: opacity 0.15s;
 }
 .forgot-password-btn:not(:disabled):hover { opacity: 0.8; }
+/* 键盘聚焦时恢复不透明（鼠标仍在上面时也一样）；写在悬停规则之后，特异性相同 */
+.forgot-password-btn:not(:disabled):focus-visible { opacity: 1; }
 
 .verify-desc {
   color: var(--color-text-tertiary);
